@@ -386,6 +386,31 @@ function maintenanceMessage(): string {
     return getSetting('maintenance_message','ربات در حالت نگهداری است. لطفاً بعداً مراجعه کنید.');
 }
 
+function clearGuideMessage(int $chatId): void {
+    try {
+        $mid = getSetting('guide_msg_'.$chatId, '');
+        if ($mid !== '') {
+            @apiRequest('deleteMessage', ['chat_id'=>$chatId, 'message_id'=>(int)$mid]);
+            setSetting('guide_msg_'.$chatId, '');
+        }
+    } catch (Throwable $e) {
+        // ignore
+    }
+}
+
+function sendGuide(int $chatId, string $text): void {
+    try {
+        clearGuideMessage($chatId);
+        $res = sendMessage($chatId, $text);
+        if ($res && ($res['ok'] ?? false)) {
+            $mid = $res['result']['message_id'] ?? null;
+            if ($mid) setSetting('guide_msg_'.$chatId, (string)$mid);
+        }
+    } catch (Throwable $e) {
+        // ignore
+    }
+}
+
 function getAdminPermissions(int $telegramId): array {
     $stmt = db()->prepare("SELECT is_owner, permissions FROM admin_users WHERE admin_telegram_id = ?");
     $stmt->execute([$telegramId]);
