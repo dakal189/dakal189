@@ -675,25 +675,8 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
             editMessageText($chatId, $messageId, $isRegistered ? 'منوی اصلی' : 'فقط پشتیبانی در دسترس است.', mainMenuKeyboard($isRegistered, $isAdmin));
             break;
         case 'support':
-            $page = isset($params['page']) ? (int)$params['page'] : 1;
-            $perPage = 10; [$offset,$limit] = paginate($page,$perPage);
-            $total = db()->query("SELECT COUNT(*) c FROM support_messages WHERE status='open'")->fetch()['c'] ?? 0;
-            $stmt = db()->prepare("SELECT sm.id, sm.created_at, u.username, u.telegram_id FROM support_messages sm JOIN users u ON u.id=sm.user_id WHERE sm.status='open' ORDER BY sm.created_at ASC LIMIT ?,?");
-            $stmt->bindValue(1, $offset, PDO::PARAM_INT);
-            $stmt->bindValue(2, $limit, PDO::PARAM_INT);
-            $stmt->execute();
-            $rows = $stmt->fetchAll();
-            $text = "لیست پیام های پشتیبانی (قدیمی ترین اول):\n";
-            $kbRows = [];
-            foreach ($rows as $r) {
-                $label = iranDateTime($r['created_at']) . ' - ' . ($r['username'] ? '@'.$r['username'] : $r['telegram_id']);
-                $kbRows[] = [ ['text' => $label, 'callback_data' => 'admin:support_view|id='.$r['id'].'|page='.$page] ];
-            }
-            $hasMore = ($offset + count($rows)) < $total;
-            $navKb = paginationKeyboard('admin:support', $page, $hasMore, 'nav:admin');
-            $kb = array_merge($kbRows, $navKb['inline_keyboard']);
-            editMessageText($chatId, $messageId, $text, ['inline_keyboard' => $kb]);
-            sendMessage($chatId,'راهنما: برای دیدن جزئیات، پاسخ یا حذف روی هر مورد کلیک کنید.');
+            setUserState($chatId, 'await_support', []);
+            editMessageText($chatId, $messageId, 'پیام خود را برای پشتیبانی ارسال کنید.', backButton('nav:home'));
             break;
         case 'army':
         case 'missile':
@@ -912,9 +895,15 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $stmt->execute([$id]); $r=$stmt->fetch(); if(!$r){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
             $countryLine = $type==='war' ? ('کشور حمله کننده: '.e($r['attacker_country'])."\n".'کشور دفاع کننده: '.e($r['defender_country'])) : ('کشور: '.e($r['country']));
             $hdr = 'فرستنده: ' . usernameLink($r['username'],(int)$r['telegram_id'])."\n".$countryLine."\nزمان: ".iranDateTime($r['created_at']);
-            $kb = [ [ ['text'=>'فرستادن به کانال','callback_data'=>'admin:sw_send|id='.$id.'|type='.$type.'|page='.$page], ['text'=>'حذف','callback_data'=>'admin:sw_del|id='.$id.'|type='.$type.'|page='.$page] ], [ ['text'=>'بازگشت','callback_data'=>'admin:sw_list|type='.$type.'|page='.$page] ] ];
+            $btnSend = $type==='war' ? ['text'=>'ارسال (با تعیین مهاجم/مدافع)','callback_data'=>'admin:war_prepare|id='.$id.'|page='.$page] : ['text'=>'فرستادن به کانال','callback_data'=>'admin:sw_send|id='.$id.'|type='.$type.'|page='.$page];
+            $kb = [ [ $btnSend, ['text'=>'حذف','callback_data'=>'admin:sw_del|id='.$id.'|type='.$type.'|page='.$page] ], [ ['text'=>'بازگشت','callback_data'=>'admin:sw_list|type='.$type.'|page='.$page] ] ];
             $body = $hdr . "\n\n" . ($r['text']?e($r['text']):'');
             if ($r['photo_file_id']) sendPhoto($chatId, $r['photo_file_id'], $body, ['inline_keyboard'=>$kb]); else editMessageText($chatId, $messageId, $body, ['inline_keyboard'=>$kb]);
+            break;
+        case 'war_prepare':
+            $id=(int)$params['id']; $page=(int)($params['page']??1);
+            setAdminState($chatId,'await_war_attacker',['submission_id'=>$id,'page'=>$page]);
+            sendMessage($chatId,'آیدی عددی حمله کننده را ارسال کنید.');
             break;
         case 'sw_send':
             $id=(int)$params['id']; $type=$params['type']??'statement'; $page=(int)($params['page']??1);
@@ -1201,6 +1190,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             if (!isOwner($chatId)) { answerCallback($_POST['callback_query']['id'] ?? '', 'فقط ادمین اصلی', true); return; }
             setAdminState($chatId,'await_admin_ident',[]);
             answerCallback($_POST['callback_query']['id'] ?? '', 'آیدی عددی یا پیام فوروارد شده ادمین را ارسال کنید');
+            sendMessage($chatId,'آیدی عددی ادمین جدید را ارسال کنید.');
             break;
         case 'adm_list':
             if (!isOwner($chatId)) { answerCallback($_POST['callback_query']['id'] ?? '', 'فقط ادمین اصلی', true); return; }
@@ -1417,7 +1407,7 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
         case 'await_asset_text':
             $country = $data['country']; $content = $text ?: ($message['caption'] ?? '');
             $stmt = db()->prepare("INSERT INTO assets (country, content) VALUES (?, ?) ON DUPLICATE KEY UPDATE content=VALUES(content), updated_at=NOW()"); $stmt->execute([$country, $content]);
-            sendMessage($chatId, 'ذخیره شد برای کشور: ' . e($country));
+            sendMessage($chatId, 'متن دارایی این کشور ثبت شد: ' . e($country));
             clearAdminState($chatId);
             break;
         case 'await_btn_rename':
@@ -1467,6 +1457,17 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             if (!$tgid) { sendMessage($chatId,'آیدی نامعتبر'); return; }
             if ($tgid === MAIN_ADMIN_ID) { sendMessage($chatId,'این اکانت Owner است.'); clearAdminState($chatId); return; }
             db()->prepare("INSERT IGNORE INTO admin_users (admin_telegram_id, is_owner, permissions) VALUES (?, 0, ?)")->execute([$tgid, json_encode([])]);
+            // Confirm info
+            $u = ensureUser(['id'=>$tgid]);
+            $info = 'ادمین جدید ثبت شد:\n'
+                  . 'یوزرنیم: ' . ($u['username']?'@'.$u['username']:'—') . "\n"
+                  . 'ID: ' . $u['telegram_id'] . "\n"
+                  . 'نام: ' . trim(($u['first_name']?:'').' '.($u['last_name']?:'')) . "\n"
+                  . 'کشور: ' . ($u['country']?:'—') . "\n"
+                  . 'ثبت‌شده: ' . ((int)$u['is_registered']===1?'بله':'خیر') . "\n"
+                  . 'بن: ' . ((int)$u['banned']===1?'بله':'خیر') . "\n"
+                  . 'زمان ایجاد: ' . iranDateTime($u['created_at']);
+            sendMessage($chatId, $info);
             setAdminState($chatId,'await_admin_perms',['tgid'=>$tgid]);
             // render perms editor
             $fakeMsgId = $message['message_id'] ?? 0;
@@ -1526,6 +1527,21 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             if (!$photo) { sendMessage($chatId,'عکس ارسال کنید.'); return; }
             db()->prepare("INSERT INTO country_flags (country, photo_file_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE photo_file_id=VALUES(photo_file_id)")->execute([$country, $photo]);
             sendMessage($chatId,'پرچم برای '.e($country).' ثبت شد.');
+            clearAdminState($chatId);
+            break;
+        case 'await_war_attacker':
+            $sid=(int)$data['submission_id']; $page=(int)($data['page']??1);
+            $attTid = extractTelegramIdFromMessage($message);
+            if (!$attTid) { sendMessage($chatId,'آیدی نامعتبر. دوباره آیدی عددی حمله کننده را بفرستید.'); return; }
+            setAdminState($chatId,'await_war_defender',['submission_id'=>$sid,'page'=>$page,'att_tid'=>$attTid]);
+            sendMessage($chatId,'آیدی عددی دفاع کننده را ارسال کنید.');
+            break;
+        case 'await_war_defender':
+            $sid=(int)$data['submission_id']; $page=(int)($data['page']??1); $attTid=(int)$data['att_tid'];
+            $defTid = extractTelegramIdFromMessage($message);
+            if (!$defTid) { sendMessage($chatId,'آیدی نامعتبر. دوباره آیدی عددی دفاع کننده را بفرستید.'); return; }
+            $ok = sendWarSubmissionToChannelWithUsers($sid, $attTid, $defTid);
+            sendMessage($chatId, $ok ? 'اعلام جنگ ارسال شد.' : 'ارسال ناموفق بود. پرچم/کشور را بررسی کنید.');
             clearAdminState($chatId);
             break;
         default:
