@@ -1804,6 +1804,11 @@ function processCallback(array $callback): void {
         handleNav($chatId, $messageId, $route, $params, $u);
         return;
     }
+    if (strpos($action, 'alli:') === 0) {
+        $route = substr($action, 5);
+        handleAllianceNav($chatId, $messageId, $route, $params, $u);
+        return;
+    }
     if (strpos($action, 'admin:') === 0) {
         $route = substr($action, 6);
         if (!getAdminPermissions($chatId)) { answerCallback($callback['id'], 'دسترسی ندارید', true); return; }
