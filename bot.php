@@ -22,11 +22,14 @@ const MAIN_ADMIN_ID = 123456789; // Replace with your Telegram numeric ID
 const CHANNEL_ID = -1001234567890; // Replace with your channel ID
 
 // Database credentials
-const DB_HOST = '127.0.0.1';
+const DB_HOST = 'localhost';
 const DB_NAME = 'telegram_bot';
 const DB_USER = 'root';
 const DB_PASS = '';
 const DB_CHARSET = 'utf8mb4';
+
+// Debugging
+const DEBUG = true;
 
 // Security: optional secret path token for webhook URL validation (set to '' to disable)
 const WEBHOOK_SECRET = '';
@@ -36,8 +39,15 @@ date_default_timezone_set('Asia/Tehran');
 
 // --------------------- INITIALIZATION ---------------------
 
-ini_set('display_errors', 0);
-error_reporting(E_ALL & ~E_NOTICE & ~E_WARNING);
+ini_set('log_errors', 1);
+ini_set('error_log', sys_get_temp_dir() . '/bot_php_error.log');
+if (DEBUG) {
+    ini_set('display_errors', 1);
+    error_reporting(E_ALL);
+} else {
+    ini_set('display_errors', 0);
+    error_reporting(E_ALL & ~E_NOTICE & ~E_WARNING);
+}
 
 function db(): PDO {
     static $pdo = null;
@@ -667,6 +677,7 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
     // cancel any ongoing states on navigation
     clearUserState($chatId);
     clearAdminState($chatId);
+    clearGuideMessage($chatId);
     $isRegistered = (int)$userRow['is_registered'] === 1;
     $isAdmin = getAdminPermissions($chatId) ? true : false;
 
@@ -1840,10 +1851,16 @@ $update = json_decode($input, true);
 
 if (!$update) { echo 'OK'; exit; }
 
-if (isset($update['message'])) {
-    processUserMessage($update['message']);
-} elseif (isset($update['callback_query'])) {
-    processCallback($update['callback_query']);
+try {
+    if (isset($update['message'])) {
+        processUserMessage($update['message']);
+    } elseif (isset($update['callback_query'])) {
+        processCallback($update['callback_query']);
+    }
+} catch (Throwable $e) {
+    if (DEBUG) {
+        @sendMessage(MAIN_ADMIN_ID, 'خطای غیرمنتظره: ' . $e->getMessage());
+    }
 }
 
 echo 'OK';
