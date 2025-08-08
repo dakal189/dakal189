@@ -1204,6 +1204,14 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $aid=(int)$params['id'];
             renderAdminPermsEditor($chatId, $messageId, $aid);
             break;
+        case 'adm_delete':
+            if (!isOwner($chatId)) { answerCallback($_POST['callback_query']['id'] ?? '', 'فقط ادمین اصلی', true); return; }
+            $aid=(int)($params['id']??0);
+            if ($aid === MAIN_ADMIN_ID) { answerCallback($_POST['callback_query']['id'] ?? '', 'حذف Owner مجاز نیست', true); return; }
+            db()->prepare("DELETE FROM admin_users WHERE admin_telegram_id=?")->execute([$aid]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'ادمین حذف شد');
+            handleAdminNav($chatId,$messageId,'adm_list',[],$userRow);
+            break;
         case 'copyid':
             $tid = (int)$params['id'];
             answerCallback($_POST['callback_query']['id'] ?? '', 'ID: ' . $tid, true);
@@ -1227,6 +1235,7 @@ function renderAdminPermsEditor(int $chatId, int $messageId, int $adminTid): voi
     $allPerms = ['support','army','missile','defense','statement','war','roles','assets','settings','wheel','users','bans','alliances','admins'];
     $cur = $r['permissions'] ? (json_decode($r['permissions'], true) ?: []) : [];
     $kb=[]; foreach($allPerms as $p){ $on = in_array($p,$cur,true); $kb[]=[ ['text'=>($on?'✅ ':'⬜️ ').$p, 'callback_data'=>'admin:adm_toggle|id='.$adminTid.'|perm='.$p] ]; }
+    $kb[]=[ ['text'=>'حذف ادمین','callback_data'=>'admin:adm_delete|id='.$adminTid] ];
     $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:adm_list'] ];
     editMessageText($chatId,$messageId,'دسترسی ها برای '.$adminTid,['inline_keyboard'=>$kb]);
 }
