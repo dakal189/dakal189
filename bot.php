@@ -1093,6 +1093,11 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 [ ['text'=>'بازگشت','callback_data'=>'admin:user_list|page='.$page] ]
             ];
             editMessageText($chatId,$messageId,$hdr,['inline_keyboard'=>$kb]);
+            // show country flag if exists
+            if ($r['country']) {
+                $flag = db()->prepare("SELECT photo_file_id FROM country_flags WHERE country=?"); $flag->execute([$r['country']]); $fr=$flag->fetch();
+                if ($fr && $fr['photo_file_id']) { sendPhoto($chatId, $fr['photo_file_id'], 'پرچم '.e($r['country'])); }
+            }
             break;
         case 'user_assets':
             $id=(int)$params['id']; $page=(int)($params['page']??1);
@@ -1287,6 +1292,11 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             ];
             sendMessage($chatId,'نحوه ارسال به کانال را انتخاب کنید:', ['inline_keyboard'=>$kb]);
             clearAdminState($chatId);
+            break;
+        case 'war_send':
+            $sid=(int)($params['id']??0); $attTid=(int)($params['att']??0); $defTid=(int)($params['def']??0); $mode=$params['mode']??'auto';
+            $ok = sendWarWithMode($sid,$attTid,$defTid,$mode);
+            answerCallback($_POST['callback_query']['id'] ?? '', $ok?'ارسال شد':'ارسال ناموفق', !$ok);
             break;
         default:
             answerCallback($_POST['callback_query']['id'] ?? '', 'بخش ناشناخته', true);
