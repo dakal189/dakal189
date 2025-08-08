@@ -399,6 +399,28 @@ function notifySectionAdmins(string $sectionKey, string $text): void {
     }
 }
 
+function notifyNewSupportMessage(int $supportId): void {
+    $stmt = db()->prepare("SELECT sm.*, u.telegram_id, u.username, u.country, u.created_at AS user_created FROM support_messages sm JOIN users u ON u.id=sm.user_id WHERE sm.id=?");
+    $stmt->execute([$supportId]);
+    $r = $stmt->fetch();
+    if (!$r) return;
+    $hdr = 'یک پیام پشتیبانی تازه دارید' . "\n" . usernameLink($r['username'], (int)$r['telegram_id']) . "\nID: " . (int)$r['telegram_id'] . "\nزمان: " . iranDateTime($r['created_at']);
+    $body = $hdr . "\n\n" . ($r['text'] ? e($r['text']) : '');
+    $kb = [ [ ['text'=>'کپی ایدی','callback_data'=>'admin:copyid|id='.(int)$r['telegram_id']], ['text'=>'مشاهده در پنل','callback_data'=>'admin:support_view|id='.$supportId.'|page=1'] ] ];
+    $q = db()->query("SELECT admin_telegram_id, is_owner, permissions FROM admin_users");
+    foreach ($q as $row) {
+        $adminId = (int)$row['admin_telegram_id'];
+        $perms = (int)$row['is_owner'] === 1 ? ['all'] : ( ($row['permissions'] ? json_decode($row['permissions'], true) : []) ?: [] );
+        if (in_array('all', $perms, true) || in_array('support', $perms, true)) {
+            if ($r['photo_file_id']) {
+                sendPhoto($adminId, $r['photo_file_id'], $body, ['inline_keyboard'=>$kb]);
+            } else {
+                sendMessage($adminId, $body, ['inline_keyboard'=>$kb]);
+            }
+        }
+    }
+}
+
 function purgeOldSupportMessages(): void {
     $stmt = db()->prepare("DELETE FROM support_messages WHERE created_at < (NOW() - INTERVAL 1 DAY)");
     $stmt->execute();
@@ -1137,12 +1159,13 @@ function handleUserStateMessage(array $userRow, array $message, array $state): v
             if (!$text && !$photo) { sendMessage($chatId,'فقط متن یا عکس بفرستید.'); return; }
             // Save
             $u = userByTelegramId($chatId);
-            $stmt = db()->prepare("INSERT INTO support_messages (user_id, text, photo_file_id) VALUES (?, ?, ?)");
+            $pdo = db();
+            $stmt = $pdo->prepare("INSERT INTO support_messages (user_id, text, photo_file_id) VALUES (?, ?, ?)");
             $stmt->execute([(int)$u['id'], $text ?: $caption, $photo]);
+            $supportId = (int)$pdo->lastInsertId();
             sendMessage($chatId, 'پیام شما ثبت شد.');
-            // notify admins
-            $adminText = 'یک پیام پشتیبانی تازه دارید';
-            notifySectionAdmins('support', $adminText);
+            // immediate detailed notify to admins
+            notifyNewSupportMessage($supportId);
             clearUserState($chatId);
             break;
         case 'await_submission':
