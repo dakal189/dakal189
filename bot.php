@@ -675,8 +675,25 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
             editMessageText($chatId, $messageId, $isRegistered ? 'منوی اصلی' : 'فقط پشتیبانی در دسترس است.', mainMenuKeyboard($isRegistered, $isAdmin));
             break;
         case 'support':
-            setUserState($chatId, 'await_support', []);
-            editMessageText($chatId, $messageId, 'پیام خود را برای پشتیبانی ارسال کنید.', backButton('nav:home'));
+            $page = isset($params['page']) ? (int)$params['page'] : 1;
+            $perPage = 10; [$offset,$limit] = paginate($page,$perPage);
+            $total = db()->query("SELECT COUNT(*) c FROM support_messages WHERE status='open'")->fetch()['c'] ?? 0;
+            $stmt = db()->prepare("SELECT sm.id, sm.created_at, u.username, u.telegram_id FROM support_messages sm JOIN users u ON u.id=sm.user_id WHERE sm.status='open' ORDER BY sm.created_at ASC LIMIT ?,?");
+            $stmt->bindValue(1, $offset, PDO::PARAM_INT);
+            $stmt->bindValue(2, $limit, PDO::PARAM_INT);
+            $stmt->execute();
+            $rows = $stmt->fetchAll();
+            $text = "لیست پیام های پشتیبانی (قدیمی ترین اول):\n";
+            $kbRows = [];
+            foreach ($rows as $r) {
+                $label = iranDateTime($r['created_at']) . ' - ' . ($r['username'] ? '@'.$r['username'] : $r['telegram_id']);
+                $kbRows[] = [ ['text' => $label, 'callback_data' => 'admin:support_view|id='.$r['id'].'|page='.$page] ];
+            }
+            $hasMore = ($offset + count($rows)) < $total;
+            $navKb = paginationKeyboard('admin:support', $page, $hasMore, 'nav:admin');
+            $kb = array_merge($kbRows, $navKb['inline_keyboard']);
+            editMessageText($chatId, $messageId, $text, ['inline_keyboard' => $kb]);
+            sendMessage($chatId,'راهنما: برای دیدن جزئیات، پاسخ یا حذف روی هر مورد کلیک کنید.');
             break;
         case 'army':
         case 'missile':
@@ -704,11 +721,22 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
         case 'assets':
             if (!$isRegistered) { answerCallback($_POST['callback_query']['id'] ?? '', 'برای استفاده باید ثبت شوید.', true); return; }
             $country = $userRow['country'];
-            $stmt = db()->prepare("SELECT content FROM assets WHERE country = ?");
-            $stmt->execute([$country]);
-            $row = $stmt->fetch();
-            $content = $row && $row['content'] ? $row['content'] : 'دارایی برای کشور شما ثبت نشده است.';
-            editMessageText($chatId, $messageId, 'دارایی های شما (' . e($country) . "):\n\n" . e($content), backButton('nav:home'));
+            // Prefer user-specific assets_text, else country assets
+            $stmtU = db()->prepare("SELECT assets_text, money, daily_profit FROM users WHERE id=?");
+            $stmtU->execute([(int)$userRow['id']]);
+            $ur = $stmtU->fetch();
+            $content = '';
+            if ($ur && $ur['assets_text']) {
+                $content = $ur['assets_text'];
+            } else {
+                $stmt = db()->prepare("SELECT content FROM assets WHERE country = ?");
+                $stmt->execute([$country]);
+                $row = $stmt->fetch();
+                $content = $row && $row['content'] ? $row['content'] : 'دارایی برای کشور شما ثبت نشده است.';
+            }
+            $wallet = '';
+            if ($ur) { $wallet = "\n\nپول: ".$ur['money']." | سود روزانه: ".$ur['daily_profit']; }
+            editMessageText($chatId, $messageId, 'دارایی های شما (' . e($country) . "):\n\n" . e($content) . $wallet, backButton('nav:home'));
             break;
         case 'alliance':
             if (!$isRegistered) { answerCallback($_POST['callback_query']['id'] ?? '', 'برای استفاده باید ثبت شوید.', true); return; }
@@ -766,6 +794,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $navKb = paginationKeyboard('admin:support', $page, $hasMore, 'nav:admin');
             $kb = array_merge($kbRows, $navKb['inline_keyboard']);
             editMessageText($chatId, $messageId, $text, ['inline_keyboard' => $kb]);
+            sendMessage($chatId,'راهنما: برای دیدن جزئیات، پاسخ یا حذف روی هر مورد کلیک کنید.');
             break;
         case 'support_view':
             $id = (int)$params['id']; $page = (int)($params['page'] ?? 1);
@@ -825,6 +854,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ]
             ];
             editMessageText($chatId, $messageId, 'انتخاب بخش', ['inline_keyboard'=>$kb]);
+            sendMessage($chatId,'راهنما: بخش موردنظر را انتخاب کنید و سپس از لیست، مورد را برای نمایش/حذف انتخاب کنید.');
             break;
         case 'amd_list':
             $type = $params['type'] ?? 'army'; $page = (int)($params['page'] ?? 1);
@@ -841,6 +871,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $kb = array_merge($kbRows, paginationKeyboard('admin:amd_list|type='.$type, $page, $hasMore, 'admin:amd')['inline_keyboard']);
             $title = $type==='army'?'لشکرکشی':($type==='missile'?'حمله موشکی':'دفاع');
             editMessageText($chatId, $messageId, 'لیست ' . $title, ['inline_keyboard'=>$kb]);
+            sendMessage($chatId,'راهنما: برای مشاهده یا حذف روی آیتم کلیک کنید.');
             break;
         case 'amd_view':
             $id=(int)$params['id']; $type=$params['type']??'army'; $page=(int)($params['page']??1);
@@ -861,6 +892,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
         case 'sw':
             $kb = [ [ ['text'=>'بیانیه ها','callback_data'=>'admin:sw_list|type=statement|page=1'], ['text'=>'اعلام جنگ ها','callback_data'=>'admin:sw_list|type=war|page=1'] ], [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ] ];
             editMessageText($chatId, $messageId, 'انتخاب بخش', ['inline_keyboard'=>$kb]);
+            sendMessage($chatId,'راهنما: لیست را باز کنید، هر مورد را برای ارسال به کانال یا حذف بازبینی کنید.');
             break;
         case 'sw_list':
             $type = $params['type']??'statement'; $page=(int)($params['page']??1); $perPage=10; [$offset,$limit]=paginate($page,$perPage);
@@ -872,6 +904,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $kb = array_merge($kbRows, paginationKeyboard('admin:sw_list|type='.$type, $page, $hasMore, 'admin:sw')['inline_keyboard']);
             $title = $type==='statement'?'بیانیه ها':'اعلام جنگ ها';
             editMessageText($chatId,$messageId,$title,['inline_keyboard'=>$kb]);
+            sendMessage($chatId,'راهنما: مورد را انتخاب کنید تا به کانال ارسال یا حذف نمایید.');
             break;
         case 'sw_view':
             $id=(int)$params['id']; $type=$params['type']??'statement'; $page=(int)($params['page']??1);
@@ -926,6 +959,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $hasMore = ($offset + count($rows)) < $total;
             $kb = array_merge($kbRows, paginationKeyboard('admin:roles', $page, $hasMore, 'nav:admin')['inline_keyboard']);
             editMessageText($chatId,$messageId,'رول ها',['inline_keyboard'=>$kb]);
+            sendMessage($chatId,'راهنما: پس از باز کردن هر رول می‌توانید تایید/رد کنید یا هزینه تعیین نمایید.');
             break;
         case 'role_view':
             $id=(int)$params['id']; $page=(int)($params['page']??1);
@@ -967,6 +1001,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $kb=[]; foreach($rows as $r){ $country=$r['country']; if(!$country) continue; $kb[] = [ ['text'=>$country, 'callback_data'=>'admin:asset_edit|country='.urlencode($country)] ]; }
             $kb[] = [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ];
             editMessageText($chatId,$messageId,'انتخاب کشور برای ویرایش دارایی',['inline_keyboard'=>$kb]);
+            sendMessage($chatId,'راهنما: دارایی متنی برای کشورها را از این بخش ثبت/ویرایش کنید. برای دارایی اختصاصی هر کاربر از پروفایل کاربر استفاده کنید.');
             break;
         case 'asset_edit':
             $country = urldecode($params['country'] ?? ''); if(!$country){ answerCallback($_POST['callback_query']['id']??'','کشور نامعتبر',true); return; }
@@ -1085,6 +1120,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
         case 'wheel':
             $kb=[ [ ['text'=>'ثبت جایزه گردونه شانس','callback_data'=>'admin:wheel_set'] ], [ ['text'=>'شروع گردونه شانس','callback_data'=>'admin:wheel_start'] ], [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ] ];
             editMessageText($chatId,$messageId,'گردونه شانس',['inline_keyboard'=>$kb]);
+            sendMessage($chatId,'راهنما: ابتدا جایزه را ثبت کنید، سپس شروع را بزنید تا یک برنده تصادفی اعلام شود.');
             break;
         case 'wheel_set':
             setAdminState($chatId,'await_wheel_prize',[]);
@@ -1112,6 +1148,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $hasMore = ($offset + count($rows)) < $total;
             $kb = array_merge($kbRows, paginationKeyboard('admin:alliances', $page, $hasMore, 'nav:admin')['inline_keyboard']);
             editMessageText($chatId,$messageId,'مدیریت اتحادها',['inline_keyboard'=>$kb]);
+            sendMessage($chatId,'راهنما: برای مشاهده جزئیات، حذف اتحاد یا مدیریت اعضا، یک اتحاد را انتخاب کنید.');
             break;
         case 'alli_view':
             if (!hasPerm($chatId,'alliances') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
@@ -1158,6 +1195,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             if (!isOwner($chatId)) { answerCallback($_POST['callback_query']['id'] ?? '', 'فقط ادمین اصلی', true); return; }
             $kb=[ [ ['text'=>'افزودن ادمین','callback_data'=>'admin:adm_add'] ], [ ['text'=>'لیست ادمین ها','callback_data'=>'admin:adm_list'] ], [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ] ];
             editMessageText($chatId,$messageId,'مدیریت ادمین ها',['inline_keyboard'=>$kb]);
+            sendMessage($chatId,'راهنما: پس از افزودن، وارد پروفایل ادمین شوید و دسترسی بخش‌ها را تنظیم کنید.');
             break;
         case 'adm_add':
             if (!isOwner($chatId)) { answerCallback($_POST['callback_query']['id'] ?? '', 'فقط ادمین اصلی', true); return; }
@@ -1730,8 +1768,17 @@ function processCallback(array $callback): void {
 
 // Optional webhook secret check
 if (WEBHOOK_SECRET !== '' && (!isset($_GET['token']) || $_GET['token'] !== WEBHOOK_SECRET)) {
-    http_response_code(403);
-    echo 'Forbidden';
+    if (!isset($_GET['cron'])) { // allow cron without token if not set, else enforce token when set
+        http_response_code(403);
+        echo 'Forbidden';
+        exit;
+    }
+}
+
+// Cron endpoint for daily profits
+if (isset($_GET['cron']) && $_GET['cron'] === 'profits') {
+    applyDailyProfitsIfDue();
+    echo 'OK';
     exit;
 }
 
