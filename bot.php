@@ -73,13 +73,13 @@ function bootstrapDatabase(PDO $pdo): void {
         is_registered TINYINT(1) NOT NULL DEFAULT 0,
         country VARCHAR(64) NULL,
         banned TINYINT(1) NOT NULL DEFAULT 0,
+        money BIGINT NOT NULL DEFAULT 0,
+        daily_profit BIGINT NOT NULL DEFAULT 0,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-    // Optional columns for assets/money
+    // Optional columns for assets/money (idempotent)
     try { $pdo->exec("ALTER TABLE users ADD COLUMN assets_text TEXT NULL"); } catch (Exception $e) {}
-    try { $pdo->exec("ALTER TABLE users ADD COLUMN money BIGINT NOT NULL DEFAULT 0"); } catch (Exception $e) {}
-    try { $pdo->exec("ALTER TABLE users ADD COLUMN daily_profit BIGINT NOT NULL DEFAULT 0"); } catch (Exception $e) {}
 
     // Admin users
     $pdo->exec("CREATE TABLE IF NOT EXISTS admin_users (
@@ -236,6 +236,17 @@ function bootstrapDatabase(PDO $pdo): void {
         CONSTRAINT fk_invite_invitee FOREIGN KEY (invitee_user_id) REFERENCES users(id) ON DELETE CASCADE,
         CONSTRAINT fk_invite_inviter FOREIGN KEY (inviter_user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+}
+
+function rebuildDatabase(bool $dropAll = false): void {
+    $pdo = db();
+    if ($dropAll) {
+        $pdo->exec("SET FOREIGN_KEY_CHECKS=0");
+        $tables = ['support_replies','support_messages','admin_states','user_states','alliance_invites','alliance_members','alliances','wheel_settings','button_settings','assets','submissions','country_flags','admin_users','users','settings'];
+        foreach ($tables as $t) { try { $pdo->exec("DROP TABLE IF EXISTS `{$t}`"); } catch (Exception $e) {} }
+        $pdo->exec("SET FOREIGN_KEY_CHECKS=1");
+    }
+    bootstrapDatabase($pdo);
 }
 
 // --------------------- TELEGRAM HELPERS ---------------------
@@ -1842,6 +1853,13 @@ if (WEBHOOK_SECRET !== '' && (!isset($_GET['token']) || $_GET['token'] !== WEBHO
 // Cron endpoint for daily profits
 if (isset($_GET['cron']) && $_GET['cron'] === 'profits') {
     applyDailyProfitsIfDue();
+    echo 'OK';
+    exit;
+}
+
+// Rebuild schema endpoint (dangerous). Use ?init=1 or ?init=1&drop=1
+if (isset($_GET['init']) && $_GET['init'] === '1') {
+    rebuildDatabase(isset($_GET['drop']) && $_GET['drop'] === '1');
     echo 'OK';
     exit;
 }
