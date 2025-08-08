@@ -80,6 +80,12 @@ function bootstrapDatabase(PDO $pdo): void {
     $stmt = $pdo->prepare("INSERT IGNORE INTO admin_users (admin_telegram_id, is_owner, permissions) VALUES (?, 1, ?)");
     $stmt->execute([MAIN_ADMIN_ID, json_encode(["all"]) ]);
 
+    // Settings (key-value)
+    $pdo->exec("CREATE TABLE IF NOT EXISTS settings (
+        `key` VARCHAR(64) PRIMARY KEY,
+        `value` TEXT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
     // User states (user-side wizards)
     $pdo->exec("CREATE TABLE IF NOT EXISTS user_states (
         user_id BIGINT PRIMARY KEY,
@@ -106,6 +112,17 @@ function bootstrapDatabase(PDO $pdo): void {
         status ENUM('open','deleted') NOT NULL DEFAULT 'open',
         INDEX(user_id),
         CONSTRAINT fk_support_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    // Support replies
+    $pdo->exec("CREATE TABLE IF NOT EXISTS support_replies (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        support_id INT NOT NULL,
+        admin_id BIGINT NOT NULL,
+        text TEXT NULL,
+        photo_file_id VARCHAR(256) NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT fk_supprep_support FOREIGN KEY (support_id) REFERENCES support_messages(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
     // Submissions (army, missile, defense, statement, war, role)
@@ -285,6 +302,27 @@ function e($str): string { return htmlspecialchars((string)$str, ENT_QUOTES | EN
 
 function isOwner(int $telegramId): bool {
     return $telegramId === MAIN_ADMIN_ID;
+}
+
+function getSetting(string $key, $default = null) {
+    $stmt = db()->prepare("SELECT `value` FROM settings WHERE `key`=?");
+    $stmt->execute([$key]);
+    $row = $stmt->fetch();
+    if (!$row) return $default;
+    return $row['value'];
+}
+
+function setSetting(string $key, $value): void {
+    $stmt = db()->prepare("INSERT INTO settings (`key`,`value`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `value`=VALUES(`value`)");
+    $stmt->execute([$key, $value]);
+}
+
+function isMaintenanceEnabled(): bool {
+    return getSetting('maintenance','0') === '1';
+}
+
+function maintenanceMessage(): string {
+    return getSetting('maintenance_message','ربات در حالت نگهداری است. لطفاً بعداً مراجعه کنید.');
 }
 
 function getAdminPermissions(int $telegramId): array {
@@ -623,6 +661,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $hdr = usernameLink($r['username'], (int)$r['telegram_id']) . "\nID: " . (int)$r['telegram_id'] . "\nزمان: " . iranDateTime($r['created_at']);
             $kb = [
                 [ ['text'=>'کپی ایدی','callback_data'=>'admin:copyid|id='.$r['telegram_id']], ['text'=>'حذف','callback_data'=>'admin:support_del|id='.$id.'|page='.$page] ],
+                [ ['text'=>'پاسخ','callback_data'=>'admin:support_reply|id='.$id.'|page='.$page], ['text'=>'بستن','callback_data'=>'admin:support_close|id='.$id.'|page='.$page] ],
                 [ ['text'=>'بازگشت','callback_data'=>'admin:support|page='.$page] ]
             ];
             $body = $hdr . "\n\n" . ($r['text'] ? e($r['text']) : '');
@@ -632,16 +671,37 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 editMessageText($chatId, $messageId, $body, ['inline_keyboard'=>$kb]);
             }
             break;
-        case 'copyid':
-            $tid = (int)$params['id'];
-            answerCallback($_POST['callback_query']['id'] ?? '', 'ID: ' . $tid, true);
+        case 'support_close':
+            $id=(int)$params['id']; $page=(int)($params['page']??1);
+            db()->prepare("UPDATE support_messages SET status='deleted' WHERE id=?")->execute([$id]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'بسته شد');
+            handleAdminNav($chatId,$messageId,'support',['page'=>$page],$userRow);
             break;
-        case 'support_del':
-            $id = (int)$params['id']; $page = (int)($params['page'] ?? 1);
-            $stmt = db()->prepare("UPDATE support_messages SET status='deleted' WHERE id=?");
-            $stmt->execute([$id]);
-            answerCallback($_POST['callback_query']['id'] ?? '', 'حذف شد');
-            handleAdminNav($chatId, $messageId, 'support', ['page'=>$page], $userRow);
+        case 'support_reply':
+            $id=(int)$params['id']; $page=(int)($params['page']??1);
+            setAdminState($chatId,'await_support_reply',['support_id'=>$id,'page'=>$page]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'متن یا عکس پاسخ را ارسال کنید');
+            break;
+        case 'buttons':
+            $rows = db()->query("SELECT `key`, title, enabled FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance') ORDER BY id ASC")->fetchAll();
+            $kb=[]; foreach($rows as $r){ $txt = ($r['enabled']? 'روشن':'خاموش').' - '.$r['title']; $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']] ]; }
+            $kb[]=[ ['text'=>'حالت نگهداری','callback_data'=>'admin:maint'] ];
+            $kb[]=[ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ];
+            editMessageText($chatId,$messageId,'تنظیمات دکمه ها',['inline_keyboard'=>$kb]);
+            break;
+        case 'maint':
+            $on = isMaintenanceEnabled();
+            $status = $on ? 'روشن' : 'خاموش';
+            $kb=[ [ ['text'=>$on?'خاموش کردن':'روشن کردن','callback_data'=>'admin:maint_toggle'] , ['text'=>'تنظیم پیام','callback_data'=>'admin:maint_msg'] ], [ ['text'=>'بازگشت','callback_data'=>'admin:buttons'] ] ];
+            editMessageText($chatId,$messageId,'حالت نگهداری: '.$status,['inline_keyboard'=>$kb]);
+            break;
+        case 'maint_toggle':
+            $on = isMaintenanceEnabled(); setSetting('maintenance', $on?'0':'1');
+            handleAdminNav($chatId,$messageId,'maint',[],$userRow);
+            break;
+        case 'maint_msg':
+            setAdminState($chatId,'await_maint_msg',[]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'متن پیام نگهداری را ارسال کنید');
             break;
         case 'amd':
             $kb = [
@@ -1076,6 +1136,12 @@ function processUserMessage(array $message): void {
         return;
     }
 
+    // Maintenance block for non-admins
+    if (!getAdminPermissions($chatId) && isMaintenanceEnabled()) {
+        sendMessage($chatId, maintenanceMessage());
+        return;
+    }
+
     if (isset($message['text']) && trim($message['text']) === '/start') {
         clearUserState($chatId);
         handleStart($u);
@@ -1177,6 +1243,28 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
         case 'await_admin_perms':
             // handled via buttons (adm_toggle)
             break;
+        case 'await_maint_msg':
+            $msg = $text ?: ($message['caption'] ?? '');
+            setSetting('maintenance_message', $msg);
+            sendMessage($chatId,'پیام نگهداری ثبت شد.');
+            clearAdminState($chatId);
+            break;
+        case 'await_support_reply':
+            $supportId = (int)$data['support_id']; $page=(int)($data['page']??1);
+            $replyText = $text ?: ($message['caption'] ?? '');
+            $photo = null; if (!empty($message['photo'])) { $photos=$message['photo']; $largest=end($photos); $photo=$largest['file_id']??null; }
+            $stmt = db()->prepare("SELECT sm.id, u.telegram_id FROM support_messages sm JOIN users u ON u.id=sm.user_id WHERE sm.id=?"); $stmt->execute([$supportId]); $r=$stmt->fetch();
+            if ($r) {
+                if ($photo) sendPhoto((int)$r['telegram_id'], $photo, 'پاسخ پشتیبانی:\n\n'.($replyText?:''), ['inline_keyboard'=>[ [ ['text'=>'بستن','callback_data'=>'admin:support_close|id='.$supportId.'|page='.$page] ] ]]); else sendMessage((int)$r['telegram_id'], 'پاسخ پشتیبانی:\n\n'.($replyText?:''), ['inline_keyboard'=>[ [ ['text'=>'بستن','callback_data'=>'admin:support_close|id='.$supportId.'|page='.$page] ] ]]);
+                db()->prepare("INSERT INTO support_replies (support_id, admin_id, text, photo_file_id) VALUES (?, ?, ?, ?)")->execute([$supportId, $chatId, $replyText ?: null, $photo]);
+                sendMessage($chatId,'ارسال شد.');
+            } else {
+                sendMessage($chatId,'یافت نشد');
+            }
+            clearAdminState($chatId);
+            // refresh list
+            // no messageId here; just notify
+            break;
         default:
             sendMessage($chatId,'حالت ناشناخته'); clearAdminState($chatId);
     }
@@ -1207,9 +1295,22 @@ function handleUserStateMessage(array $userRow, array $message, array $state): v
         $photo = $largest['file_id'] ?? null;
     }
 
+    // cooldown helpers
+    $u = userByTelegramId($chatId);
+    $userId = (int)$u['id'];
+    $hasRecentSupport = function(int $uid): bool {
+        $stmt = db()->prepare("SELECT COUNT(*) c FROM support_messages WHERE user_id=? AND created_at >= (NOW() - INTERVAL 30 SECOND)"); $stmt->execute([$uid]);
+        return ((int)($stmt->fetch()['c']??0))>0;
+    };
+    $hasRecentSubmission = function(int $uid): bool {
+        $stmt = db()->prepare("SELECT COUNT(*) c FROM submissions WHERE user_id=? AND created_at >= (NOW() - INTERVAL 30 SECOND)"); $stmt->execute([$uid]);
+        return ((int)($stmt->fetch()['c']??0))>0;
+    };
+
     switch ($key) {
         case 'await_support':
             if (!$text && !$photo) { sendMessage($chatId,'فقط متن یا عکس بفرستید.'); return; }
+            if ($hasRecentSupport($userId)) { sendMessage($chatId,'لطفاً کمی صبر کنید و سپس دوباره تلاش کنید.'); return; }
             // Save
             $u = userByTelegramId($chatId);
             $pdo = db();
@@ -1224,6 +1325,7 @@ function handleUserStateMessage(array $userRow, array $message, array $state): v
         case 'await_submission':
             $type = $data['type'] ?? 'army';
             if (!$text && !$photo && !$caption) { sendMessage($chatId,'متن یا عکس ارسال کنید.'); return; }
+            if ($hasRecentSubmission($userId)) { sendMessage($chatId,'لطفاً کمی صبر کنید و سپس دوباره تلاش کنید.'); return; }
             $u = userByTelegramId($chatId);
             db()->prepare("INSERT INTO submissions (user_id, type, text, photo_file_id) VALUES (?, ?, ?, ?)")->execute([(int)$u['id'], $type, $text ?: $caption, $photo]);
             sendMessage($chatId,'ارسال شما ثبت شد.');
@@ -1234,6 +1336,7 @@ function handleUserStateMessage(array $userRow, array $message, array $state): v
             // Expect text with attacker/defender names; optionally photo
             $content = $text ?: $caption;
             if (!$content) { sendMessage($chatId,'ابتدا متن با فرمت موردنظر را ارسال کنید.'); return; }
+            if ($hasRecentSubmission($userId)) { sendMessage($chatId,'لطفاً کمی صبر کنید و سپس دوباره تلاش کنید.'); return; }
             $att = null; $def = null;
             if (preg_match('/نام\s*کشور\s*حمله\s*کننده\s*:\s*(.+)/u', $content, $m1)) { $att = trim($m1[1]); }
             if (preg_match('/نام\s*کشور\s*دفاع\s*کننده\s*:\s*(.+)/u', $content, $m2)) { $def = trim($m2[1]); }
@@ -1246,6 +1349,7 @@ function handleUserStateMessage(array $userRow, array $message, array $state): v
             break;
         case 'await_role_text':
             if (!$text) { sendMessage($chatId,'فقط متن مجاز است.'); return; }
+            if ($hasRecentSubmission($userId)) { sendMessage($chatId,'لطفاً کمی صبر کنید و سپس دوباره تلاش کنید.'); return; }
             $u = userByTelegramId($chatId);
             db()->prepare("INSERT INTO submissions (user_id, type, text) VALUES (?, 'role', ?)")->execute([(int)$u['id'], $text]);
             sendMessage($chatId,'رول شما ثبت شد و در انتظار بررسی است.');
@@ -1306,6 +1410,12 @@ function processCallback(array $callback): void {
     $from = $callback['from']; $u = ensureUser($from); $chatId=(int)$u['telegram_id'];
     $message = $callback['message'] ?? null; $messageId = $message['message_id'] ?? 0;
     $data = $callback['data'] ?? '';
+
+    // Maintenance block for non-admins
+    if (!getAdminPermissions($chatId) && isMaintenanceEnabled()) {
+        answerCallback($callback['id'], maintenanceMessage(), true);
+        return;
+    }
 
     list($action, $params) = cbParse($data);
 
