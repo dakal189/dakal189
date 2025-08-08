@@ -585,6 +585,7 @@ function renderAdminHome(int $chatId, int $messageId, array $userRow): void {
     if (in_array('all', $perms, true) || hasPerm($chatId, 'users')) $rows[] = [ ['text' => 'کاربران ثبت شده', 'callback_data' => 'admin:users'] ];
     if (in_array('all', $perms, true) || hasPerm($chatId, 'bans')) $rows[] = [ ['text' => 'مدیریت بن', 'callback_data' => 'admin:bans'] ];
     if (in_array('all', $perms, true) || hasPerm($chatId, 'wheel')) $rows[] = [ ['text' => 'گردونه شانس', 'callback_data' => 'admin:wheel'] ];
+    if (in_array('all', $perms, true) || hasPerm($chatId, 'alliances')) $rows[] = [ ['text' => 'مدیریت اتحادها', 'callback_data' => 'admin:alliances|page=1'] ];
     if (isOwner($chatId)) $rows[] = [ ['text' => 'مدیریت ادمین ها', 'callback_data' => 'admin:admins'] ];
     $rows[] = [ ['text' => 'بازگشت', 'callback_data' => 'nav:home'] ];
     editMessageText($chatId, $messageId, 'پنل مدیریت', ['inline_keyboard' => $rows]);
@@ -861,6 +862,58 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             sendMessage((int)$u['telegram_id'], 'تبریک! شما برنده گردونه شانس شدید.\nجایزه: ' . e($prize));
             answerCallback($_POST['callback_query']['id'] ?? '', 'اعلام شد');
             break;
+        case 'alliances':
+            if (!hasPerm($chatId,'alliances') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
+            $page=(int)($params['page']??1); $perPage=10; [$offset,$limit]=paginate($page,$perPage);
+            $total = db()->query("SELECT COUNT(*) c FROM alliances")->fetch()['c']??0;
+            $stmt = db()->prepare("SELECT a.id, a.name, a.created_at, u.username, u.telegram_id, u.country FROM alliances a JOIN users u ON u.id=a.leader_user_id ORDER BY a.created_at DESC LIMIT ?,?");
+            $stmt->bindValue(1,$offset,PDO::PARAM_INT); $stmt->bindValue(2,$limit,PDO::PARAM_INT); $stmt->execute(); $rows=$stmt->fetchAll();
+            $kbRows=[]; foreach($rows as $r){ $label = e($r['name']).' | رهبر: '.e($r['country']).' - '.($r['username']?'@'.$r['username']:$r['telegram_id']).' | '.iranDateTime($r['created_at']); $kbRows[]=[ ['text'=>$label,'callback_data'=>'admin:alli_view|id='.$r['id'].'|page='.$page] ]; }
+            $hasMore = ($offset + count($rows)) < $total;
+            $kb = array_merge($kbRows, paginationKeyboard('admin:alliances', $page, $hasMore, 'nav:admin')['inline_keyboard']);
+            editMessageText($chatId,$messageId,'مدیریت اتحادها',['inline_keyboard'=>$kb]);
+            break;
+        case 'alli_view':
+            if (!hasPerm($chatId,'alliances') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
+            $id=(int)($params['id']??0); $page=(int)($params['page']??1);
+            $stmt = db()->prepare("SELECT a.*, u.username AS leader_username, u.telegram_id AS leader_tid, u.country AS leader_country FROM alliances a JOIN users u ON u.id=a.leader_user_id WHERE a.id=?");
+            $stmt->execute([$id]); $a=$stmt->fetch(); if(!$a){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
+            $members = db()->prepare("SELECT m.user_id, m.role, m.display_name, u.telegram_id, u.username, u.country FROM alliance_members m JOIN users u ON u.id=m.user_id WHERE m.alliance_id=? ORDER BY m.role='leader' DESC, m.id ASC");
+            $members->execute([$id]); $ms=$members->fetchAll();
+            $lines=[]; $lines[]='اتحاد: '.e($a['name']);
+            $lines[]='رهبر: '.e($a['leader_country']).' - '.($a['leader_username']?'@'.$a['leader_username']:$a['leader_tid']);
+            $lines[]='شعار: ' . ($a['slogan']?e($a['slogan']):'—');
+            $lines[]='اعضا:';
+            foreach($ms as $m){ if($m['role']!=='leader'){ $disp = $m['display_name'] ?: $m['country']; $lines[]='- '.e($disp).' - '.($m['username']?'@'.$m['username']:$m['telegram_id']); } }
+            $kb=[ [ ['text'=>'اعضا','callback_data'=>'admin:alli_members|id='.$id.'|page='.$page], ['text'=>'حذف اتحاد','callback_data'=>'admin:alli_del|id='.$id.'|page='.$page] ], [ ['text'=>'بازگشت','callback_data'=>'admin:alliances|page='.$page] ] ];
+            editMessageText($chatId,$messageId,implode("\n",$lines),['inline_keyboard'=>$kb]);
+            break;
+        case 'alli_members':
+            if (!hasPerm($chatId,'alliances') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
+            $id=(int)($params['id']??0); $page=(int)($params['page']??1);
+            $ms = db()->prepare("SELECT m.user_id, m.role, m.display_name, u.telegram_id, u.username, u.country FROM alliance_members m JOIN users u ON u.id=m.user_id WHERE m.alliance_id=? ORDER BY m.role='leader' DESC, m.id ASC");
+            $ms->execute([$id]); $rows=$ms->fetchAll();
+            $kb=[]; foreach($rows as $r){ if($r['role']==='leader') continue; $label = e($r['country']).' - '.($r['username']?'@'.$r['username']:$r['telegram_id']); $kb[]=[ ['text'=>$label, 'callback_data'=>'admin:alli_mem_del|aid='.$id.'|uid='.$r['user_id'].'|page='.$page] ]; }
+            $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:alli_view|id='.$id.'|page='.$page] ];
+            editMessageText($chatId,$messageId,'اعضای اتحاد (برای حذف عضو کلیک کنید)',['inline_keyboard'=>$kb]);
+            break;
+        case 'alli_mem_del':
+            if (!hasPerm($chatId,'alliances') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
+            $aid=(int)($params['aid']??0); $uid=(int)($params['uid']??0); $page=(int)($params['page']??1);
+            // prevent removing leader
+            $isLeader = db()->prepare("SELECT 1 FROM alliances a JOIN alliance_members m ON m.user_id=a.leader_user_id WHERE a.id=? AND m.user_id=?");
+            $isLeader->execute([$aid,$uid]); if($isLeader->fetch()){ answerCallback($_POST['callback_query']['id'] ?? '', 'نمی‌توان رهبر را حذف کرد', true); return; }
+            db()->prepare("DELETE FROM alliance_members WHERE alliance_id=? AND user_id=?")->execute([$aid,$uid]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'عضو حذف شد');
+            handleAdminNav($chatId,$messageId,'alli_members',['id'=>$aid,'page'=>$page],$userRow);
+            break;
+        case 'alli_del':
+            if (!hasPerm($chatId,'alliances') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
+            $id=(int)($params['id']??0); $page=(int)($params['page']??1);
+            db()->prepare("DELETE FROM alliances WHERE id=?")->execute([$id]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'اتحاد حذف شد');
+            handleAdminNav($chatId,$messageId,'alliances',['page'=>$page],$userRow);
+            break;
         case 'admins':
             if (!isOwner($chatId)) { answerCallback($_POST['callback_query']['id'] ?? '', 'فقط ادمین اصلی', true); return; }
             $kb=[ [ ['text'=>'افزودن ادمین','callback_data'=>'admin:adm_add'] ], [ ['text'=>'لیست ادمین ها','callback_data'=>'admin:adm_list'] ], [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ] ];
@@ -892,7 +945,7 @@ function renderAdminPermsEditor(int $chatId, int $messageId, int $adminTid): voi
     $row = db()->prepare("SELECT is_owner, permissions FROM admin_users WHERE admin_telegram_id=?");
     $row->execute([$adminTid]); $r=$row->fetch(); if(!$r){ editMessageText($chatId,$messageId,'ادمین پیدا نشد', backButton('admin:admins')); return; }
     if ((int)$r['is_owner']===1) { editMessageText($chatId,$messageId,'این اکانت Owner است.', backButton('admin:admins')); return; }
-    $allPerms = ['support','army','missile','defense','statement','war','roles','assets','settings','wheel','users','bans','admins'];
+    $allPerms = ['support','army','missile','defense','statement','war','roles','assets','settings','wheel','users','bans','alliances','admins'];
     $cur = $r['permissions'] ? (json_decode($r['permissions'], true) ?: []) : [];
     $kb=[]; foreach($allPerms as $p){ $on = in_array($p,$cur,true); $kb[]=[ ['text'=>($on?'✅ ':'⬜️ ').$p, 'callback_data'=>'admin:adm_toggle|id='.$adminTid.'|perm='.$p] ]; }
     $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:adm_list'] ];
