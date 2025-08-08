@@ -1092,11 +1092,17 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 [ ['text'=>'حذف کاربر','callback_data'=>'admin:user_del|id='.$id.'|page='.$page] ],
                 [ ['text'=>'بازگشت','callback_data'=>'admin:user_list|page='.$page] ]
             ];
-            editMessageText($chatId,$messageId,$hdr,['inline_keyboard'=>$kb]);
-            // show country flag if exists
+            // if country flag exists, show photo with caption and inline keyboard; else show text
+            $flagFid = null;
             if ($r['country']) {
                 $flag = db()->prepare("SELECT photo_file_id FROM country_flags WHERE country=?"); $flag->execute([$r['country']]); $fr=$flag->fetch();
-                if ($fr && $fr['photo_file_id']) { sendPhoto($chatId, $fr['photo_file_id'], 'پرچم '.e($r['country'])); }
+                if ($fr && $fr['photo_file_id']) { $flagFid = $fr['photo_file_id']; }
+            }
+            if ($flagFid) {
+                deleteMessage($chatId, $messageId);
+                sendPhoto($chatId, $flagFid, $hdr, ['inline_keyboard'=>$kb]);
+            } else {
+                editMessageText($chatId,$messageId,$hdr,['inline_keyboard'=>$kb]);
             }
             break;
         case 'user_assets':
