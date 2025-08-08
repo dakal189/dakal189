@@ -757,6 +757,7 @@ function renderAdminHome(int $chatId, int $messageId, array $userRow): void {
 function handleAdminNav(int $chatId, int $messageId, string $route, array $params, array $userRow): void {
     // cancel ongoing admin state upon any admin navigation
     clearAdminState($chatId);
+    clearGuideMessage($chatId);
     switch ($route) {
         case 'support':
             $page = isset($params['page']) ? (int)$params['page'] : 1;
@@ -777,7 +778,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $navKb = paginationKeyboard('admin:support', $page, $hasMore, 'nav:admin');
             $kb = array_merge($kbRows, $navKb['inline_keyboard']);
             editMessageText($chatId, $messageId, $text, ['inline_keyboard' => $kb]);
-            sendMessage($chatId,'راهنما: برای دیدن جزئیات، پاسخ یا حذف روی هر مورد کلیک کنید.');
+            sendGuide($chatId,'راهنما: برای دیدن جزئیات، پاسخ یا حذف روی هر مورد کلیک کنید.');
             break;
         case 'support_view':
             $id = (int)$params['id']; $page = (int)($params['page'] ?? 1);
@@ -814,7 +815,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $kb[]=[ ['text'=>'حالت نگهداری','callback_data'=>'admin:maint'] ];
             $kb[]=[ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ];
             editMessageText($chatId,$messageId,'تنظیمات دکمه ها',['inline_keyboard'=>$kb]);
-            sendMessage($chatId,'راهنما: برای تغییر نام یا روشن/خاموش کردن هر دکمه، روی گزینه‌ها کلیک کنید.');
+            sendGuide($chatId,'راهنما: برای تغییر نام یا روشن/خاموش کردن هر دکمه، روی گزینه‌ها کلیک کنید.');
             break;
         case 'maint':
             $on = isMaintenanceEnabled();
@@ -837,7 +838,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ]
             ];
             editMessageText($chatId, $messageId, 'انتخاب بخش', ['inline_keyboard'=>$kb]);
-            sendMessage($chatId,'راهنما: بخش موردنظر را انتخاب کنید و سپس از لیست، مورد را برای نمایش/حذف انتخاب کنید.');
+            sendGuide($chatId,'راهنما: بخش موردنظر را انتخاب کنید و سپس از لیست، مورد را برای نمایش/حذف انتخاب کنید.');
             break;
         case 'amd_list':
             $type = $params['type'] ?? 'army'; $page = (int)($params['page'] ?? 1);
@@ -854,7 +855,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $kb = array_merge($kbRows, paginationKeyboard('admin:amd_list|type='.$type, $page, $hasMore, 'admin:amd')['inline_keyboard']);
             $title = $type==='army'?'لشکرکشی':($type==='missile'?'حمله موشکی':'دفاع');
             editMessageText($chatId, $messageId, 'لیست ' . $title, ['inline_keyboard'=>$kb]);
-            sendMessage($chatId,'راهنما: برای مشاهده یا حذف روی آیتم کلیک کنید.');
+            sendGuide($chatId,'راهنما: برای مشاهده یا حذف روی آیتم کلیک کنید.');
             break;
         case 'amd_view':
             $id=(int)$params['id']; $type=$params['type']??'army'; $page=(int)($params['page']??1);
@@ -875,7 +876,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
         case 'sw':
             $kb = [ [ ['text'=>'بیانیه ها','callback_data'=>'admin:sw_list|type=statement|page=1'], ['text'=>'اعلام جنگ ها','callback_data'=>'admin:sw_list|type=war|page=1'] ], [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ] ];
             editMessageText($chatId, $messageId, 'انتخاب بخش', ['inline_keyboard'=>$kb]);
-            sendMessage($chatId,'راهنما: لیست را باز کنید، هر مورد را برای ارسال به کانال یا حذف بازبینی کنید.');
+            sendGuide($chatId,'راهنما: لیست را باز کنید، هر مورد را برای ارسال به کانال یا حذف بازبینی کنید.');
             break;
         case 'sw_list':
             $type = $params['type']??'statement'; $page=(int)($params['page']??1); $perPage=10; [$offset,$limit]=paginate($page,$perPage);
@@ -887,7 +888,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $kb = array_merge($kbRows, paginationKeyboard('admin:sw_list|type='.$type, $page, $hasMore, 'admin:sw')['inline_keyboard']);
             $title = $type==='statement'?'بیانیه ها':'اعلام جنگ ها';
             editMessageText($chatId,$messageId,$title,['inline_keyboard'=>$kb]);
-            sendMessage($chatId,'راهنما: مورد را انتخاب کنید تا به کانال ارسال یا حذف نمایید.');
+            sendGuide($chatId,'راهنما: مورد را انتخاب کنید تا به کانال ارسال یا حذف نمایید.');
             break;
         case 'sw_view':
             $id=(int)$params['id']; $type=$params['type']??'statement'; $page=(int)($params['page']??1);
@@ -948,7 +949,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $hasMore = ($offset + count($rows)) < $total;
             $kb = array_merge($kbRows, paginationKeyboard('admin:roles', $page, $hasMore, 'nav:admin')['inline_keyboard']);
             editMessageText($chatId,$messageId,'رول ها',['inline_keyboard'=>$kb]);
-            sendMessage($chatId,'راهنما: پس از باز کردن هر رول می‌توانید تایید/رد کنید یا هزینه تعیین نمایید.');
+            sendGuide($chatId,'راهنما: پس از باز کردن هر رول می‌توانید تایید/رد کنید یا هزینه تعیین نمایید.');
             break;
         case 'role_view':
             $id=(int)$params['id']; $page=(int)($params['page']??1);
@@ -990,12 +991,15 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $kb=[]; foreach($rows as $r){ $country=$r['country']; if(!$country) continue; $kb[] = [ ['text'=>$country, 'callback_data'=>'admin:asset_edit|country='.urlencode($country)] ]; }
             $kb[] = [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ];
             editMessageText($chatId,$messageId,'انتخاب کشور برای ویرایش دارایی',['inline_keyboard'=>$kb]);
-            sendMessage($chatId,'راهنما: دارایی متنی برای کشورها را از این بخش ثبت/ویرایش کنید. برای دارایی اختصاصی هر کاربر از پروفایل کاربر استفاده کنید.');
+            sendGuide($chatId,'راهنما: دارایی متنی برای کشورها را از این بخش ثبت/ویرایش کنید. برای دارایی اختصاصی هر کاربر از پروفایل کاربر استفاده کنید.');
             break;
         case 'asset_edit':
             $country = urldecode($params['country'] ?? ''); if(!$country){ answerCallback($_POST['callback_query']['id']??'','کشور نامعتبر',true); return; }
             setAdminState($chatId,'await_asset_text',['country'=>$country]);
-            answerCallback($_POST['callback_query']['id'] ?? '', 'متن دارایی را ارسال کنید');
+            // show flag if exists
+            $flag = db()->prepare("SELECT photo_file_id FROM country_flags WHERE country=?"); $flag->execute([$country]); $fr=$flag->fetch();
+            if ($fr && $fr['photo_file_id']) { sendPhoto($chatId, $fr['photo_file_id'], 'پرچم کشور '.e($country).'\nلطفاً متن دارایی را ارسال کنید.'); }
+            else { sendMessage($chatId,'متن دارایی را ارسال کنید.'); }
             break;
         case 'buttons':
             $rows = db()->query("SELECT `key`, title, enabled FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance') ORDER BY id ASC")->fetchAll();
@@ -1016,6 +1020,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
         case 'users':
             $kb=[ [ ['text'=>'ثبت کاربر','callback_data'=>'admin:user_register'] , ['text'=>'لیست کاربران','callback_data'=>'admin:user_list|page=1'] ], [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ] ];
             editMessageText($chatId,$messageId,'مدیریت کاربران',['inline_keyboard'=>$kb]);
+            sendGuide($chatId,'راهنما: برای ثبت کاربر آیدی عددی یا پیام فوروارد ارسال می‌شود؛ سپس کشور را وارد کنید.');
             break;
         case 'user_register':
             setAdminState($chatId,'await_user_ident',[]);
@@ -1084,7 +1089,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
         case 'users':
             $kb=[ [ ['text'=>'ثبت کاربر','callback_data'=>'admin:user_register'] , ['text'=>'لیست کاربران','callback_data'=>'admin:user_list|page=1'] ], [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ] ];
             editMessageText($chatId,$messageId,'مدیریت کاربران',['inline_keyboard'=>$kb]);
-            sendMessage($chatId,'راهنما: برای ثبت کاربر آیدی عددی یا پیام فوروارد ارسال می‌شود؛ سپس کشور را وارد کنید.');
+            sendGuide($chatId,'راهنما: برای ثبت کاربر آیدی عددی یا پیام فوروارد ارسال می‌شود؛ سپس کشور را وارد کنید.');
             break;
         case 'user_register':
             setAdminState($chatId,'await_user_ident',[]);
@@ -1109,7 +1114,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
         case 'wheel':
             $kb=[ [ ['text'=>'ثبت جایزه گردونه شانس','callback_data'=>'admin:wheel_set'] ], [ ['text'=>'شروع گردونه شانس','callback_data'=>'admin:wheel_start'] ], [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ] ];
             editMessageText($chatId,$messageId,'گردونه شانس',['inline_keyboard'=>$kb]);
-            sendMessage($chatId,'راهنما: ابتدا جایزه را ثبت کنید، سپس شروع را بزنید تا یک برنده تصادفی اعلام شود.');
+            sendGuide($chatId,'راهنما: ابتدا جایزه را ثبت کنید، سپس شروع را بزنید تا یک برنده تصادفی اعلام شود.');
             break;
         case 'wheel_set':
             setAdminState($chatId,'await_wheel_prize',[]);
@@ -1137,7 +1142,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $hasMore = ($offset + count($rows)) < $total;
             $kb = array_merge($kbRows, paginationKeyboard('admin:alliances', $page, $hasMore, 'nav:admin')['inline_keyboard']);
             editMessageText($chatId,$messageId,'مدیریت اتحادها',['inline_keyboard'=>$kb]);
-            sendMessage($chatId,'راهنما: برای مشاهده جزئیات، حذف اتحاد یا مدیریت اعضا، یک اتحاد را انتخاب کنید.');
+            sendGuide($chatId,'راهنما: برای مشاهده جزئیات، حذف اتحاد یا مدیریت اعضا، یک اتحاد را انتخاب کنید.');
             break;
         case 'alli_view':
             if (!hasPerm($chatId,'alliances') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
@@ -1184,7 +1189,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             if (!isOwner($chatId)) { answerCallback($_POST['callback_query']['id'] ?? '', 'فقط ادمین اصلی', true); return; }
             $kb=[ [ ['text'=>'افزودن ادمین','callback_data'=>'admin:adm_add'] ], [ ['text'=>'لیست ادمین ها','callback_data'=>'admin:adm_list'] ], [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ] ];
             editMessageText($chatId,$messageId,'مدیریت ادمین ها',['inline_keyboard'=>$kb]);
-            sendMessage($chatId,'راهنما: پس از افزودن، وارد پروفایل ادمین شوید و دسترسی بخش‌ها را تنظیم کنید.');
+            sendGuide($chatId,'راهنما: پس از افزودن، وارد پروفایل ادمین شوید و دسترسی بخش‌ها را تنظیم کنید.');
             break;
         case 'adm_add':
             if (!isOwner($chatId)) { answerCallback($_POST['callback_query']['id'] ?? '', 'فقط ادمین اصلی', true); return; }
@@ -1233,8 +1238,13 @@ function renderAdminPermsEditor(int $chatId, int $messageId, int $adminTid): voi
     $row->execute([$adminTid]); $r=$row->fetch(); if(!$r){ editMessageText($chatId,$messageId,'ادمین پیدا نشد', backButton('admin:admins')); return; }
     if ((int)$r['is_owner']===1) { editMessageText($chatId,$messageId,'این اکانت Owner است.', backButton('admin:admins')); return; }
     $allPerms = ['support','army','missile','defense','statement','war','roles','assets','settings','wheel','users','bans','alliances','admins'];
+    $labels = [
+        'support'=>'پشتیبانی', 'army'=>'لشکرکشی', 'missile'=>'حمله موشکی', 'defense'=>'دفاع',
+        'statement'=>'بیانیه', 'war'=>'اعلام جنگ', 'roles'=>'رول‌ها', 'assets'=>'دارایی‌ها',
+        'settings'=>'تنظیمات', 'wheel'=>'گردونه شانس', 'users'=>'کاربران', 'bans'=>'بن‌ها', 'alliances'=>'اتحادها', 'admins'=>'ادمین‌ها'
+    ];
     $cur = $r['permissions'] ? (json_decode($r['permissions'], true) ?: []) : [];
-    $kb=[]; foreach($allPerms as $p){ $on = in_array($p,$cur,true); $kb[]=[ ['text'=>($on?'✅ ':'⬜️ ').$p, 'callback_data'=>'admin:adm_toggle|id='.$adminTid.'|perm='.$p] ]; }
+    $kb=[]; foreach($allPerms as $p){ $on = in_array($p,$cur,true); $label = $labels[$p] ?? $p; $kb[]=[ ['text'=>($on?'✅ ':'⬜️ ').$label, 'callback_data'=>'admin:adm_toggle|id='.$adminTid+'|perm='.$p] ]; }
     $kb[]=[ ['text'=>'حذف ادمین','callback_data'=>'admin:adm_delete|id='.$adminTid] ];
     $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:adm_list'] ];
     editMessageText($chatId,$messageId,'دسترسی ها برای '.$adminTid,['inline_keyboard'=>$kb]);
