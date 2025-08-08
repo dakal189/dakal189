@@ -1228,6 +1228,19 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             answerCallback($_POST['callback_query']['id'] ?? '', 'حذف شد');
             handleAdminNav($chatId, $messageId, 'support', ['page'=>$page], $userRow);
             break;
+        case 'await_war_defender':
+            $sid=(int)$params['submission_id']; $page=(int)($params['page']??1); $attTid=(int)$params['att_tid'];
+            $defTid = extractTelegramIdFromMessage($message);
+            if (!$defTid) { sendMessage($chatId,'آیدی نامعتبر. دوباره آیدی عددی دفاع کننده را بفرستید.'); return; }
+            // Show send options
+            $kb = [
+                [ ['text'=>'فرستادن با عکس','callback_data'=>'admin:war_send|id='.$sid.'|att='.$attTid.'|def='.$defTid.'|mode=auto'], ['text'=>'بی عکس','callback_data'=>'admin:war_send|id='.$sid.'|att='.$attTid.'|def='.$defTid.'|mode=text'] ],
+                [ ['text'=>'فقط عکس کشور مهاجم','callback_data'=>'admin:war_send|id='.$sid.'|att='.$attTid.'|def='.$defTid.'|mode=att'], ['text'=>'فقط عکس کشور مدافع','callback_data'=>'admin:war_send|id='.$sid.'|att='.$attTid.'|def='.$defTid.'|mode=def'] ],
+                [ ['text'=>'بازگشت','callback_data'=>'admin:sw_view|id='.$sid.'|type=war|page='.$page] ]
+            ];
+            sendMessage($chatId,'نحوه ارسال به کانال را انتخاب کنید:', ['inline_keyboard'=>$kb]);
+            clearAdminState($chatId);
+            break;
         default:
             answerCallback($_POST['callback_query']['id'] ?? '', 'بخش ناشناخته', true);
     }
@@ -1559,8 +1572,13 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             $sid=(int)$data['submission_id']; $page=(int)($data['page']??1); $attTid=(int)$data['att_tid'];
             $defTid = extractTelegramIdFromMessage($message);
             if (!$defTid) { sendMessage($chatId,'آیدی نامعتبر. دوباره آیدی عددی دفاع کننده را بفرستید.'); return; }
-            $ok = sendWarSubmissionToChannelWithUsers($sid, $attTid, $defTid);
-            sendMessage($chatId, $ok ? 'اعلام جنگ ارسال شد.' : 'ارسال ناموفق بود. پرچم/کشور را بررسی کنید.');
+            // Show send options
+            $kb = [
+                [ ['text'=>'فرستادن با عکس','callback_data'=>'admin:war_send|id='.$sid.'|att='.$attTid.'|def='.$defTid.'|mode=auto'], ['text'=>'بی عکس','callback_data'=>'admin:war_send|id='.$sid.'|att='.$attTid.'|def='.$defTid.'|mode=text'] ],
+                [ ['text'=>'فقط عکس کشور مهاجم','callback_data'=>'admin:war_send|id='.$sid.'|att='.$attTid.'|def='.$defTid.'|mode=att'], ['text'=>'فقط عکس کشور مدافع','callback_data'=>'admin:war_send|id='.$sid.'|att='.$attTid.'|def='.$defTid.'|mode=def'] ],
+                [ ['text'=>'بازگشت','callback_data'=>'admin:sw_view|id='.$sid.'|type=war|page='.$page] ]
+            ];
+            sendMessage($chatId,'نحوه ارسال به کانال را انتخاب کنید:', ['inline_keyboard'=>$kb]);
             clearAdminState($chatId);
             break;
         default:
