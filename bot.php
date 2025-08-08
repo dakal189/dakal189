@@ -66,6 +66,10 @@ function bootstrapDatabase(PDO $pdo): void {
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NULL ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+    // Optional columns for assets/money
+    try { $pdo->exec("ALTER TABLE users ADD COLUMN assets_text TEXT NULL"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE users ADD COLUMN money BIGINT NOT NULL DEFAULT 0"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE users ADD COLUMN daily_profit BIGINT NOT NULL DEFAULT 0"); } catch (Exception $e) {}
 
     // Admin users
     $pdo->exec("CREATE TABLE IF NOT EXISTS admin_users (
@@ -84,6 +88,12 @@ function bootstrapDatabase(PDO $pdo): void {
     $pdo->exec("CREATE TABLE IF NOT EXISTS settings (
         `key` VARCHAR(64) PRIMARY KEY,
         `value` TEXT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    // Country flags
+    $pdo->exec("CREATE TABLE IF NOT EXISTS country_flags (
+        country VARCHAR(64) PRIMARY KEY,
+        photo_file_id VARCHAR(256) NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
     // User states (user-side wizards)
@@ -235,6 +245,21 @@ function apiRequest(string $method, array $params = []) {
     return json_decode($response, true);
 }
 
+function apiRequestMultipart(string $method, array $params = []) {
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, API_URL . $method);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $params);
+    $response = curl_exec($ch);
+    if ($response === false) {
+        curl_close($ch);
+        return null;
+    }
+    curl_close($ch);
+    return json_decode($response, true);
+}
+
 function sendMessage($chatId, $text, $replyMarkup = null, $parseMode = 'HTML', $replyToMessageId = null) {
     $params = [
         'chat_id' => $chatId,
@@ -245,6 +270,10 @@ function sendMessage($chatId, $text, $replyMarkup = null, $parseMode = 'HTML', $
     if ($replyMarkup) $params['reply_markup'] = json_encode($replyMarkup, JSON_UNESCAPED_UNICODE);
     if ($replyToMessageId) $params['reply_to_message_id'] = $replyToMessageId;
     return apiRequest('sendMessage', $params);
+}
+
+function deleteMessage($chatId, $messageId) {
+    return apiRequest('deleteMessage', [ 'chat_id' => $chatId, 'message_id' => $messageId ]);
 }
 
 function editMessageText($chatId, $messageId, $text, $replyMarkup = null, $parseMode = 'HTML') {
@@ -268,6 +297,17 @@ function sendPhoto($chatId, $fileIdOrUrl, $caption = '', $replyMarkup = null, $p
     ];
     if ($replyMarkup) $params['reply_markup'] = json_encode($replyMarkup, JSON_UNESCAPED_UNICODE);
     return apiRequest('sendPhoto', $params);
+}
+
+function sendPhotoFile($chatId, $filePath, $caption = '', $replyMarkup = null, $parseMode = 'HTML') {
+    $params = [
+        'chat_id' => $chatId,
+        'photo' => new CURLFile($filePath),
+        'caption' => $caption,
+        'parse_mode' => $parseMode,
+    ];
+    if ($replyMarkup) $params['reply_markup'] = json_encode($replyMarkup, JSON_UNESCAPED_UNICODE);
+    return apiRequestMultipart('sendPhoto', $params);
 }
 
 function answerCallback($callbackId, $text = '', $alert = false) {
@@ -505,7 +545,76 @@ function getAdminState(int $tgId): ?array {
 }
 
 function iranDateTime(string $datetime): string {
-    return date('Y-m-d H:i', strtotime($datetime));
+    $ts = strtotime($datetime);
+    return jalaliDate('Y/m/d H:i', $ts);
+}
+
+function jalaliDate($format, $timestamp=null, $timezone='Asia/Tehran') {
+    if ($timestamp === null) $timestamp = time();
+    $dt = new DateTime('@'.$timestamp);
+    $dt->setTimezone(new DateTimeZone($timezone));
+    $gy = (int)$dt->format('Y');
+    $gm = (int)$dt->format('n');
+    $gd = (int)$dt->format('j');
+    list($jy, $jm, $jd) = gregorian_to_jalali($gy, $gm, $gd);
+    $replacements = [
+        'Y' => sprintf('%04d', $jy),
+        'y' => substr(sprintf('%04d', $jy),2,2),
+        'm' => sprintf('%02d', $jm),
+        'n' => $jm,
+        'd' => sprintf('%02d', $jd),
+        'j' => $jd,
+        'H' => $dt->format('H'),
+        'i' => $dt->format('i'),
+        's' => $dt->format('s')
+    ];
+    $out='';
+    $len = strlen($format);
+    for ($i=0; $i<$len; $i++) {
+        $ch = $format[$i];
+        $out .= $replacements[$ch] ?? $ch;
+    }
+    return $out;
+}
+
+function gregorian_to_jalali($g_y, $g_m, $g_d) {
+    $g_days_in_month = [31,28,31,30,31,30,31,31,30,31,30,31];
+    $j_days_in_month = [31,31,31,31,31,31,30,30,30,30,30,29];
+    $gy = $g_y-1600;
+    $gm = $g_m-1;
+    $gd = $g_d-1;
+    $g_day_no = 365*$gy + (int)(($gy+3)/4) - (int)(($gy+99)/100) + (int)(($gy+399)/400);
+    for ($i=0; $i<$gm; ++$i)
+        $g_day_no += $g_days_in_month[$i];
+    if ($gm>1 && (($g_y%4==0 && $g_y%100!=0) || ($g_y%400==0)))
+        $g_day_no++;
+    $g_day_no += $gd;
+    $j_day_no = $g_day_no-79;
+    $j_np = (int)($j_day_no/12053);
+    $j_day_no %= 12053;
+    $jy = 979+33*$j_np+4*(int)($j_day_no/1461);
+    $j_day_no %= 1461;
+    if ($j_day_no >= 366) {
+        $jy += (int)(($j_day_no-366)/365);
+        $j_day_no = ($j_day_no-366)%365;
+    }
+    for ($i=0; $i<11 && $j_day_no >= $j_days_in_month[$i]; ++$i)
+        $j_day_no -= $j_days_in_month[$i];
+    $jm = $i+1;
+    $jd = $j_day_no+1;
+    return [$jy, $jm, $jd];
+}
+
+function applyDailyProfitsIfDue(): void {
+    // apply at 09:00 Asia/Tehran once per day
+    $now = new DateTime('now', new DateTimeZone('Asia/Tehran'));
+    $today = $now->format('Y-m-d');
+    $hour = (int)$now->format('H');
+    $last = getSetting('last_profit_apply_date', '');
+    if ($hour >= 9 && $last !== $today) {
+        db()->exec("UPDATE users SET money = money + daily_profit WHERE daily_profit > 0");
+        setSetting('last_profit_apply_date', $today);
+    }
 }
 
 function paginate(int $page, int $perPage): array {
@@ -555,6 +664,9 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
         editMessageText($chatId, $messageId, 'شما از ربات بن هستید.');
         return;
     }
+    // cancel any ongoing states on navigation
+    clearUserState($chatId);
+    clearAdminState($chatId);
     $isRegistered = (int)$userRow['is_registered'] === 1;
     $isAdmin = getAdminPermissions($chatId) ? true : false;
 
@@ -632,6 +744,8 @@ function renderAdminHome(int $chatId, int $messageId, array $userRow): void {
 // --------------------- ADMIN SECTIONS ---------------------
 
 function handleAdminNav(int $chatId, int $messageId, string $route, array $params, array $userRow): void {
+    // cancel ongoing admin state upon any admin navigation
+    clearAdminState($chatId);
     switch ($route) {
         case 'support':
             $page = isset($params['page']) ? (int)$params['page'] : 1;
@@ -688,6 +802,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $kb[]=[ ['text'=>'حالت نگهداری','callback_data'=>'admin:maint'] ];
             $kb[]=[ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ];
             editMessageText($chatId,$messageId,'تنظیمات دکمه ها',['inline_keyboard'=>$kb]);
+            sendMessage($chatId,'راهنما: برای تغییر نام یا روشن/خاموش کردن هر دکمه، روی گزینه‌ها کلیک کنید.');
             break;
         case 'maint':
             $on = isMaintenanceEnabled();
@@ -772,10 +887,29 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $id=(int)$params['id']; $type=$params['type']??'statement'; $page=(int)($params['page']??1);
             $stmt = db()->prepare("SELECT s.*, u.username FROM submissions s JOIN users u ON u.id=s.user_id WHERE s.id=?");
             $stmt->execute([$id]); $r=$stmt->fetch(); if(!$r){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
-            $title = $type==='war' ? ('اعلام جنگ\nحمله کننده: '.e($r['attacker_country'])."\nدفاع کننده: ".e($r['defender_country'])) : 'بیانیه';
-            $text = $title . "\n\n" . ($r['text']?e($r['text']):'') . "\n\n" . 'فرستنده: ' . ($r['username'] ? '@'.e($r['username']) : '');
-            if ($r['photo_file_id']) sendPhotoToChannel($r['photo_file_id'], $text); else sendToChannel($text);
-            answerCallback($_POST['callback_query']['id'] ?? '', 'ارسال شد');
+            if ($type==='war') {
+                $epics = [
+                    'کشور '.e($r['attacker_country']).' به کشور '.e($r['defender_country']).' یورش برد! شعله‌های جنگ زبانه کشید...',
+                    'آتش جنگ میان '.e($r['attacker_country']).' و '.e($r['defender_country']).' برافروخته شد! آسمان‌ها لرزید...',
+                    'ناقوس نبرد به صدا درآمد؛ '.e($r['attacker_country']).' در برابر '.e($r['defender_country']).' ایستاد!',
+                    e($r['attacker_country']).' حمله را آغاز کرد و '.e($r['defender_country']).' دفاع می‌کند! سرنوشت رقم می‌خورد...',
+                    'زمین از قدم‌های سربازان '.e($r['attacker_country']).' تا '.e($r['defender_country']).' می‌لرزد!',
+                    'نبرد بزرگ میان '.e($r['attacker_country']).' و '.e($r['defender_country']).' شروع شد!'
+                ];
+                $headline = $epics[array_rand($epics)];
+                // Try compose VS image from flags
+                $imgId = composeWarImageFromFlags($r['attacker_country'], $r['defender_country']);
+                $caption = $headline."\n\n".($r['text']?e($r['text']):'') . ( $r['username']?"\n\nفرستنده: @".e($r['username']):'' );
+                if ($imgId && is_file($imgId)) { sendPhotoFile(CHANNEL_ID, $imgId, $caption); @unlink($imgId); }
+                else if ($r['photo_file_id']) { sendPhotoToChannel($r['photo_file_id'], $caption); }
+                else { sendToChannel($caption); }
+                answerCallback($_POST['callback_query']['id'] ?? '', 'ارسال شد');
+            } else {
+                $title = 'بیانیه';
+                $text = $title . "\n\n" . ($r['text']?e($r['text']):'') . "\n\n" . 'فرستنده: ' . ($r['username'] ? '@'.e($r['username']) : '');
+                if ($r['photo_file_id']) sendPhotoToChannel($r['photo_file_id'], $text); else sendToChannel($text);
+                answerCallback($_POST['callback_query']['id'] ?? '', 'ارسال شد');
+            }
             break;
         case 'sw_del':
             $id=(int)$params['id']; $type=$params['type']??'statement'; $page=(int)($params['page']??1);
@@ -877,26 +1011,71 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $id=(int)$params['id']; $page=(int)($params['page']??1);
             $stmt=db()->prepare("SELECT * FROM users WHERE id=?"); $stmt->execute([$id]); $r=$stmt->fetch(); if(!$r){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
             $hdr = usernameLink($r['username'], (int)$r['telegram_id'])."\nID: ".$r['telegram_id']."\nکشور: ".e($r['country'])."\nثبت: ".((int)$r['is_registered']?'بله':'خیر')."\nبن: ".((int)$r['banned']?'بله':'خیر');
-            $kb=[ [ ['text'=>'حذف کاربر','callback_data'=>'admin:user_del|id='.$id.'|page='.$page] ], [ ['text'=>'بازگشت','callback_data'=>'admin:user_list|page='.$page] ] ];
+            $kb=[
+                [ ['text'=>'مدیریت دارایی کاربر','callback_data'=>'admin:user_assets|id='.$id.'|page='.$page], ['text'=>'تنظیم پرچم کشور','callback_data'=>'admin:set_flag|id='.$id.'|page='.$page] ],
+                [ ['text'=>'حذف کاربر','callback_data'=>'admin:user_del|id='.$id.'|page='.$page] ],
+                [ ['text'=>'بازگشت','callback_data'=>'admin:user_list|page='.$page] ]
+            ];
             editMessageText($chatId,$messageId,$hdr,['inline_keyboard'=>$kb]);
             break;
-        case 'user_del':
+        case 'user_assets':
             $id=(int)$params['id']; $page=(int)($params['page']??1);
-            db()->prepare("UPDATE users SET is_registered=0, country=NULL WHERE id=?")->execute([$id]);
-            answerCallback($_POST['callback_query']['id'] ?? '', 'حذف شد');
-            handleAdminNav($chatId,$messageId,'user_list',['page'=>$page],$userRow);
+            $stmt=db()->prepare("SELECT username, telegram_id, country, assets_text, money, daily_profit FROM users WHERE id=?"); $stmt->execute([$id]); $u=$stmt->fetch(); if(!$u){ answerCallback($_POST['callback_query']['id']??'','کاربر یافت نشد',true); return; }
+            $text = 'دارایی کاربر: '.($u['username']?'@'.$u['username']:$u['telegram_id'])."\nکشور: ".e($u['country'])."\n\n".($u['assets_text']?e($u['assets_text']):'—')."\n\nپول: ".$u['money']." | سود روزانه: ".$u['daily_profit'];
+            $kb=[
+                [ ['text'=>'تغییر متن دارایی','callback_data'=>'admin:user_assets_text|id='.$id.'|page='.$page] ],
+                [ ['text'=>'+100','callback_data'=>'admin:user_money_delta|id='.$id.'|d=100'], ['text'=>'+1000','callback_data'=>'admin:user_money_delta|id='.$id.'|d=1000'], ['text'=>'-100','callback_data'=>'admin:user_money_delta|id='.$id.'|d=-100'], ['text'=>'-1000','callback_data'=>'admin:user_money_delta|id='.$id.'|d=-1000'] ],
+                [ ['text'=>'+10 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=10'], ['text'=>'+100 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=100'], ['text'=>'-10 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=-10'], ['text'=>'-100 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=-100'] ],
+                [ ['text'=>'تنظیم مستقیم پول','callback_data'=>'admin:user_money_set|id='.$id.'|page='.$page], ['text'=>'تنظیم مستقیم سود','callback_data'=>'admin:user_profit_set|id='.$id.'|page='.$page] ],
+                [ ['text'=>'بازگشت','callback_data'=>'admin:user_view|id='.$id.'|page='.$page] ]
+            ];
+            editMessageText($chatId,$messageId,$text,['inline_keyboard'=>$kb]);
             break;
-        case 'bans':
-            $kb=[ [ ['text'=>'بن کاربر','callback_data'=>'admin:ban_add'], ['text'=>'حذف بن','callback_data'=>'admin:ban_remove'] ], [ ['text'=>'لیست بن ها','callback_data'=>'admin:ban_list'] ], [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ] ];
-            editMessageText($chatId,$messageId,'مدیریت بن',['inline_keyboard'=>$kb]);
+        case 'user_assets_text':
+            $id=(int)$params['id']; setAdminState($chatId,'await_user_assets_text',['id'=>$id]);
+            sendMessage($chatId,'متن جدید دارایی کاربر را ارسال کنید.');
+            break;
+        case 'user_money_delta':
+            $id=(int)$params['id']; $d=(int)($params['d']??0);
+            db()->prepare("UPDATE users SET money = GREATEST(0, money + ?) WHERE id=?")->execute([$d,$id]);
+            handleAdminNav($chatId,$messageId,'user_assets',['id'=>$id],$userRow);
+            break;
+        case 'user_profit_delta':
+            $id=(int)$params['id']; $d=(int)($params['d']??0);
+            db()->prepare("UPDATE users SET daily_profit = GREATEST(0, daily_profit + ?) WHERE id=?")->execute([$d,$id]);
+            handleAdminNav($chatId,$messageId,'user_assets',['id'=>$id],$userRow);
+            break;
+        case 'user_money_set':
+            $id=(int)$params['id']; setAdminState($chatId,'await_user_money',['id'=>$id]); sendMessage($chatId,'عدد پول را ارسال کنید.');
+            break;
+        case 'user_profit_set':
+            $id=(int)$params['id']; setAdminState($chatId,'await_user_profit',['id'=>$id]); sendMessage($chatId,'عدد سود روزانه را ارسال کنید.');
+            break;
+        case 'set_flag':
+            $id=(int)$params['id'];
+            $stmt=db()->prepare("SELECT country FROM users WHERE id=?"); $stmt->execute([$id]); $u=$stmt->fetch(); if(!$u || !$u['country']){ answerCallback($_POST['callback_query']['id']??'','کشور نامعتبر',true); return; }
+            setAdminState($chatId,'await_country_flag',['country'=>$u['country'],'uid'=>$id]);
+            sendMessage($chatId,'تصویر پرچم کشور '.e($u['country']).' را به صورت عکس ارسال کنید.');
+            break;
+        case 'users':
+            $kb=[ [ ['text'=>'ثبت کاربر','callback_data'=>'admin:user_register'] , ['text'=>'لیست کاربران','callback_data'=>'admin:user_list|page=1'] ], [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ] ];
+            editMessageText($chatId,$messageId,'مدیریت کاربران',['inline_keyboard'=>$kb]);
+            sendMessage($chatId,'راهنما: برای ثبت کاربر آیدی عددی یا پیام فوروارد ارسال می‌شود؛ سپس کشور را وارد کنید.');
+            break;
+        case 'user_register':
+            setAdminState($chatId,'await_user_ident',[]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'آیدی عددی یا پیام فوروارد شده کاربر را ارسال کنید');
+            sendMessage($chatId,'آیدی عددی یا پیام فوروارد کاربر را ارسال کنید تا ثبت شود.');
             break;
         case 'ban_add':
             setAdminState($chatId,'await_ban_ident',[]);
             answerCallback($_POST['callback_query']['id'] ?? '', 'آیدی عددی یا پیام فوروارد شده کاربر را ارسال کنید');
+            sendMessage($chatId,'آیدی عددی یا پیام فوروارد کاربر را برای بن ارسال کنید.');
             break;
         case 'ban_remove':
             setAdminState($chatId,'await_unban_ident',[]);
             answerCallback($_POST['callback_query']['id'] ?? '', 'آیدی عددی یا پیام فوروارد شده کاربر را ارسال کنید');
+            sendMessage($chatId,'آیدی عددی یا پیام فوروارد کاربر را برای حذف بن ارسال کنید.');
             break;
         case 'ban_list':
             $rows = db()->query("SELECT username, telegram_id FROM users WHERE banned=1 ORDER BY id ASC LIMIT 100")->fetchAll();
@@ -910,6 +1089,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
         case 'wheel_set':
             setAdminState($chatId,'await_wheel_prize',[]);
             answerCallback($_POST['callback_query']['id'] ?? '', 'نام جایزه را ارسال کنید');
+            sendMessage($chatId,'نام جایزه گردونه شانس را ارسال کنید.');
             break;
         case 'wheel_start':
             $row = db()->query("SELECT current_prize FROM wheel_settings WHERE id=1")->fetch();
@@ -962,7 +1142,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $aid=(int)($params['aid']??0); $uid=(int)($params['uid']??0); $page=(int)($params['page']??1);
             // prevent removing leader
             $isLeader = db()->prepare("SELECT 1 FROM alliances a JOIN alliance_members m ON m.user_id=a.leader_user_id WHERE a.id=? AND m.user_id=?");
-            $isLeader->execute([$aid,$uid]); if($isLeader->fetch()){ answerCallback($_POST['callback_query']['id'] ?? '', 'نمی‌توان رهبر را حذف کرد', true); return; }
+            $isLeader->execute([$aid,$uid]); if($isLeader->fetch()){ answerCallback($_POST['callback_query']['id']??'','نمی‌توان رهبر را حذف کرد', true); return; }
             db()->prepare("DELETE FROM alliance_members WHERE alliance_id=? AND user_id=?")->execute([$aid,$uid]);
             answerCallback($_POST['callback_query']['id'] ?? '', 'عضو حذف شد');
             handleAdminNav($chatId,$messageId,'alli_members',['id'=>$aid,'page'=>$page],$userRow);
@@ -995,6 +1175,17 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             if (!isOwner($chatId)) { answerCallback($_POST['callback_query']['id'] ?? '', 'فقط ادمین اصلی', true); return; }
             $aid=(int)$params['id'];
             renderAdminPermsEditor($chatId, $messageId, $aid);
+            break;
+        case 'copyid':
+            $tid = (int)$params['id'];
+            answerCallback($_POST['callback_query']['id'] ?? '', 'ID: ' . $tid, true);
+            break;
+        case 'support_del':
+            $id = (int)$params['id']; $page = (int)($params['page'] ?? 1);
+            $stmt = db()->prepare("UPDATE support_messages SET status='deleted' WHERE id=?");
+            $stmt->execute([$id]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'حذف شد');
+            handleAdminNav($chatId, $messageId, 'support', ['page'=>$page], $userRow);
             break;
         default:
             answerCallback($_POST['callback_query']['id'] ?? '', 'بخش ناشناخته', true);
@@ -1061,6 +1252,7 @@ function handleAllianceNav(int $chatId, int $messageId, string $route, array $pa
         case 'new':
             setUserState($chatId,'await_alliance_name',[]);
             answerCallback($_POST['callback_query']['id'] ?? '', 'نام اتحاد را ارسال کنید');
+            sendMessage($chatId,'برای ساخت اتحاد، یک نام ارسال کنید.');
             break;
         case 'list':
             $page=(int)($params['page']??1); $perPage=10; [$offset,$limit]=paginate($page,$perPage);
@@ -1081,6 +1273,7 @@ function handleAllianceNav(int $chatId, int $messageId, string $route, array $pa
         case 'invite':
             $id=(int)$params['id']; setUserState($chatId,'await_invite_ident',['alliance_id'=>$id]);
             answerCallback($_POST['callback_query']['id'] ?? '', 'آیدی عددی یا پیام فوروارد شده کاربر را ارسال کنید');
+            sendMessage($chatId,'آیدی عددی یا پیام فوروارد عضو را ارسال کنید تا دعوت شود.');
             break;
         case 'editslogan':
             $id=(int)$params['id']; setUserState($chatId,'await_slogan',['alliance_id'=>$id]); answerCallback($_POST['callback_query']['id'] ?? '', 'شعار جدید را ارسال کنید');
@@ -1130,6 +1323,7 @@ function processUserMessage(array $message): void {
     $u = ensureUser($from);
     $chatId = (int)$u['telegram_id'];
     purgeOldSupportMessages();
+    applyDailyProfitsIfDue();
 
     if ((int)$u['banned'] === 1) {
         sendMessage($chatId, 'شما از ربات بن هستید.');
@@ -1253,10 +1447,15 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             $supportId = (int)$data['support_id']; $page=(int)($data['page']??1);
             $replyText = $text ?: ($message['caption'] ?? '');
             $photo = null; if (!empty($message['photo'])) { $photos=$message['photo']; $largest=end($photos); $photo=$largest['file_id']??null; }
-            $stmt = db()->prepare("SELECT sm.id, u.telegram_id FROM support_messages sm JOIN users u ON u.id=sm.user_id WHERE sm.id=?"); $stmt->execute([$supportId]); $r=$stmt->fetch();
+            $stmt = db()->prepare("SELECT sm.id, sm.text AS stext, sm.photo_file_id AS sphoto, u.telegram_id FROM support_messages sm JOIN users u ON u.id=sm.user_id WHERE sm.id=?"); $stmt->execute([$supportId]); $r=$stmt->fetch();
             if ($r) {
-                if ($photo) sendPhoto((int)$r['telegram_id'], $photo, 'پاسخ پشتیبانی:\n\n'.($replyText?:''), ['inline_keyboard'=>[ [ ['text'=>'بستن','callback_data'=>'admin:support_close|id='.$supportId.'|page='.$page] ] ]]); else sendMessage((int)$r['telegram_id'], 'پاسخ پشتیبانی:\n\n'.($replyText?:''), ['inline_keyboard'=>[ [ ['text'=>'بستن','callback_data'=>'admin:support_close|id='.$supportId.'|page='.$page] ] ]]);
+                // send reply
+                if ($photo) sendPhoto((int)$r['telegram_id'], $photo, 'پاسخ پشتیبانی:\n\n'.($replyText?:'')); else sendMessage((int)$r['telegram_id'], 'پاسخ پشتیبانی:\n\n'.($replyText?:''));
                 db()->prepare("INSERT INTO support_replies (support_id, admin_id, text, photo_file_id) VALUES (?, ?, ?, ?)")->execute([$supportId, $chatId, $replyText ?: null, $photo]);
+                $replyId = (int)db()->lastInsertId();
+                // notify with view button
+                $kb=[ [ ['text'=>'دیدن پاسخ','callback_data'=>'sreply:view|sid='.$supportId.'|rid='.$replyId] ] ];
+                sendMessage((int)$r['telegram_id'], 'ادمین به پیام شما پاسخ داد.', ['inline_keyboard'=>$kb]);
                 sendMessage($chatId,'ارسال شد.');
             } else {
                 sendMessage($chatId,'یافت نشد');
@@ -1264,6 +1463,32 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             clearAdminState($chatId);
             // refresh list
             // no messageId here; just notify
+            break;
+        case 'await_user_assets_text':
+            $id=(int)$data['id']; $content = $text ?: ($message['caption'] ?? '');
+            db()->prepare("UPDATE users SET assets_text=? WHERE id=?")->execute([$content, $id]);
+            sendMessage($chatId,'متن دارایی ذخیره شد.');
+            clearAdminState($chatId);
+            break;
+        case 'await_user_money':
+            $id=(int)$data['id']; $val = (int)preg_replace('/\D+/', '', (string)$text);
+            db()->prepare("UPDATE users SET money=? WHERE id=?")->execute([$val, $id]);
+            sendMessage($chatId,'پول کاربر تنظیم شد: '.$val);
+            clearAdminState($chatId);
+            break;
+        case 'await_user_profit':
+            $id=(int)$data['id']; $val = (int)preg_replace('/\D+/', '', (string)$text);
+            db()->prepare("UPDATE users SET daily_profit=? WHERE id=?")->execute([$val, $id]);
+            sendMessage($chatId,'سود روزانه کاربر تنظیم شد: '.$val);
+            clearAdminState($chatId);
+            break;
+        case 'await_country_flag':
+            $country = $data['country'];
+            $photo = null; if (!empty($message['photo'])) { $photos=$message['photo']; $largest=end($photos); $photo=$largest['file_id']??null; }
+            if (!$photo) { sendMessage($chatId,'عکس ارسال کنید.'); return; }
+            db()->prepare("INSERT INTO country_flags (country, photo_file_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE photo_file_id=VALUES(photo_file_id)")->execute([$country, $photo]);
+            sendMessage($chatId,'پرچم برای '.e($country).' ثبت شد.');
+            clearAdminState($chatId);
             break;
         default:
             sendMessage($chatId,'حالت ناشناخته'); clearAdminState($chatId);
@@ -1410,6 +1635,7 @@ function processCallback(array $callback): void {
     $from = $callback['from']; $u = ensureUser($from); $chatId=(int)$u['telegram_id'];
     $message = $callback['message'] ?? null; $messageId = $message['message_id'] ?? 0;
     $data = $callback['data'] ?? '';
+    applyDailyProfitsIfDue();
 
     // Maintenance block for non-admins
     if (!getAdminPermissions($chatId) && isMaintenanceEnabled()) {
@@ -1478,6 +1704,22 @@ function processCallback(array $callback): void {
             answerCallback($callback['id'],'رد شد');
         }
         return;
+    }
+    if (strpos($action, 'sreply:') === 0) {
+        $route = substr($action, 7);
+        if ($route === 'view') {
+            $sid=(int)($params['sid']??0); $rid=(int)($params['rid']??0);
+            $stmt = db()->prepare("SELECT sm.text stext, sm.photo_file_id sphoto, sr.text rtext, sr.photo_file_id rphoto FROM support_messages sm JOIN support_replies sr ON sr.id=? WHERE sm.id=?");
+            $stmt->execute([$rid,$sid]); $r=$stmt->fetch(); if(!$r){ answerCallback($callback['id'],'یافت نشد',true); return; }
+            $body = "پیام شما:\n".($r['stext']?e($r['stext']):'—')."\n\nپاسخ ادمین:\n".($r['rtext']?e($r['rtext']):'—');
+            $kb=[ [ ['text'=>'بستن','callback_data'=>'sreply:close|sid='.$sid] ] ];
+            if ($r['rphoto']) sendPhoto($chatId, $r['rphoto'], $body, ['inline_keyboard'=>$kb]); else editMessageText($chatId, $messageId, $body, ['inline_keyboard'=>$kb]);
+            return;
+        }
+        if ($route === 'close') {
+            deleteMessage($chatId, $messageId);
+            return;
+        }
     }
 
     // Fallback
