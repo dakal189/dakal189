@@ -739,6 +739,7 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
     clearUserState($chatId);
     clearAdminState($chatId);
     clearGuideMessage($chatId);
+    clearHeaderPhoto($chatId);
     $isRegistered = (int)$userRow['is_registered'] === 1;
     $isAdmin = getAdminPermissions($chatId) ? true : false;
 
@@ -830,6 +831,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
     // cancel ongoing admin state upon any admin navigation
     clearAdminState($chatId);
     clearGuideMessage($chatId);
+    clearHeaderPhoto($chatId);
     switch ($route) {
         case 'support':
             $page = isset($params['page']) ? (int)$params['page'] : 1;
@@ -859,14 +861,16 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             if (!$r) { answerCallback($_POST['callback_query']['id'] ?? '', 'پیدا نشد', true); return; }
             $hdr = usernameLink($r['username'], (int)$r['telegram_id']) . "\nID: <code>" . (int)$r['telegram_id'] . "</code>\nزمان: " . iranDateTime($r['created_at']);
             $kb = [
-                [ ['text'=>'پاسخ','callback_data'=>'admin:support_reply|id='.$id.'|page='.$page], ['text'=>'حذف','callback_data'=>'admin:support_del|id='.$id.'|page='.$page] ],
+                [ ['text'=>'پاسخ','callback_data'=>'admin:support_reply|id='.$id.'|page='.$page] ],
+                [ ['text'=>'حذف','callback_data'=>'admin:support_del|id='.$id.'|page='.$page] ],
                 [ ['text'=>'بازگشت','callback_data'=>'admin:support|page='.$page] ]
             ];
+            $kb = widenKeyboard(['inline_keyboard'=>$kb]);
             $body = $hdr . "\n\n" . ($r['text'] ? e($r['text']) : '');
             if ($r['photo_file_id']) {
-                sendPhoto($chatId, $r['photo_file_id'], $body, ['inline_keyboard'=>$kb]);
+                sendPhoto($chatId, $r['photo_file_id'], $body, $kb);
             } else {
-                editMessageText($chatId, $messageId, $body, ['inline_keyboard'=>$kb]);
+                editMessageText($chatId, $messageId, $body, $kb);
             }
             break;
         case 'support_close':
@@ -1117,11 +1121,12 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 [ ['text'=>'حذف کاربر','callback_data'=>'admin:user_del|id='.$id.'|page='.$page] ],
                 [ ['text'=>'بازگشت','callback_data'=>'admin:user_list|page='.$page] ]
             ];
+            $kb = widenKeyboard(['inline_keyboard'=>$kb]);
             $flagFid = null;
             if ($r['country']) { $flag = db()->prepare("SELECT photo_file_id FROM country_flags WHERE country=?"); $flag->execute([$r['country']]); $fr=$flag->fetch(); if ($fr && $fr['photo_file_id']) { $flagFid=$fr['photo_file_id']; } }
             deleteMessage($chatId, $messageId);
-            if ($flagFid) { sendPhoto($chatId, $flagFid, $hdr, ['inline_keyboard'=>$kb]); }
-            else { sendMessage($chatId, $hdr, ['inline_keyboard'=>$kb]); }
+            if ($flagFid) { $resp = sendPhoto($chatId, $flagFid, $hdr, $kb); if ($resp && ($resp['ok']??false)) setHeaderPhoto($chatId, (int)($resp['result']['message_id']??0)); }
+            else { $resp = sendMessage($chatId, $hdr, $kb); if ($resp && ($resp['ok']??false)) setHeaderPhoto($chatId, (int)($resp['result']['message_id']??0)); }
             break;
         case 'user_assets':
             $id=(int)$params['id']; $page=(int)($params['page']??1);
@@ -1384,22 +1389,23 @@ function renderAllianceView(int $chatId, int $messageId, int $allianceId, bool $
     $kb=[];
     $isMember = isAllianceMember($chatId, $allianceId);
     if ($isLeader) {
-        $kb[] = [ ['text'=>'دعوت عضو','callback_data'=>'alli:invite|id='.$allianceId] , ['text'=>'ویرایش شعار','callback_data'=>'alli:editslogan|id='.$allianceId] ];
-        $kb[] = [ ['text'=>'ویرایش نام اتحاد','callback_data'=>'alli:editname|id='.$allianceId], ['text'=>'ویرایش نام اعضا','callback_data'=>'alli:editmembers|id='.$allianceId] ];
+        $kb[] = [ ['text'=>'دعوت عضو','callback_data'=>'alli:invite|id='.$allianceId] ];
+        $kb[] = [ ['text'=>'ویرایش شعار','callback_data'=>'alli:editslogan|id='.$allianceId] ];
+        $kb[] = [ ['text'=>'ویرایش نام اتحاد','callback_data'=>'alli:editname|id='.$allianceId] ];
+        $kb[] = [ ['text'=>'ویرایش نام اعضا','callback_data'=>'alli:editmembers|id='.$allianceId] ];
         $kb[] = [ ['text'=>'تنظیم بنر اتحاد','callback_data'=>'alli:setbanner|id='.$allianceId] ];
         $kb[] = [ ['text'=>'حذف/انحلال اتحاد','callback_data'=>'alli:delete|id='.$allianceId] ];
     } elseif ($isMember) {
         $kb[] = [ ['text'=>'ترک اتحاد','callback_data'=>'alli:leave|id='.$allianceId] ];
     }
-    // Always allow list view and back to menu
     $kb[] = [ ['text'=>'لیست اتحادها','callback_data'=>'alli:list|page=1'] ];
     $kb[] = [ ['text'=>'بازگشت به منو', 'callback_data'=>'nav:home'] ];
-    // If banner exists, show as photo with caption and keyboard
+    $kb = widenKeyboard(['inline_keyboard'=>$kb]);
     if (!empty($a['banner_file_id'])) {
         deleteMessage($chatId, $messageId);
-        sendPhoto($chatId, $a['banner_file_id'], $text, ['inline_keyboard'=>$kb]);
+        $resp = sendPhoto($chatId, $a['banner_file_id'], $text, $kb); if ($resp && ($resp['ok']??false)) setHeaderPhoto($chatId, (int)($resp['result']['message_id']??0));
     } else {
-        editMessageText($chatId,$messageId,$text,['inline_keyboard'=>$kb]);
+        editMessageText($chatId,$messageId,$text,$kb);
     }
 }
 
