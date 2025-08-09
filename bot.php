@@ -308,7 +308,30 @@ function editMessageText($chatId, $messageId, $text, $replyMarkup = null, $parse
         'disable_web_page_preview' => true,
     ];
     if ($replyMarkup) $params['reply_markup'] = json_encode($replyMarkup, JSON_UNESCAPED_UNICODE);
-    return apiRequest('editMessageText', $params);
+    $res = apiRequest('editMessageText', $params);
+    if (!$res || !($res['ok'] ?? false)) {
+        // fallback to caption edit (for photo messages)
+        $cap = [
+            'chat_id' => $chatId,
+            'message_id' => $messageId,
+            'caption' => $text,
+            'parse_mode' => $parseMode,
+        ];
+        if ($replyMarkup) $cap['reply_markup'] = json_encode($replyMarkup, JSON_UNESCAPED_UNICODE);
+        return apiRequest('editMessageCaption', $cap);
+    }
+    return $res;
+}
+
+function editMessageCaption($chatId, $messageId, $caption, $replyMarkup = null, $parseMode = 'HTML') {
+    $params = [
+        'chat_id' => $chatId,
+        'message_id' => $messageId,
+        'caption' => $caption,
+        'parse_mode' => $parseMode,
+    ];
+    if ($replyMarkup) $params['reply_markup'] = json_encode($replyMarkup, JSON_UNESCAPED_UNICODE);
+    return apiRequest('editMessageCaption', $params);
 }
 
 function sendPhoto($chatId, $fileIdOrUrl, $caption = '', $replyMarkup = null, $parseMode = 'HTML') {
@@ -1094,12 +1117,11 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 [ ['text'=>'حذف کاربر','callback_data'=>'admin:user_del|id='.$id.'|page='.$page] ],
                 [ ['text'=>'بازگشت','callback_data'=>'admin:user_list|page='.$page] ]
             ];
-            // if country flag exists, show photo above, but keep text message (with keyboard) for navigations
-            if ($r['country']) {
-                $flag = db()->prepare("SELECT photo_file_id FROM country_flags WHERE country=?"); $flag->execute([$r['country']]); $fr=$flag->fetch();
-                if ($fr && $fr['photo_file_id']) { sendPhoto($chatId, $fr['photo_file_id'], 'پرچم '.e($r['country'])); }
-            }
-            editMessageText($chatId,$messageId,$hdr,['inline_keyboard'=>$kb]);
+            $flagFid = null;
+            if ($r['country']) { $flag = db()->prepare("SELECT photo_file_id FROM country_flags WHERE country=?"); $flag->execute([$r['country']]); $fr=$flag->fetch(); if ($fr && $fr['photo_file_id']) { $flagFid=$fr['photo_file_id']; } }
+            deleteMessage($chatId, $messageId);
+            if ($flagFid) { sendPhoto($chatId, $flagFid, $hdr, ['inline_keyboard'=>$kb]); }
+            else { sendMessage($chatId, $hdr, ['inline_keyboard'=>$kb]); }
             break;
         case 'user_assets':
             $id=(int)$params['id']; $page=(int)($params['page']??1);
@@ -1688,8 +1710,11 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             $cnt = db()->prepare("SELECT COUNT(*) c FROM alliance_members WHERE alliance_id=?"); $cnt->execute([$aid]); $c=(int)($cnt->fetch()['c']??0);
             if ($c >= 4) { sendMessage($chatId,'ظرفیت اتحاد تکمیل است.'); clearUserState($chatId); return; }
             db()->prepare("INSERT INTO alliance_invites (alliance_id, invitee_user_id, inviter_user_id) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE status='pending'")->execute([$aid, (int)$invitee['id'], (int)$inviter['id']]);
+            // fetch alliance info
+            $ainfo = db()->prepare("SELECT name FROM alliances WHERE id=?"); $ainfo->execute([$aid]); $ar=$ainfo->fetch(); $aname = $ar?$ar['name']:'اتحاد';
+            $title = 'دعوت به اتحاد: '.e($aname)."\n".'کشور دعوت‌کننده: '.e($inviter['country']?:'—');
             $kb=[ [ ['text'=>'بله','callback_data'=>'alli_inv:accept|aid='.$aid], ['text'=>'خیر','callback_data'=>'alli_inv:reject|aid='.$aid] ] ];
-            sendMessage((int)$invitee['telegram_id'], 'شما به یک اتحاد دعوت شدید. آیا می‌پذیرید؟', ['inline_keyboard'=>$kb]);
+            sendMessage((int)$invitee['telegram_id'], $title."\n\nشما به این اتحاد دعوت شدید. آیا می‌پذیرید؟", ['inline_keyboard'=>$kb]);
             sendMessage($chatId,'دعوت ارسال شد.');
             clearUserState($chatId);
             break;
@@ -1830,8 +1855,11 @@ function handleUserStateMessage(array $userRow, array $message, array $state): v
             $cnt = db()->prepare("SELECT COUNT(*) c FROM alliance_members WHERE alliance_id=?"); $cnt->execute([$aid]); $c=(int)($cnt->fetch()['c']??0);
             if ($c >= 4) { sendMessage($chatId,'ظرفیت اتحاد تکمیل است.'); clearUserState($chatId); return; }
             db()->prepare("INSERT INTO alliance_invites (alliance_id, invitee_user_id, inviter_user_id) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE status='pending'")->execute([$aid, (int)$invitee['id'], (int)$inviter['id']]);
+            // fetch alliance info
+            $ainfo = db()->prepare("SELECT name FROM alliances WHERE id=?"); $ainfo->execute([$aid]); $ar=$ainfo->fetch(); $aname = $ar?$ar['name']:'اتحاد';
+            $title = 'دعوت به اتحاد: '.e($aname)."\n".'کشور دعوت‌کننده: '.e($inviter['country']?:'—');
             $kb=[ [ ['text'=>'بله','callback_data'=>'alli_inv:accept|aid='.$aid], ['text'=>'خیر','callback_data'=>'alli_inv:reject|aid='.$aid] ] ];
-            sendMessage((int)$invitee['telegram_id'], 'شما به یک اتحاد دعوت شدید. آیا می‌پذیرید؟', ['inline_keyboard'=>$kb]);
+            sendMessage((int)$invitee['telegram_id'], $title."\n\nشما به این اتحاد دعوت شدید. آیا می‌پذیرید؟", ['inline_keyboard'=>$kb]);
             sendMessage($chatId,'دعوت ارسال شد.');
             clearUserState($chatId);
             break;
@@ -1942,6 +1970,8 @@ function processCallback(array $callback): void {
             db()->prepare("UPDATE alliance_invites SET status='declined' WHERE id=?")->execute([$row['id']]);
             answerCallback($callback['id'],'رد شد');
         }
+        // delete invite message after action
+        if (!empty($callback['message']['message_id'])) { deleteMessage($chatId, (int)$callback['message']['message_id']); }
         return;
     }
     if (strpos($action, 'sreply:') === 0) {
