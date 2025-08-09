@@ -163,6 +163,19 @@ function bootstrapDatabase(PDO $pdo): void {
         CONSTRAINT fk_sub_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
+    // Approved roles
+    $pdo->exec("CREATE TABLE IF NOT EXISTS approved_roles (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        submission_id INT NOT NULL,
+        user_id INT NOT NULL,
+        text TEXT NULL,
+        cost_amount INT NULL,
+        username VARCHAR(64) NULL,
+        telegram_id BIGINT NULL,
+        country VARCHAR(64) NULL,
+        approved_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
     // Assets by country
     $pdo->exec("CREATE TABLE IF NOT EXISTS assets (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -210,11 +223,10 @@ function bootstrapDatabase(PDO $pdo): void {
         name VARCHAR(64) NOT NULL,
         leader_user_id INT NOT NULL,
         slogan TEXT NULL,
+        banner_file_id VARCHAR(256) NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT fk_alliance_leader FOREIGN KEY (leader_user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-    // optional banner column
-    try { $pdo->exec("ALTER TABLE alliances ADD COLUMN banner_file_id VARCHAR(256) NULL"); } catch (Exception $e) {}
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS alliance_members (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1055,13 +1067,32 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
         case 'roles':
             $page=(int)($params['page']??1); $perPage=10; [$offset,$limit]=paginate($page,$perPage);
             $total = db()->query("SELECT COUNT(*) c FROM submissions WHERE type='role' AND status IN ('pending','cost_proposed')")->fetch()['c']??0;
-            $stmt = db()->prepare("SELECT s.id, s.created_at, u.username, u.telegram_id, u.country FROM submissions s JOIN users u ON u.id=s.user_id WHERE s.type='role' AND s.status IN ('pending','cost_proposed') ORDER BY s.created_at ASC LIMIT ?,?");
+            $stmt = db()->prepare("SELECT s.id, s.created_at, u.username, u.telegram_id, u.country, s.status FROM submissions s JOIN users u ON u.id=s.user_id WHERE s.type='role' AND s.status IN ('pending','cost_proposed') ORDER BY s.created_at ASC LIMIT ?,?");
             $stmt->bindValue(1,$offset,PDO::PARAM_INT); $stmt->bindValue(2,$limit,PDO::PARAM_INT); $stmt->execute(); $rows=$stmt->fetchAll();
-            $kbRows=[]; foreach($rows as $r){ $label = e($r['country']).' | '.iranDateTime($r['created_at']).' | '.($r['username']?'@'.$r['username']:$r['telegram_id']); $kbRows[] = [ ['text'=>$label,'callback_data'=>'admin:role_view|id='.$r['id'].'|page='.$page] ]; }
+            $kbRows=[]; foreach($rows as $r){ $label = e($r['country']).' | '.iranDateTime($r['created_at']).' | '.($r['username']?'@'.$r['username']:$r['telegram_id']).' | '.$r['status']; $kbRows[] = [ ['text'=>$label,'callback_data'=>'admin:role_view|id='.$r['id'].'|page='.$page] ]; }
             $hasMore = ($offset + count($rows)) < $total;
             $kb = array_merge($kbRows, paginationKeyboard('admin:roles', $page, $hasMore, 'nav:admin')['inline_keyboard']);
-            editMessageText($chatId,$messageId,'رول ها',['inline_keyboard'=>$kb]);
-            sendGuide($chatId,'راهنما: پس از باز کردن هر رول می‌توانید تایید/رد کنید یا هزینه تعیین نمایید.');
+            $kb = widenKeyboard(['inline_keyboard'=>$kb]);
+            editMessageText($chatId,$messageId,'رول ها',['inline_keyboard'=>$kb['inline_keyboard']]);
+            // add link to approved list
+            sendGuide($chatId,'برای مشاهده رول‌های تایید شده از این دکمه استفاده کنید.');
+            sendMessage($chatId, ' ', ['inline_keyboard'=>[[['text'=>'رول‌های تایید شده','callback_data'=>'admin:roles_approved|page=1']]]]);
+            break;
+        case 'roles_approved':
+            $page=(int)($params['page']??1); $perPage=10; [$offset,$limit]=paginate($page,$perPage);
+            $stmt = db()->prepare("SELECT * FROM approved_roles ORDER BY approved_at DESC LIMIT ?,?");
+            $stmt->bindValue(1,$offset,PDO::PARAM_INT); $stmt->bindValue(2,$limit,PDO::PARAM_INT); $stmt->execute(); $rows=$stmt->fetchAll();
+            $kb=[]; foreach($rows as $r){ $label = iranDateTime($r['approved_at']).' | '.($r['username']?'@'.$r['username']:$r['telegram_id']).' | '.e($r['country']).' | هزینه: '.($r['cost_amount']?:0); $kb[]=[ ['text'=>$label, 'callback_data'=>'admin:roles_approved_view|id='.$r['id'].'|page='.$page] ]; }
+            $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:roles|page=1'] ];
+            $kb = widenKeyboard(['inline_keyboard'=>$kb]);
+            editMessageText($chatId,$messageId,'رول‌های تایید شده',['inline_keyboard'=>$kb['inline_keyboard']]);
+            break;
+        case 'roles_approved_view':
+            $id=(int)$params['id']; $page=(int)($params['page']??1);
+            $stmt = db()->prepare("SELECT * FROM approved_roles WHERE id=?"); $stmt->execute([$id]); $r=$stmt->fetch(); if(!$r){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
+            $body = 'کاربر: '.($r['username']?'@'.$r['username']:$r['telegram_id'])."\nکشور: ".e($r['country'])."\nhزینه: ".($r['cost_amount']?:0)."\n\n".e($r['text']);
+            $kb=[ ['text'=>'بازگشت','callback_data'=>'admin:roles_approved|page='.$page] ];
+            editMessageText($chatId,$messageId,$body,['inline_keyboard'=>[$kb]]);
             break;
         case 'role_view':
             $id=(int)$params['id']; $page=(int)($params['page']??1);
@@ -1078,8 +1109,11 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             break;
         case 'role_ok':
             $id=(int)$params['id']; $page=(int)($params['page']??1);
-            $stmt = db()->prepare("SELECT s.user_id, u.telegram_id FROM submissions s JOIN users u ON u.id=s.user_id WHERE s.id=?"); $stmt->execute([$id]); $r=$stmt->fetch(); if(!$r){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
-            $pdo=db(); $pdo->prepare("DELETE FROM submissions WHERE id=?")->execute([$id]);
+            $stmt = db()->prepare("SELECT s.*, u.telegram_id, u.username, u.country, u.id AS uid FROM submissions s JOIN users u ON u.id=s.user_id WHERE s.id=?"); $stmt->execute([$id]); $r=$stmt->fetch(); if(!$r){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
+            // insert into approved_roles
+            db()->prepare("INSERT INTO approved_roles (submission_id, user_id, text, cost_amount, username, telegram_id, country) VALUES (?,?,?,?,?,?,?)")
+              ->execute([$id, (int)$r['uid'], $r['text'], $r['cost_amount'], $r['username'], $r['telegram_id'], $r['country']]);
+            db()->prepare("DELETE FROM submissions WHERE id=?")->execute([$id]);
             sendMessage((int)$r['telegram_id'], 'رول شما تایید شد.');
             answerCallback($_POST['callback_query']['id'] ?? '', 'انجام شد');
             handleAdminNav($chatId,$messageId,'roles',['page'=>$page],$userRow);
@@ -1349,18 +1383,22 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $sid=(int)$params['submission_id']; $page=(int)($params['page']??1); $attTid=(int)$params['att_tid'];
             $defTid = extractTelegramIdFromMessage($message);
             if (!$defTid) { sendMessage($chatId,'آیدی نامعتبر. دوباره آیدی عددی دفاع کننده را بفرستید.'); return; }
-            // Show send options
-            $kb = [
-                [ ['text'=>'فرستادن با عکس','callback_data'=>'admin:war_send|id='.$sid.'|att='.$attTid.'|def='.$defTid.'|mode=auto'], ['text'=>'بی عکس','callback_data'=>'admin:war_send|id='.$sid.'|att='.$attTid.'|def='.$defTid.'|mode=text'] ],
-                [ ['text'=>'فقط عکس کشور مهاجم','callback_data'=>'admin:war_send|id='.$sid.'|att='.$attTid.'|def='.$defTid.'|mode=att'], ['text'=>'فقط عکس کشور مدافع','callback_data'=>'admin:war_send|id='.$sid.'|att='.$attTid.'|def='.$defTid.'|mode=def'] ],
-                [ ['text'=>'بازگشت','callback_data'=>'admin:sw_view|id='.$sid.'|type=war|page='.$page] ]
-            ];
-            sendMessage($chatId,'نحوه ارسال به کانال را انتخاب کنید:', ['inline_keyboard'=>$kb]);
+            // Show confirm with attacker/defender info
+            $att = ensureUser(['id'=>$attTid]); $def = ensureUser(['id'=>$defTid]);
+            $info = 'حمله کننده: '.($att['username']?'@'.$att['username']:$attTid).' | کشور: '.($att['country']?:'—')."\n".
+                    'دفاع کننده: '.($def['username']?'@'.$def['username']:$defTid).' | کشور: '.($def['country']?:'—');
+            $kb = [ [ ['text'=>'ارسال','callback_data'=>'admin:war_send_confirm|id='.$sid.'|att='.$attTid.'|def='.$defTid], ['text'=>'لغو','callback_data'=>'admin:sw_view|id='.$sid.'|type=war|page='.$page] ] ];
+            sendMessage($chatId,$info,['inline_keyboard'=>$kb]);
             clearAdminState($chatId);
             break;
         case 'war_send':
             $sid=(int)($params['id']??0); $attTid=(int)($params['att']??0); $defTid=(int)($params['def']??0); $mode=$params['mode']??'auto';
             $ok = sendWarWithMode($sid,$attTid,$defTid,$mode);
+            answerCallback($_POST['callback_query']['id'] ?? '', $ok?'ارسال شد':'ارسال ناموفق', !$ok);
+            break;
+        case 'war_send_confirm':
+            $sid=(int)($params['id']??0); $attTid=(int)($params['att']??0); $defTid=(int)($params['def']??0);
+            $ok = sendWarWithMode($sid,$attTid,$defTid,'auto');
             answerCallback($_POST['callback_query']['id'] ?? '', $ok?'ارسال شد':'ارسال ناموفق', !$ok);
             break;
         default:
@@ -1973,8 +2011,14 @@ function processCallback(array $callback): void {
     }
     if (strpos($action, 'rolecost:') === 0) {
         $route = substr($action, 9); $id=(int)($params['id']??0);
-        $stmt = db()->prepare("SELECT s.*, u.telegram_id FROM submissions s JOIN users u ON u.id=s.user_id WHERE s.id=?"); $stmt->execute([$id]); $r=$stmt->fetch(); if(!$r){ answerCallback($callback['id'],'یافت نشد',true); return; }
+        $stmt = db()->prepare("SELECT s.*, u.telegram_id, u.id AS uid FROM submissions s JOIN users u ON u.id=s.user_id WHERE s.id=?"); $stmt->execute([$id]); $r=$stmt->fetch(); if(!$r){ answerCallback($callback['id'],'یافت نشد',true); return; }
         if ($route==='accept') {
+            // if cost defined, check and deduct
+            if (!empty($r['cost_amount'])) {
+                $um = db()->prepare("SELECT money FROM users WHERE id=?"); $um->execute([(int)$r['uid']]); $ur=$um->fetch(); $money=(int)($ur['money']??0);
+                if ($money < (int)$r['cost_amount']) { sendMessage((int)$r['telegram_id'], 'موجودی کافی نیست.'); answerCallback($callback['id'],'پول کافی نیست', true); return; }
+                db()->prepare("UPDATE users SET money = money - ? WHERE id=?")->execute([(int)$r['cost_amount'], (int)$r['uid']]);
+            }
             db()->prepare("UPDATE submissions SET status='user_confirmed' WHERE id=?")->execute([$id]);
             // notify admins with roles perm
             notifySectionAdmins('roles', 'کاربر هزینه رول را تایید کرد: ID '.$r['telegram_id']);
