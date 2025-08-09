@@ -1340,7 +1340,7 @@ function renderAllianceHome(int $chatId, int $messageId, array $userRow): void {
         return;
     }
     $isLeader = isAllianceLeader($chatId, (int)$a['id']);
-    renderAllianceView($chatId, $messageId, (int)$a['id'], $isLeader, true);
+    renderAllianceView($chatId, $messageId, (int)$a['id'], $isLeader, false);
 }
 
 function isAllianceLeader(int $tgId, int $allianceId): bool {
@@ -1375,9 +1375,9 @@ function renderAllianceView(int $chatId, int $messageId, int $allianceId, bool $
     } elseif ($isMember) {
         $kb[] = [ ['text'=>'ترک اتحاد','callback_data'=>'alli:leave|id='.$allianceId] ];
     }
-    $kb[] = [ ['text'=>$fromHome?'بازگشت':'بازگشت به منو', 'callback_data'=>$fromHome?'nav:alliance':'nav:home'] ];
-    // Always allow list view
+    // Always allow list view and back to menu
     $kb[] = [ ['text'=>'لیست اتحادها','callback_data'=>'alli:list|page=1'] ];
+    $kb[] = [ ['text'=>'بازگشت به منو', 'callback_data'=>'nav:home'] ];
     // If banner exists, show as photo with caption and keyboard
     if (!empty($a['banner_file_id'])) {
         deleteMessage($chatId, $messageId);
@@ -1399,13 +1399,15 @@ function handleAllianceNav(int $chatId, int $messageId, string $route, array $pa
             $total = db()->query("SELECT COUNT(*) c FROM alliances")->fetch()['c']??0;
             $stmt = db()->prepare("SELECT a.id, a.name, u.username, u.telegram_id, u.country FROM alliances a JOIN users u ON u.id=a.leader_user_id ORDER BY a.created_at DESC LIMIT ?,?");
             $stmt->bindValue(1,$offset,PDO::PARAM_INT); $stmt->bindValue(2,$limit,PDO::PARAM_INT); $stmt->execute(); $rows=$stmt->fetchAll();
-            $kbRows=[]; foreach($rows as $r){ $label = e($r['name']).' | رهبر: '.e($r['country']).' - '.($r['username']?'@'.$r['username']:$r['telegram_id']); $kbRows[]=[ ['text'=>$label,'callback_data'=>'alli:view|id='.$r['id'].'|from=list|page='.$page] ]; }
+            $kbRows=[]; foreach($rows as $r){ $label = e($r['name']).' | رهبر: '.e($r['country']).' - '.($r['username']?'@'.$r['username']:$r['telegram_id']); $kbRows[]=[ ['text'=>$label,'callback_data'=>'alli:view|id='.$r['id']] ]; }
             $hasMore = ($offset + count($rows)) < $total;
-            $kb = array_merge($kbRows, paginationKeyboard('alli:list', $page, $hasMore, 'nav:alliance')['inline_keyboard']);
+            $kb = $kbRows;
+            $nav=[]; if ($page>1) $nav[]=['text'=>'قبلی','callback_data'=>'alli:list|page='.($page-1)]; if ($hasMore) $nav[]=['text'=>'بعدی','callback_data'=>'alli:list|page='.($page+1)]; if ($nav) $kb[]=$nav;
+            $kb[]=[ ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
             editMessageText($chatId,$messageId,'لیست اتحادها',['inline_keyboard'=>$kb]);
             break;
         case 'view':
-            $id=(int)$params['id']; $from=$params['from']??'list'; $page=(int)($params['page']??1);
+            $id=(int)$params['id'];
             $stmt=db()->prepare("SELECT a.*, u.telegram_id AS leader_tid FROM alliances a JOIN users u ON u.id=a.leader_user_id WHERE a.id=?"); $stmt->execute([$id]); $a=$stmt->fetch(); if(!$a){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
             $isLeader = isAllianceLeader($chatId, $id);
             renderAllianceView($chatId, $messageId, $id, $isLeader, false);
