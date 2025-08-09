@@ -213,6 +213,8 @@ function bootstrapDatabase(PDO $pdo): void {
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT fk_alliance_leader FOREIGN KEY (leader_user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+    // optional banner column
+    try { $pdo->exec("ALTER TABLE alliances ADD COLUMN banner_file_id VARCHAR(256) NULL"); } catch (Exception $e) {}
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS alliance_members (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1346,6 +1348,11 @@ function isAllianceLeader(int $tgId, int $allianceId): bool {
     $stmt->execute([$allianceId,$tgId]); return (bool)$stmt->fetch();
 }
 
+function isAllianceMember(int $tgId, int $allianceId): bool {
+    $stmt = db()->prepare("SELECT 1 FROM alliance_members m JOIN users u ON u.id=m.user_id WHERE m.alliance_id=? AND u.telegram_id=?");
+    $stmt->execute([$allianceId,$tgId]); return (bool)$stmt->fetch();
+}
+
 function renderAllianceView(int $chatId, int $messageId, int $allianceId, bool $isLeader, bool $fromHome=false): void {
     $stmt = db()->prepare("SELECT a.*, u.telegram_id AS leader_tid, u.username AS leader_username, u.country AS leader_country FROM alliances a JOIN users u ON u.id=a.leader_user_id WHERE a.id=?");
     $stmt->execute([$allianceId]); $a=$stmt->fetch(); if(!$a){ editMessageText($chatId,$messageId,'اتحاد یافت نشد', backButton('nav:home')); return; }
@@ -1359,15 +1366,25 @@ function renderAllianceView(int $chatId, int $messageId, int $allianceId, bool $
     $lines[]='شعار اتحاد: ' . ($a['slogan'] ? e($a['slogan']) : '—');
     $text = "اتحاد: ".e($a['name'])."\n".implode("\n", $lines);
     $kb=[];
+    $isMember = isAllianceMember($chatId, $allianceId);
     if ($isLeader) {
         $kb[] = [ ['text'=>'دعوت عضو','callback_data'=>'alli:invite|id='.$allianceId] , ['text'=>'ویرایش شعار','callback_data'=>'alli:editslogan|id='.$allianceId] ];
         $kb[] = [ ['text'=>'ویرایش نام اتحاد','callback_data'=>'alli:editname|id='.$allianceId], ['text'=>'ویرایش نام اعضا','callback_data'=>'alli:editmembers|id='.$allianceId] ];
+        $kb[] = [ ['text'=>'تنظیم بنر اتحاد','callback_data'=>'alli:setbanner|id='.$allianceId] ];
         $kb[] = [ ['text'=>'حذف/انحلال اتحاد','callback_data'=>'alli:delete|id='.$allianceId] ];
-    } else {
+    } elseif ($isMember) {
         $kb[] = [ ['text'=>'ترک اتحاد','callback_data'=>'alli:leave|id='.$allianceId] ];
     }
     $kb[] = [ ['text'=>$fromHome?'بازگشت':'بازگشت به منو', 'callback_data'=>$fromHome?'nav:alliance':'nav:home'] ];
-    editMessageText($chatId,$messageId,$text,['inline_keyboard'=>$kb]);
+    // Always allow list view
+    $kb[] = [ ['text'=>'لیست اتحادها','callback_data'=>'alli:list|page=1'] ];
+    // If banner exists, show as photo with caption and keyboard
+    if (!empty($a['banner_file_id'])) {
+        deleteMessage($chatId, $messageId);
+        sendPhoto($chatId, $a['banner_file_id'], $text, ['inline_keyboard'=>$kb]);
+    } else {
+        editMessageText($chatId,$messageId,$text,['inline_keyboard'=>$kb]);
+    }
 }
 
 function handleAllianceNav(int $chatId, int $messageId, string $route, array $params, array $userRow): void {
@@ -1375,7 +1392,7 @@ function handleAllianceNav(int $chatId, int $messageId, string $route, array $pa
         case 'new':
             setUserState($chatId,'await_alliance_name',[]);
             answerCallback($_POST['callback_query']['id'] ?? '', 'نام اتحاد را ارسال کنید');
-            sendMessage($chatId,'برای ساخت اتحاد، یک نام ارسال کنید.');
+            sendGuide($chatId,'برای ساخت اتحاد، یک نام ارسال کنید.');
             break;
         case 'list':
             $page=(int)($params['page']??1); $perPage=10; [$offset,$limit]=paginate($page,$perPage);
@@ -1396,13 +1413,15 @@ function handleAllianceNav(int $chatId, int $messageId, string $route, array $pa
         case 'invite':
             $id=(int)$params['id']; setUserState($chatId,'await_invite_ident',['alliance_id'=>$id]);
             answerCallback($_POST['callback_query']['id'] ?? '', 'آیدی عددی یا پیام فوروارد شده کاربر را ارسال کنید');
-            sendMessage($chatId,'آیدی عددی یا پیام فوروارد عضو را ارسال کنید تا دعوت شود.');
+            sendGuide($chatId,'آیدی عددی یا پیام فوروارد عضو را ارسال کنید تا دعوت شود.');
             break;
         case 'editslogan':
             $id=(int)$params['id']; setUserState($chatId,'await_slogan',['alliance_id'=>$id]); answerCallback($_POST['callback_query']['id'] ?? '', 'شعار جدید را ارسال کنید');
+            sendGuide($chatId,'شعار جدید اتحاد را ارسال کنید.');
             break;
         case 'editname':
             $id=(int)$params['id']; setUserState($chatId,'await_alliance_rename',['alliance_id'=>$id]); answerCallback($_POST['callback_query']['id'] ?? '', 'نام جدید اتحاد را ارسال کنید');
+            sendGuide($chatId,'نام جدید اتحاد را ارسال کنید.');
             break;
         case 'editmembers':
             $id=(int)$params['id'];
@@ -1414,6 +1433,12 @@ function handleAllianceNav(int $chatId, int $messageId, string $route, array $pa
             break;
         case 'editmember':
             $aid=(int)$params['aid']; $uid=(int)$params['uid']; setUserState($chatId,'await_member_display',['alliance_id'=>$aid,'user_id'=>$uid]); answerCallback($_POST['callback_query']['id'] ?? '', 'نام نمایشی جدید عضو را ارسال کنید');
+            sendGuide($chatId,'نام نمایشی جدید عضو را ارسال کنید.');
+            break;
+        case 'setbanner':
+            $id=(int)$params['id']; if (!isAllianceLeader($chatId,$id)) { answerCallback($_POST['callback_query']['id'] ?? '', 'فقط رهبر', true); return; }
+            setUserState($chatId,'await_alliance_banner',['alliance_id'=>$id]);
+            sendGuide($chatId,'تصویر بنر اتحاد را به صورت عکس ارسال کنید.');
             break;
         case 'delete':
             $id=(int)$params['id']; disbandAlliance($id, $chatId, $messageId); break;
@@ -1644,6 +1669,57 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             sendMessage($chatId,'نحوه ارسال به کانال را انتخاب کنید:', ['inline_keyboard'=>$kb]);
             clearAdminState($chatId);
             break;
+        case 'await_alliance_name':
+            $name = trim((string)$text);
+            if ($name===''){ sendMessage($chatId,'نام نامعتبر'); return; }
+            $u = userByTelegramId($chatId);
+            // Check not already in an alliance
+            $x = db()->prepare("SELECT 1 FROM alliance_members m JOIN users u ON u.id=m.user_id WHERE u.telegram_id=?"); $x->execute([$chatId]); if($x->fetch()){ sendMessage($chatId,'شما در اتحاد هستید.'); clearUserState($chatId); return; }
+            db()->beginTransaction();
+            try {
+                db()->prepare("INSERT INTO alliances (name, leader_user_id) VALUES (?, ?)")->execute([$name, (int)$u['id']]);
+                $aid = (int)db()->lastInsertId();
+                db()->prepare("INSERT INTO alliance_members (alliance_id, user_id, role) VALUES (?, ?, 'leader')")->execute([$aid, (int)$u['id']]);
+                db()->commit();
+                sendMessage($chatId,'اتحاد ایجاد شد.');
+            } catch (Exception $e) { db()->rollBack(); sendMessage($chatId,'خطا: '.$e->getMessage()); }
+            clearUserState($chatId);
+            break;
+        case 'await_invite_ident':
+            $aid=(int)$data['alliance_id']; $tgid = extractTelegramIdFromMessage($message); if(!$tgid){ sendMessage($chatId,'آیدی نامعتبر'); return; }
+            $inviter = userByTelegramId($chatId); $invitee = ensureUser(['id'=>$tgid]);
+            // Capacity (max 4 total: 1 leader + 3 members)
+            $cnt = db()->prepare("SELECT COUNT(*) c FROM alliance_members WHERE alliance_id=?"); $cnt->execute([$aid]); $c=(int)($cnt->fetch()['c']??0);
+            if ($c >= 4) { sendMessage($chatId,'ظرفیت اتحاد تکمیل است.'); clearUserState($chatId); return; }
+            db()->prepare("INSERT INTO alliance_invites (alliance_id, invitee_user_id, inviter_user_id) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE status='pending'")->execute([$aid, (int)$invitee['id'], (int)$inviter['id']]);
+            $kb=[ [ ['text'=>'بله','callback_data'=>'alli_inv:accept|aid='.$aid], ['text'=>'خیر','callback_data'=>'alli_inv:reject|aid='.$aid] ] ];
+            sendMessage((int)$invitee['telegram_id'], 'شما به یک اتحاد دعوت شدید. آیا می‌پذیرید؟', ['inline_keyboard'=>$kb]);
+            sendMessage($chatId,'دعوت ارسال شد.');
+            clearUserState($chatId);
+            break;
+        case 'await_slogan':
+            $aid=(int)$data['alliance_id']; $slogan = trim((string)($text ?: ''));
+            db()->prepare("UPDATE alliances SET slogan=? WHERE id=?")->execute([$slogan, $aid]);
+            sendMessage($chatId,'شعار به‌روزرسانی شد.');
+            clearUserState($chatId);
+            break;
+        case 'await_alliance_rename':
+            $aid=(int)$data['alliance_id']; $name=trim((string)$text); if($name===''){ sendMessage($chatId,'نام نامعتبر'); return; }
+            db()->prepare("UPDATE alliances SET name=? WHERE id=?")->execute([$name,$aid]); sendMessage($chatId,'نام اتحاد به‌روزرسانی شد.'); clearUserState($chatId);
+            break;
+        case 'await_member_display':
+            $aid=(int)$data['alliance_id']; $uid=(int)$data['user_id']; $disp=trim((string)$text);
+            db()->prepare("UPDATE alliance_members SET display_name=? WHERE alliance_id=? AND user_id=?")->execute([$disp,$aid,$uid]);
+            sendMessage($chatId,'نام نمایشی عضو به‌روزرسانی شد.'); clearUserState($chatId);
+            break;
+        case 'await_alliance_banner':
+            $aid=(int)$data['alliance_id'];
+            $photo = null; if (!empty($message['photo'])) { $photos=$message['photo']; $largest=end($photos); $photo=$largest['file_id']??null; }
+            if (!$photo) { sendMessage($chatId,'عکس ارسال کنید.'); return; }
+            db()->prepare("UPDATE alliances SET banner_file_id=? WHERE id=?")->execute([$photo,$aid]);
+            sendMessage($chatId,'بنر اتحاد تنظیم شد.');
+            clearUserState($chatId);
+            break;
         default:
             sendMessage($chatId,'حالت ناشناخته'); clearAdminState($chatId);
     }
@@ -1777,6 +1853,14 @@ function handleUserStateMessage(array $userRow, array $message, array $state): v
             $aid=(int)$data['alliance_id']; $uid=(int)$data['user_id']; $disp=trim((string)$text);
             db()->prepare("UPDATE alliance_members SET display_name=? WHERE alliance_id=? AND user_id=?")->execute([$disp,$aid,$uid]);
             sendMessage($chatId,'نام نمایشی عضو به‌روزرسانی شد.'); clearUserState($chatId);
+            break;
+        case 'await_alliance_banner':
+            $aid=(int)$data['alliance_id'];
+            $photo = null; if (!empty($message['photo'])) { $photos=$message['photo']; $largest=end($photos); $photo=$largest['file_id']??null; }
+            if (!$photo) { sendMessage($chatId,'عکس ارسال کنید.'); return; }
+            db()->prepare("UPDATE alliances SET banner_file_id=? WHERE id=?")->execute([$photo,$aid]);
+            sendMessage($chatId,'بنر اتحاد تنظیم شد.');
+            clearUserState($chatId);
             break;
         default:
             sendMessage($chatId,'حالت ناشناخته'); clearUserState($chatId);
