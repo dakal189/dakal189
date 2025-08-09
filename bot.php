@@ -553,9 +553,9 @@ function notifyNewSupportMessage(int $supportId): void {
     $stmt->execute([$supportId]);
     $r = $stmt->fetch();
     if (!$r) return;
-    $hdr = 'یک پیام پشتیبانی تازه دارید' . "\n" . usernameLink($r['username'], (int)$r['telegram_id']) . "\nID: " . (int)$r['telegram_id'] . "\nزمان: " . iranDateTime($r['created_at']);
+    $hdr = 'یک پیام پشتیبانی تازه دارید' . "\n" . usernameLink($r['username'], (int)$r['telegram_id']) . "\nID: <code>" . (int)$r['telegram_id'] . "</code>\nزمان: " . iranDateTime($r['created_at']);
     $body = $hdr . "\n\n" . ($r['text'] ? e($r['text']) : '');
-    $kb = [ [ ['text'=>'کپی ایدی','callback_data'=>'admin:copyid|id='.(int)$r['telegram_id']], ['text'=>'مشاهده در پنل','callback_data'=>'admin:support_view|id='.$supportId.'|page=1'] ] ];
+    $kb = [ [ ['text'=>'مشاهده در پنل','callback_data'=>'admin:support_view|id='.$supportId.'|page=1'] ] ];
     $q = db()->query("SELECT admin_telegram_id, is_owner, permissions FROM admin_users");
     foreach ($q as $row) {
         $adminId = (int)$row['admin_telegram_id'];
@@ -857,10 +857,9 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $stmt = db()->prepare("SELECT sm.*, u.telegram_id, u.username FROM support_messages sm JOIN users u ON u.id=sm.user_id WHERE sm.id=?");
             $stmt->execute([$id]); $r = $stmt->fetch();
             if (!$r) { answerCallback($_POST['callback_query']['id'] ?? '', 'پیدا نشد', true); return; }
-            $hdr = usernameLink($r['username'], (int)$r['telegram_id']) . "\nID: " . (int)$r['telegram_id'] . "\nزمان: " . iranDateTime($r['created_at']);
+            $hdr = usernameLink($r['username'], (int)$r['telegram_id']) . "\nID: <code>" . (int)$r['telegram_id'] . "</code>\nزمان: " . iranDateTime($r['created_at']);
             $kb = [
-                [ ['text'=>'کپی ایدی','callback_data'=>'admin:copyid|id='.$r['telegram_id']], ['text'=>'حذف','callback_data'=>'admin:support_del|id='.$id.'|page='.$page] ],
-                [ ['text'=>'پاسخ','callback_data'=>'admin:support_reply|id='.$id.'|page='.$page], ['text'=>'بستن','callback_data'=>'admin:support_close|id='.$id.'|page='.$page] ],
+                [ ['text'=>'پاسخ','callback_data'=>'admin:support_reply|id='.$id.'|page='.$page], ['text'=>'حذف','callback_data'=>'admin:support_del|id='.$id.'|page='.$page] ],
                 [ ['text'=>'بازگشت','callback_data'=>'admin:support|page='.$page] ]
             ];
             $body = $hdr . "\n\n" . ($r['text'] ? e($r['text']) : '');
@@ -879,7 +878,8 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
         case 'support_reply':
             $id=(int)$params['id']; $page=(int)($params['page']??1);
             setAdminState($chatId,'await_support_reply',['support_id'=>$id,'page'=>$page]);
-            answerCallback($_POST['callback_query']['id'] ?? '', 'متن یا عکس پاسخ را ارسال کنید');
+            sendGuide($chatId,'پاسخ خود را به کاربر بفرستید.');
+            answerCallback($_POST['callback_query']['id'] ?? '', '');
             break;
         case 'buttons':
             $rows = db()->query("SELECT `key`, title, enabled FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance') ORDER BY id ASC")->fetchAll();
@@ -1626,11 +1626,10 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             $photo = null; if (!empty($message['photo'])) { $photos=$message['photo']; $largest=end($photos); $photo=$largest['file_id']??null; }
             $stmt = db()->prepare("SELECT sm.id, sm.text AS stext, sm.photo_file_id AS sphoto, u.telegram_id FROM support_messages sm JOIN users u ON u.id=sm.user_id WHERE sm.id=?"); $stmt->execute([$supportId]); $r=$stmt->fetch();
             if ($r) {
-                // send reply
-                if ($photo) sendPhoto((int)$r['telegram_id'], $photo, 'پاسخ پشتیبانی:\n\n'.($replyText?:'')); else sendMessage((int)$r['telegram_id'], 'پاسخ پشتیبانی:\n\n'.($replyText?:''));
+                // store reply only; do not send direct reply text
                 db()->prepare("INSERT INTO support_replies (support_id, admin_id, text, photo_file_id) VALUES (?, ?, ?, ?)")->execute([$supportId, $chatId, $replyText ?: null, $photo]);
                 $replyId = (int)db()->lastInsertId();
-                // notify with view button
+                // notify with view button only
                 $kb=[ [ ['text'=>'دیدن پاسخ','callback_data'=>'sreply:view|sid='.$supportId.'|rid='.$replyId] ] ];
                 sendMessage((int)$r['telegram_id'], 'ادمین به پیام شما پاسخ داد.', ['inline_keyboard'=>$kb]);
                 sendMessage($chatId,'ارسال شد.');
@@ -1638,8 +1637,6 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
                 sendMessage($chatId,'یافت نشد');
             }
             clearAdminState($chatId);
-            // refresh list
-            // no messageId here; just notify
             break;
         case 'await_user_assets_text':
             $id=(int)$data['id']; $content = $text ?: ($message['caption'] ?? '');
