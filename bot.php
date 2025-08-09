@@ -411,6 +411,14 @@ function maintenanceMessage(): string {
     return getSetting('maintenance_message','ربات در حالت نگهداری است. لطفاً بعداً مراجعه کنید.');
 }
 
+// Fallback guards
+if (!function_exists('clearHeaderPhoto')) {
+    function clearHeaderPhoto(int $chatId): void {}
+}
+if (!function_exists('setHeaderPhoto')) {
+    function setHeaderPhoto(int $chatId, int $messageId): void {}
+}
+
 function clearGuideMessage(int $chatId): void {
     try {
         $mid = getSetting('guide_msg_'.$chatId, '');
@@ -434,6 +442,34 @@ function sendGuide(int $chatId, string $text): void {
     } catch (Throwable $e) {
         // ignore
     }
+}
+
+function clearHeaderPhoto(int $chatId): void {
+    try {
+        $mid = getSetting('header_msg_'.$chatId, '');
+        if ($mid !== '') {
+            @apiRequest('deleteMessage', ['chat_id'=>$chatId, 'message_id'=>(int)$mid]);
+            setSetting('header_msg_'.$chatId, '');
+        }
+    } catch (Throwable $e) {}
+}
+
+function setHeaderPhoto(int $chatId, int $messageId): void {
+    setSetting('header_msg_'.$chatId, (string)$messageId);
+}
+
+function widenKeyboard(array $kb): array {
+    if (!isset($kb['inline_keyboard'])) return $kb;
+    $buttons = [];
+    foreach ($kb['inline_keyboard'] as $row) {
+        foreach ($row as $btn) { $buttons[] = $btn; }
+    }
+    $paired = [];
+    for ($i=0; $i<count($buttons); $i+=2) {
+        if (isset($buttons[$i+1])) $paired[] = [ $buttons[$i], $buttons[$i+1] ];
+        else $paired[] = [ $buttons[$i] ];
+    }
+    return ['inline_keyboard' => $paired];
 }
 
 function getAdminPermissions(int $telegramId): array {
