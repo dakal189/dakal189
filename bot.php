@@ -398,6 +398,42 @@ function sendPhotoToChannel($fileIdOrUrl, $caption = '', $parseMode = 'HTML') {
 
 function e($str): string { return htmlspecialchars((string)$str, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 
+function buildWarCaption(array $submission, string $attCountry, string $defCountry): string {
+    $epics = [
+        'کشور '.e($attCountry).' به کشور '.e($defCountry).' یورش برد! شعله‌های جنگ زبانه کشید...',
+        'آتش جنگ میان '.e($attCountry).' و '.e($defCountry).' برافروخته شد! آسمان‌ها لرزید...',
+        'ناقوس نبرد به صدا درآمد؛ '.e($attCountry).' در برابر '.e($defCountry).' ایستاد!',
+        e($attCountry).' حمله را آغاز کرد و '.e($defCountry).' دفاع می‌کند! سرنوشت رقم می‌خورد...',
+        'زمین از قدم‌های سربازان '.e($attCountry).' تا '.e($defCountry).' می‌لرزد!',
+        'نبرد بزرگ میان '.e($attCountry).' و '.e($defCountry).' شروع شد!',
+        'مرزها به لرزه افتاد؛ '.e($attCountry).' بر فراز '.e($defCountry).' پیشروی می‌کند.',
+        'باد جنگ وزیدن گرفت؛ '.e($attCountry).' در برابر '.e($defCountry).' قد علم کرد.',
+        'شمشیرها از غلاف بیرون آمد؛ '.e($attCountry).' علیه '.e($defCountry).'.',
+        'پیکان‌های نبرد رها شدند؛ '.e($attCountry).' و '.e($defCountry).' در میدان!'
+    ];
+    $headline = $epics[array_rand($epics)];
+    return $headline . "\n\n" . ($submission['text'] ? e($submission['text']) : '');
+}
+
+function sendWarWithMode(int $submissionId, int $attTid, int $defTid, string $mode='auto'): bool {
+    $stmt = db()->prepare("SELECT * FROM submissions WHERE id=? AND type='war'");
+    $stmt->execute([$submissionId]); $s=$stmt->fetch(); if(!$s) return false;
+    $att = ensureUser(['id'=>$attTid]); $def = ensureUser(['id'=>$defTid]);
+    $attCountry = $att['country'] ?: $s['attacker_country'] ?: '—';
+    $defCountry = $def['country'] ?: $s['defender_country'] ?: '—';
+    $caption = buildWarCaption($s, $attCountry, $defCountry);
+    $attFlag = null; $defFlag = null;
+    $f1 = db()->prepare("SELECT photo_file_id FROM country_flags WHERE country=?"); $f1->execute([$attCountry]); $r1=$f1->fetch(); if($r1) $attFlag=$r1['photo_file_id'];
+    $f2 = db()->prepare("SELECT photo_file_id FROM country_flags WHERE country=?"); $f2->execute([$defCountry]); $r2=$f2->fetch(); if($r2) $defFlag=$r2['photo_file_id'];
+
+    if ($mode === 'text') { $r=sendToChannel($caption); return $r && ($r['ok']??false); }
+    if ($mode === 'att') { if ($attFlag) { $r=sendPhotoToChannel($attFlag,$caption); return $r && ($r['ok']??false);} $r=sendToChannel($caption); return $r && ($r['ok']??false);} 
+    if ($mode === 'def') { if ($defFlag) { $r=sendPhotoToChannel($defFlag,$caption); return $r && ($r['ok']??false);} $r=sendToChannel($caption); return $r && ($r['ok']??false);} 
+    if ($attFlag && $defFlag) { $r1=sendPhotoToChannel($attFlag,$caption); $r2=sendPhotoToChannel($defFlag,''); return ($r1 && ($r1['ok']??false)) || ($r2 && ($r2['ok']??false)); }
+    if ($attFlag || $defFlag) { $fid=$attFlag?:$defFlag; $r=sendPhotoToChannel($fid,$caption); return $r && ($r['ok']??false);} 
+    $r=sendToChannel($caption); return $r && ($r['ok']??false);
+}
+
 function isOwner(int $telegramId): bool {
     return $telegramId === MAIN_ADMIN_ID;
 }
