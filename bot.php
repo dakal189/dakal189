@@ -793,7 +793,10 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
 
     switch ($route) {
         case 'home':
-            editMessageText($chatId, $messageId, $isRegistered ? 'منوی اصلی' : 'فقط پشتیبانی در دسترس است.', mainMenuKeyboard($isRegistered, $isAdmin));
+            deleteMessage($chatId, $messageId);
+            setSetting('header_msg_'.$chatId, '');
+            $text = $isRegistered ? 'منوی اصلی' : 'فقط پشتیبانی در دسترس است.';
+            sendMessage($chatId, $text, mainMenuKeyboard($isRegistered, $isAdmin));
             break;
         case 'support':
             setUserState($chatId, 'await_support', []);
@@ -1180,7 +1183,9 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $kbRows=[]; foreach($rows as $r){ $label = e($r['country']).' | '.($r['username']?'@'.$r['username']:$r['telegram_id']); $kbRows[]=[ ['text'=>$label, 'callback_data'=>'admin:user_view|id='.$r['id'].'|page='.$page] ]; }
             $hasMore = ($offset + count($rows)) < $total;
             $kb = array_merge($kbRows, paginationKeyboard('admin:user_list', $page, $hasMore, 'admin:users')['inline_keyboard']);
-            editMessageText($chatId,$messageId,'کاربران ثبت شده',['inline_keyboard'=>$kb]);
+            deleteMessage($chatId, $messageId);
+            setSetting('header_msg_'.$chatId, '');
+            sendMessage($chatId,'کاربران ثبت شده',['inline_keyboard'=>$kb]);
             break;
         case 'user_view':
             $id=(int)$params['id']; $page=(int)($params['page']??1);
@@ -1209,7 +1214,8 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 [ ['text'=>'تنظیم مستقیم پول','callback_data'=>'admin:user_money_set|id='.$id.'|page='.$page], ['text'=>'تنظیم مستقیم سود','callback_data'=>'admin:user_profit_set|id='.$id.'|page='.$page] ],
                 [ ['text'=>'بازگشت','callback_data'=>'admin:user_view|id='.$id.'|page='.$page] ]
             ];
-            editMessageText($chatId,$messageId,$text,['inline_keyboard'=>$kb]);
+            deleteMessage($chatId, $messageId);
+            sendMessage($chatId,$text,['inline_keyboard'=>$kb]);
             break;
         case 'user_assets_text':
             $id=(int)$params['id']; setAdminState($chatId,'await_user_assets_text',['id'=>$id]);
@@ -1501,7 +1507,9 @@ function handleAllianceNav(int $chatId, int $messageId, string $route, array $pa
             $kb = $kbRows;
             $nav=[]; if ($page>1) $nav[]=['text'=>'قبلی','callback_data'=>'alli:list|page='.($page-1)]; if ($hasMore) $nav[]=['text'=>'بعدی','callback_data'=>'alli:list|page='.($page+1)]; if ($nav) $kb[]=$nav;
             $kb[]=[ ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
-            editMessageText($chatId,$messageId,'لیست اتحادها',['inline_keyboard'=>$kb]);
+            deleteMessage($chatId, $messageId);
+            setSetting('header_msg_'.$chatId, '');
+            sendMessage($chatId,'لیست اتحادها',['inline_keyboard'=>$kb]);
             break;
         case 'view':
             $id=(int)$params['id'];
