@@ -1756,13 +1756,12 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             $sid=(int)$data['submission_id']; $page=(int)($data['page']??1); $attTid=(int)$data['att_tid'];
             $defTid = extractTelegramIdFromMessage($message);
             if (!$defTid) { sendMessage($chatId,'آیدی نامعتبر. دوباره آیدی عددی دفاع کننده را بفرستید.'); return; }
-            // Show send options
-            $kb = [
-                [ ['text'=>'فرستادن با عکس','callback_data'=>'admin:war_send|id='.$sid.'|att='.$attTid.'|def='.$defTid.'|mode=auto'], ['text'=>'بی عکس','callback_data'=>'admin:war_send|id='.$sid.'|att='.$attTid.'|def='.$defTid.'|mode=text'] ],
-                [ ['text'=>'فقط عکس کشور مهاجم','callback_data'=>'admin:war_send|id='.$sid.'|att='.$attTid.'|def='.$defTid.'|mode=att'], ['text'=>'فقط عکس کشور مدافع','callback_data'=>'admin:war_send|id='.$sid.'|att='.$attTid.'|def='.$defTid.'|mode=def'] ],
-                [ ['text'=>'بازگشت','callback_data'=>'admin:sw_view|id='.$sid.'|type=war|page='.$page] ]
-            ];
-            sendMessage($chatId,'نحوه ارسال به کانال را انتخاب کنید:', ['inline_keyboard'=>$kb]);
+            // Show confirm with attacker/defender info
+            $att = ensureUser(['id'=>$attTid]); $def = ensureUser(['id'=>$defTid]);
+            $info = 'حمله کننده: '.($att['username']?'@'.$att['username']:$attTid).' | کشور: '.($att['country']?:'—')."\n".
+                    'دفاع کننده: '.($def['username']?'@'.$def['username']:$defTid).' | کشور: '.($def['country']?:'—');
+            $kb = [ [ ['text'=>'ارسال','callback_data'=>'admin:war_send_confirm|id='.$sid.'|att='.$attTid.'|def='.$defTid], ['text'=>'لغو','callback_data'=>'admin:sw_view|id='.$sid.'|type=war|page='.$page] ] ];
+            sendMessage($chatId,$info,['inline_keyboard'=>$kb]);
             clearAdminState($chatId);
             break;
         case 'await_alliance_name':
