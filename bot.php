@@ -1071,7 +1071,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             break;
         case 'sw_send':
             $id=(int)$params['id']; $type=$params['type']??'statement'; $page=(int)($params['page']??1);
-            $stmt = db()->prepare("SELECT s.*, u.username FROM submissions s JOIN users u ON u.id=s.user_id WHERE s.id=?");
+            $stmt = db()->prepare("SELECT s.*, u.username, u.country FROM submissions s JOIN users u ON u.id=s.user_id WHERE s.id=?");
             $stmt->execute([$id]); $r=$stmt->fetch(); if(!$r){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
             if ($type==='war') {
                 $epics = [
@@ -1083,17 +1083,23 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                     'نبرد بزرگ میان '.e($r['attacker_country']).' و '.e($r['defender_country']).' شروع شد!'
                 ];
                 $headline = $epics[array_rand($epics)];
-                // Try compose VS image from flags
-                $imgId = composeWarImageFromFlags($r['attacker_country'], $r['defender_country']);
-                $caption = $headline."\n\n".($r['text']?e($r['text']):'') . ( $r['username']?"\n\nفرستنده: @".e($r['username']):'' );
-                if ($imgId && is_file($imgId)) { sendPhotoFile(CHANNEL_ID, $imgId, $caption); @unlink($imgId); }
+                $caption = $headline."\n\n".($r['text']?e($r['text']):'');
+                // only attacker flag
+                $flag = db()->prepare("SELECT photo_file_id FROM country_flags WHERE country=?"); $flag->execute([$r['attacker_country']]); $fr=$flag->fetch();
+                if ($fr && $fr['photo_file_id']) { sendPhotoToChannel($fr['photo_file_id'], $caption); }
                 else if ($r['photo_file_id']) { sendPhotoToChannel($r['photo_file_id'], $caption); }
                 else { sendToChannel($caption); }
+                // cleanup: delete UI and remove from list
+                deleteMessage($chatId, $messageId);
+                db()->prepare("DELETE FROM submissions WHERE id=?")->execute([$id]);
                 answerCallback($_POST['callback_query']['id'] ?? '', 'ارسال شد');
             } else {
-                $title = 'بیانیه';
-                $text = $title . "\n\n" . ($r['text']?e($r['text']):'') . "\n\n" . 'فرستنده: ' . ($r['username'] ? '@'.e($r['username']) : '');
+                $title = 'بیانیه ' . e($r['country']?:'');
+                $text = $title . "\n" . 'یوزنیم: ' . ($r['username'] ? '@'.e($r['username']) : '') . "\n\n" . ($r['text']?e($r['text']):'');
                 if ($r['photo_file_id']) sendPhotoToChannel($r['photo_file_id'], $text); else sendToChannel($text);
+                // cleanup: delete UI and remove from list
+                deleteMessage($chatId, $messageId);
+                db()->prepare("DELETE FROM submissions WHERE id=?")->execute([$id]);
                 answerCallback($_POST['callback_query']['id'] ?? '', 'ارسال شد');
             }
             break;
@@ -1440,8 +1446,15 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             break;
         case 'war_send_confirm':
             $sid=(int)($params['id']??0); $attTid=(int)($params['att']??0); $defTid=(int)($params['def']??0);
-            $ok = sendWarWithMode($sid,$attTid,$defTid,'auto');
-            answerCallback($_POST['callback_query']['id'] ?? '', $ok?'ارسال شد':'ارسال ناموفق', !$ok);
+            $ok = sendWarWithMode($sid,$attTid,$defTid,'att');
+            if ($ok) {
+                // delete confirm UI and remove from list
+                deleteMessage($chatId, $messageId);
+                db()->prepare("DELETE FROM submissions WHERE id=?")->execute([$sid]);
+                answerCallback($_POST['callback_query']['id'] ?? '', 'ارسال شد');
+            } else {
+                answerCallback($_POST['callback_query']['id'] ?? '', 'ارسال ناموفق', true);
+            }
             break;
         default:
             answerCallback($_POST['callback_query']['id'] ?? '', 'بخش ناشناخته', true);
