@@ -1484,6 +1484,7 @@ function renderAllianceView(int $chatId, int $messageId, int $allianceId, bool $
 }
 
 function handleAllianceNav(int $chatId, int $messageId, string $route, array $params, array $userRow): void {
+    clearHeaderPhoto($chatId);
     switch ($route) {
         case 'new':
             setUserState($chatId,'await_alliance_name',[]);
@@ -2016,13 +2017,14 @@ function processCallback(array $callback): void {
             // if cost defined, check and deduct
             if (!empty($r['cost_amount'])) {
                 $um = db()->prepare("SELECT money FROM users WHERE id=?"); $um->execute([(int)$r['uid']]); $ur=$um->fetch(); $money=(int)($ur['money']??0);
-                if ($money < (int)$r['cost_amount']) { sendMessage((int)$r['telegram_id'], 'موجودی کافی نیست.'); answerCallback($callback['id'],'پول کافی نیست', true); return; }
+                if ($money < (int)$r['cost_amount']) { sendMessage((int)$r['telegram_id'], 'موجودی کافی نیست.'); if (!empty($callback['message']['message_id'])) deleteMessage($chatId,(int)$callback['message']['message_id']); answerCallback($callback['id'],'پول کافی نیست', true); return; }
                 db()->prepare("UPDATE users SET money = money - ? WHERE id=?")->execute([(int)$r['cost_amount'], (int)$r['uid']]);
             }
             db()->prepare("UPDATE submissions SET status='user_confirmed' WHERE id=?")->execute([$id]);
             // notify admins with roles perm
             notifySectionAdmins('roles', 'کاربر هزینه رول را تایید کرد: ID '.$r['telegram_id']);
             sendMessage((int)$r['telegram_id'],'تایید ثبت شد.');
+            if (!empty($callback['message']['message_id'])) deleteMessage($chatId,(int)$callback['message']['message_id']);
             answerCallback($callback['id'],'تایید شد');
         } else {
             db()->prepare("UPDATE submissions SET status='user_declined' WHERE id=?")->execute([$id]);
@@ -2030,6 +2032,7 @@ function processCallback(array $callback): void {
             sendMessage((int)$r['telegram_id'],'رد ثبت شد.');
             // remove from list per requirement
             db()->prepare("DELETE FROM submissions WHERE id=?")->execute([$id]);
+            if (!empty($callback['message']['message_id'])) deleteMessage($chatId,(int)$callback['message']['message_id']);
             answerCallback($callback['id'],'رد شد');
         }
         return;
