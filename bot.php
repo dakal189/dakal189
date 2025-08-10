@@ -425,7 +425,7 @@ function maintenanceMessage(): string {
 
 // Fallback guards
 if (!function_exists('clearHeaderPhoto')) {
-    function clearHeaderPhoto(int $chatId): void {}
+    function clearHeaderPhoto(int $chatId, ?int $excludeMessageId = null): void {}
 }
 if (!function_exists('setHeaderPhoto')) {
     function setHeaderPhoto(int $chatId, int $messageId): void {}
@@ -456,10 +456,10 @@ function sendGuide(int $chatId, string $text): void {
     }
 }
 
-function clearHeaderPhoto(int $chatId): void {
+function clearHeaderPhoto(int $chatId, ?int $excludeMessageId = null): void {
     try {
         $mid = getSetting('header_msg_'.$chatId, '');
-        if ($mid !== '') {
+        if ($mid !== '' && (int)$mid !== (int)$excludeMessageId) {
             @apiRequest('deleteMessage', ['chat_id'=>$chatId, 'message_id'=>(int)$mid]);
             setSetting('header_msg_'.$chatId, '');
         }
@@ -787,7 +787,7 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
     clearUserState($chatId);
     clearAdminState($chatId);
     clearGuideMessage($chatId);
-    clearHeaderPhoto($chatId);
+    clearHeaderPhoto($chatId, $messageId);
     $isRegistered = (int)$userRow['is_registered'] === 1;
     $isAdmin = getAdminPermissions($chatId) ? true : false;
 
@@ -879,7 +879,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
     // cancel ongoing admin state upon any admin navigation
     clearAdminState($chatId);
     clearGuideMessage($chatId);
-    clearHeaderPhoto($chatId);
+    clearHeaderPhoto($chatId, $messageId);
     switch ($route) {
         case 'support':
             $page = isset($params['page']) ? (int)$params['page'] : 1;
@@ -1484,7 +1484,7 @@ function renderAllianceView(int $chatId, int $messageId, int $allianceId, bool $
 }
 
 function handleAllianceNav(int $chatId, int $messageId, string $route, array $params, array $userRow): void {
-    clearHeaderPhoto($chatId);
+    clearHeaderPhoto($chatId, $messageId);
     switch ($route) {
         case 'new':
             setUserState($chatId,'await_alliance_name',[]);
@@ -1613,6 +1613,7 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             $id = (int)$data['submission_id']; $page=(int)$data['page'];
             $cost = (int)preg_replace('/\D+/', '', (string)$text);
             if ($cost <= 0) { sendMessage($chatId, 'مقدار معتبر ارسال کنید (عدد)'); return; }
+            if ($cost > 2147483647) $cost = 2147483647;
             $stmt = db()->prepare("UPDATE submissions SET status='cost_proposed', cost_amount=? WHERE id=?"); $stmt->execute([$cost,$id]);
             // Notify user with confirm buttons
             $r = db()->prepare("SELECT s.id, s.user_id, s.cost_amount, u.telegram_id FROM submissions s JOIN users u ON u.id=s.user_id WHERE s.id=?"); $r->execute([$id]); $row=$r->fetch();
