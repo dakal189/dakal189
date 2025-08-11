@@ -1434,6 +1434,22 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             deleteMessage($chatId, $messageId);
             sendMessage($chatId,$text,['inline_keyboard'=>$kb]);
             break;
+        case 'user_assets_text':
+            $id=(int)$params['id']; setAdminState($chatId,'await_user_assets_text',['id'=>$id]); sendMessage($chatId,'متن جدید دارایی کاربر را ارسال کنید.'); break;
+        case 'user_money_delta':
+            $id=(int)$params['id']; $d=(int)($params['d']??0);
+            db()->prepare("UPDATE users SET money = GREATEST(0, money + ?) WHERE id=?")->execute([$d,$id]);
+            handleAdminNav($chatId,$messageId,'user_assets',['id'=>$id],$userRow);
+            break;
+        case 'user_profit_delta':
+            $id=(int)$params['id']; $d=(int)($params['d']??0);
+            db()->prepare("UPDATE users SET daily_profit = GREATEST(0, daily_profit + ?) WHERE id=?")->execute([$d,$id]);
+            handleAdminNav($chatId,$messageId,'user_assets',['id'=>$id],$userRow);
+            break;
+        case 'user_money_set':
+            $id=(int)$params['id']; setAdminState($chatId,'await_user_money',['id'=>$id]); sendMessage($chatId,'عدد پول را ارسال کنید.'); break;
+        case 'user_profit_set':
+            $id=(int)$params['id']; setAdminState($chatId,'await_user_profit',['id'=>$id]); sendMessage($chatId,'عدد سود روزانه را ارسال کنید.'); break;
         default:
             answerCallback($_POST['callback_query']['id'] ?? '', 'بخش ناشناخته', true);
     }
