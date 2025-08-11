@@ -1117,11 +1117,11 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $kbRows=[]; foreach($rows as $r){ $label = e($r['country']).' | '.iranDateTime($r['created_at']).' | '.($r['username']?'@'.$r['username']:$r['telegram_id']).' | '.$r['status']; $kbRows[] = [ ['text'=>$label,'callback_data'=>'admin:role_view|id='.$r['id'].'|page='.$page] ]; }
             $hasMore = ($offset + count($rows)) < $total;
             $kb = array_merge($kbRows, paginationKeyboard('admin:roles', $page, $hasMore, 'nav:admin')['inline_keyboard']);
+            // add approved roles entry in the same message
+            $kb[] = [ ['text'=>'رول‌های تایید شده','callback_data'=>'admin:roles_approved|page=1'] ];
             $kb = widenKeyboard(['inline_keyboard'=>$kb]);
             editMessageText($chatId,$messageId,'رول ها',['inline_keyboard'=>$kb['inline_keyboard']]);
-            // add link to approved list
-            sendGuide($chatId,'برای مشاهده رول‌های تایید شده از این دکمه استفاده کنید.');
-            sendMessage($chatId, ' ', ['inline_keyboard'=>[[['text'=>'رول‌های تایید شده','callback_data'=>'admin:roles_approved|page=1']]]]);
+            sendGuide($chatId,'برای مشاهده رول‌های تایید شده از همین دکمه استفاده کنید.');
             break;
         case 'roles_approved':
             $page=(int)($params['page']??1); $perPage=10; [$offset,$limit]=paginate($page,$perPage);
@@ -1213,87 +1213,15 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             editMessageText($chatId,$messageId,'مدیریت کاربران',['inline_keyboard'=>$kb]);
             sendGuide($chatId,'راهنما: برای ثبت کاربر آیدی عددی یا پیام فوروارد ارسال می‌شود؛ سپس کشور را وارد کنید.');
             break;
-        case 'user_register':
-            setAdminState($chatId,'await_user_ident',[]);
-            answerCallback($_POST['callback_query']['id'] ?? '', 'آیدی عددی یا پیام فوروارد شده کاربر را ارسال کنید');
-            break;
-        case 'user_list':
-            $page=(int)($params['page']??1); $perPage=10; [$offset,$limit]=paginate($page,$perPage);
-            $total = db()->query("SELECT COUNT(*) c FROM users WHERE is_registered=1")->fetch()['c']??0;
-            $stmt = db()->prepare("SELECT id, telegram_id, username, country FROM users WHERE is_registered=1 ORDER BY country ASC, id ASC LIMIT ?,?");
-            $stmt->bindValue(1,$offset,PDO::PARAM_INT); $stmt->bindValue(2,$limit,PDO::PARAM_INT); $stmt->execute(); $rows=$stmt->fetchAll();
-            $kbRows=[]; foreach($rows as $r){ $label = e($r['country']).' | '.($r['username']?'@'.$r['username']:$r['telegram_id']); $kbRows[]=[ ['text'=>$label, 'callback_data'=>'admin:user_view|id='.$r['id'].'|page='.$page] ]; }
-            $hasMore = ($offset + count($rows)) < $total;
-            $kb = array_merge($kbRows, paginationKeyboard('admin:user_list', $page, $hasMore, 'admin:users')['inline_keyboard']);
-            deleteMessage($chatId, $messageId);
-            setSetting('header_msg_'.$chatId, '');
-            sendMessage($chatId,'کاربران ثبت شده',['inline_keyboard'=>$kb]);
-            break;
-        case 'user_view':
-            $id=(int)$params['id']; $page=(int)($params['page']??1);
-            $stmt=db()->prepare("SELECT * FROM users WHERE id=?"); $stmt->execute([$id]); $r=$stmt->fetch(); if(!$r){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
-            $hdr = usernameLink($r['username'], (int)$r['telegram_id'])."\nID: ".$r['telegram_id']."\nکشور: ".e($r['country'])."\nثبت: ".((int)$r['is_registered']?'بله':'خیر')."\nبن: ".((int)$r['banned']?'بله':'خیر');
-            $kb=[
-                [ ['text'=>'مدیریت دارایی کاربر','callback_data'=>'admin:user_assets|id='.$id.'|page='.$page], ['text'=>'تنظیم پرچم کشور','callback_data'=>'admin:set_flag|id='.$id.'|page='.$page] ],
-                [ ['text'=>'حذف کاربر','callback_data'=>'admin:user_del|id='.$id.'|page='.$page] ],
-                [ ['text'=>'بازگشت','callback_data'=>'admin:user_list|page='.$page] ]
+        case 'bans':
+            $kb = [
+                [ ['text'=>'بن کردن کاربر','callback_data'=>'admin:ban_add'], ['text'=>'حذف بن','callback_data'=>'admin:ban_remove'] ],
+                [ ['text'=>'لیست کاربران بن‌شده','callback_data'=>'admin:ban_list'] ],
+                [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ]
             ];
             $kb = widenKeyboard(['inline_keyboard'=>$kb]);
-            $flagFid = null;
-            if ($r['country']) { $flag = db()->prepare("SELECT photo_file_id FROM country_flags WHERE country=?"); $flag->execute([$r['country']]); $fr=$flag->fetch(); if ($fr && $fr['photo_file_id']) { $flagFid=$fr['photo_file_id']; } }
-            deleteMessage($chatId, $messageId);
-            if ($flagFid) { $resp = sendPhoto($chatId, $flagFid, $hdr, $kb); if ($resp && ($resp['ok']??false)) setHeaderPhoto($chatId, (int)($resp['result']['message_id']??0)); }
-            else { $resp = sendMessage($chatId, $hdr, $kb); if ($resp && ($resp['ok']??false)) setHeaderPhoto($chatId, (int)($resp['result']['message_id']??0)); }
-            break;
-        case 'user_assets':
-            $id=(int)$params['id']; $page=(int)($params['page']??1);
-            $stmt=db()->prepare("SELECT username, telegram_id, country, assets_text, money, daily_profit FROM users WHERE id=?"); $stmt->execute([$id]); $u=$stmt->fetch(); if(!$u){ answerCallback($_POST['callback_query']['id']??'','کاربر یافت نشد',true); return; }
-            $text = 'دارایی کاربر: '.($u['username']?'@'.$u['username']:$u['telegram_id'])."\nکشور: ".e($u['country'])."\n\n".($u['assets_text']?e($u['assets_text']):'—')."\n\nپول: ".$u['money']." | سود روزانه: ".$u['daily_profit'];
-            $kb=[
-                [ ['text'=>'تغییر متن دارایی','callback_data'=>'admin:user_assets_text|id='.$id.'|page='.$page] ],
-                [ ['text'=>'+100','callback_data'=>'admin:user_money_delta|id='.$id.'|d=100'], ['text'=>'+1000','callback_data'=>'admin:user_money_delta|id='.$id.'|d=1000'], ['text'=>'-100','callback_data'=>'admin:user_money_delta|id='.$id.'|d=-100'], ['text'=>'-1000','callback_data'=>'admin:user_money_delta|id='.$id.'|d=-1000'] ],
-                [ ['text'=>'+10 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=10'], ['text'=>'+100 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=100'], ['text'=>'-10 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=-10'], ['text'=>'-100 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=-100'] ],
-                [ ['text'=>'تنظیم مستقیم پول','callback_data'=>'admin:user_money_set|id='.$id.'|page='.$page], ['text'=>'تنظیم مستقیم سود','callback_data'=>'admin:user_profit_set|id='.$id.'|page='.$page] ],
-                [ ['text'=>'بازگشت','callback_data'=>'admin:user_view|id='.$id.'|page='.$page] ]
-            ];
-            deleteMessage($chatId, $messageId);
-            sendMessage($chatId,$text,['inline_keyboard'=>$kb]);
-            break;
-        case 'user_assets_text':
-            $id=(int)$params['id']; setAdminState($chatId,'await_user_assets_text',['id'=>$id]);
-            sendMessage($chatId,'متن جدید دارایی کاربر را ارسال کنید.');
-            break;
-        case 'user_money_delta':
-            $id=(int)$params['id']; $d=(int)($params['d']??0);
-            db()->prepare("UPDATE users SET money = GREATEST(0, money + ?) WHERE id=?")->execute([$d,$id]);
-            handleAdminNav($chatId,$messageId,'user_assets',['id'=>$id],$userRow);
-            break;
-        case 'user_profit_delta':
-            $id=(int)$params['id']; $d=(int)($params['d']??0);
-            db()->prepare("UPDATE users SET daily_profit = GREATEST(0, daily_profit + ?) WHERE id=?")->execute([$d,$id]);
-            handleAdminNav($chatId,$messageId,'user_assets',['id'=>$id],$userRow);
-            break;
-        case 'user_money_set':
-            $id=(int)$params['id']; setAdminState($chatId,'await_user_money',['id'=>$id]); sendMessage($chatId,'عدد پول را ارسال کنید.');
-            break;
-        case 'user_profit_set':
-            $id=(int)$params['id']; setAdminState($chatId,'await_user_profit',['id'=>$id]); sendMessage($chatId,'عدد سود روزانه را ارسال کنید.');
-            break;
-        case 'set_flag':
-            $id=(int)$params['id'];
-            $stmt=db()->prepare("SELECT country FROM users WHERE id=?"); $stmt->execute([$id]); $u=$stmt->fetch(); if(!$u || !$u['country']){ answerCallback($_POST['callback_query']['id']??'','کشور نامعتبر',true); return; }
-            setAdminState($chatId,'await_country_flag',['country'=>$u['country'],'uid'=>$id]);
-            sendMessage($chatId,'تصویر پرچم کشور '.e($u['country']).' را به صورت عکس ارسال کنید.');
-            break;
-        case 'users':
-            $kb=[ [ ['text'=>'ثبت کاربر','callback_data'=>'admin:user_register'] , ['text'=>'لیست کاربران','callback_data'=>'admin:user_list|page=1'] ], [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ] ];
-            editMessageText($chatId,$messageId,'مدیریت کاربران',['inline_keyboard'=>$kb]);
-            sendGuide($chatId,'راهنما: برای ثبت کاربر آیدی عددی یا پیام فوروارد ارسال می‌شود؛ سپس کشور را وارد کنید.');
-            break;
-        case 'user_register':
-            setAdminState($chatId,'await_user_ident',[]);
-            answerCallback($_POST['callback_query']['id'] ?? '', 'آیدی عددی یا پیام فوروارد شده کاربر را ارسال کنید');
-            sendMessage($chatId,'آیدی عددی یا پیام فوروارد کاربر را ارسال کنید تا ثبت شود.');
+            editMessageText($chatId,$messageId,'مدیریت بن',['inline_keyboard'=>$kb['inline_keyboard']]);
+            sendGuide($chatId,'راهنما: برای بن/حذف بن، آیدی عددی یا پیام فوروارد کاربر را ارسال کنید.');
             break;
         case 'ban_add':
             setAdminState($chatId,'await_ban_ident',[]);
