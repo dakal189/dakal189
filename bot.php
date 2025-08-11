@@ -1650,6 +1650,13 @@ function processUserMessage(array $message): void {
     $st = getUserState($chatId);
     if ($st) { handleUserStateMessage($u, $message, $st); return; }
 
+    // If user is not registered, route any free text to support
+    if ((int)$u['is_registered'] !== 1) {
+        setUserState($chatId, 'await_support', []);
+        sendMessage($chatId, 'فقط پشتیبانی در دسترس است. پیام خود را برای پشتیبانی ارسال کنید.', backButton('nav:home'));
+        return;
+    }
+
     // Default: show menu
     handleStart($u);
 }
