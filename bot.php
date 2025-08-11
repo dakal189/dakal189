@@ -1456,6 +1456,14 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 answerCallback($_POST['callback_query']['id'] ?? '', 'ارسال ناموفق', true);
             }
             break;
+        case 'user_del':
+            $id=(int)$params['id']; $page=(int)($params['page']??1);
+            // reset registration instead of hard delete
+            db()->prepare("UPDATE users SET is_registered=0, country=NULL WHERE id=?")->execute([$id]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'حذف شد');
+            // back to user list
+            handleAdminNav($chatId,$messageId,'user_list',['page'=>$page],$userRow);
+            break;
         default:
             answerCallback($_POST['callback_query']['id'] ?? '', 'بخش ناشناخته', true);
     }
