@@ -1450,6 +1450,25 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $id=(int)$params['id']; setAdminState($chatId,'await_user_money',['id'=>$id]); sendMessage($chatId,'عدد پول را ارسال کنید.'); break;
         case 'user_profit_set':
             $id=(int)$params['id']; setAdminState($chatId,'await_user_profit',['id'=>$id]); sendMessage($chatId,'عدد سود روزانه را ارسال کنید.'); break;
+        case 'set_flag':
+            $id=(int)$params['id']; $page=(int)($params['page']??1);
+            $stmt = db()->prepare("SELECT country FROM users WHERE id=?");
+            $stmt->execute([$id]);
+            $urow = $stmt->fetch();
+            if (!$urow || !$urow['country']) {
+                answerCallback($_POST['callback_query']['id'] ?? '', 'ابتدا کشور کاربر را تنظیم کنید', true);
+                return;
+            }
+            setAdminState($chatId, 'await_country_flag', ['country' => $urow['country']]);
+            $flag = db()->prepare("SELECT photo_file_id FROM country_flags WHERE country=?");
+            $flag->execute([$urow['country']]);
+            $fr = $flag->fetch();
+            if ($fr && $fr['photo_file_id']) {
+                sendPhoto($chatId, $fr['photo_file_id'], 'پرچم فعلی ' . e($urow['country']) . "\nعکس جدید را ارسال کنید.");
+            } else {
+                sendMessage($chatId, 'عکس پرچم برای ' . e($urow['country']) . ' را ارسال کنید.');
+            }
+            break;
         default:
             answerCallback($_POST['callback_query']['id'] ?? '', 'بخش ناشناخته', true);
     }
@@ -1941,7 +1960,8 @@ function handleUserStateMessage(array $userRow, array $message, array $state): v
             $u = userByTelegramId($chatId);
             db()->prepare("INSERT INTO submissions (user_id, type, text, photo_file_id) VALUES (?, ?, ?, ?)")->execute([(int)$u['id'], $type, $text ?: $caption, $photo]);
             sendMessage($chatId,'ارسال شما ثبت شد.');
-            notifySectionAdmins($type, 'پیام جدید در بخش '.$type);
+            $sectionTitle = getInlineButtonTitle($type);
+            notifySectionAdmins($type, 'پیام جدید در بخش ' . $sectionTitle);
             clearUserState($chatId);
             break;
         case 'await_war_format':
@@ -1956,7 +1976,7 @@ function handleUserStateMessage(array $userRow, array $message, array $state): v
             $u = userByTelegramId($chatId);
             db()->prepare("INSERT INTO submissions (user_id, type, text, photo_file_id, attacker_country, defender_country) VALUES (?, 'war', ?, ?, ?, ?)")->execute([(int)$u['id'], $content, $photo, $att, $def]);
             sendMessage($chatId,'اعلام جنگ ثبت شد.');
-            notifySectionAdmins('war', 'پیام جدید در بخش اعلام جنگ');
+            notifySectionAdmins('war', 'پیام جدید در بخش ' . getInlineButtonTitle('war'));
             clearUserState($chatId);
             break;
         case 'await_role_text':
@@ -1965,7 +1985,7 @@ function handleUserStateMessage(array $userRow, array $message, array $state): v
             $u = userByTelegramId($chatId);
             db()->prepare("INSERT INTO submissions (user_id, type, text) VALUES (?, 'role', ?)")->execute([(int)$u['id'], $text]);
             sendMessage($chatId,'رول شما ثبت شد و در انتظار بررسی است.');
-            notifySectionAdmins('roles', 'رول جدید ارسال شد');
+            notifySectionAdmins('roles', 'پیام جدید در بخش ' . getInlineButtonTitle('roles'));
             clearUserState($chatId);
             break;
         case 'await_alliance_name':
