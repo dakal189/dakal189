@@ -2525,10 +2525,21 @@ function processCallback(array $callback): void {
 
     if (strpos($action, 'nav:') === 0) {
         $route = substr($action, 4);
+        // Enforce schedule for user-facing sections
+        $routeToKey = [
+            'army'=>'army','missile'=>'missile','defense'=>'defense','roles'=>'roles',
+            'statement'=>'statement','war'=>'war','assets'=>'assets','support'=>'support',
+            'alliance'=>'alliance','shop'=>'shop'
+        ];
+        if (isset($routeToKey[$route]) && !isButtonEnabled($routeToKey[$route])) {
+            answerCallback($callback['id'], 'این دکمه در حال حاضر در دسترس نیست', true);
+            return;
+        }
         handleNav($chatId, $messageId, $route, $params, $u);
         return;
     }
     if (strpos($action, 'user_shop:') === 0) {
+        if (!isButtonEnabled('shop')) { answerCallback($callback['id'], 'این دکمه در حال حاضر در دسترس نیست', true); return; }
         $route = substr($action, 10);
         $urow = userByTelegramId($chatId); $uid = (int)$urow['id'];
         if ($route === 'factories') {
@@ -2699,6 +2710,7 @@ function processCallback(array $callback): void {
         return;
     }
     if (strpos($action, 'alli:') === 0) {
+        if (!isButtonEnabled('alliance')) { answerCallback($callback['id'], 'این دکمه در حال حاضر در دسترس نیست', true); return; }
         $route = substr($action, 5);
         handleAllianceNav($chatId, $messageId, $route, $params, $u);
         return;
