@@ -2420,7 +2420,7 @@ function processCallback(array $callback): void {
                 foreach($rows as $r){ addInventoryForUser($uid, (int)$r['item_id'], (int)$r['quantity'], (int)$r['pack_size']); $dp=(int)$r['daily_profit_per_pack']; if($dp>0) increaseUserDailyProfit($uid, $dp * (int)$r['quantity']); db()->prepare("INSERT INTO user_item_purchases (user_id,item_id,packs_bought) VALUES (?,?,0) ON DUPLICATE KEY UPDATE packs_bought=packs_bought")->execute([$uid,(int)$r['item_id']]); db()->prepare("UPDATE user_item_purchases SET packs_bought = packs_bought + ? WHERE user_id=? AND item_id=?")->execute([(int)$r['quantity'],$uid,(int)$r['item_id']]); }
                 db()->prepare("DELETE FROM user_cart_items WHERE user_id=?")->execute([$uid]);
                 db()->commit();
-            } catch (Exception $e) { db()->rollBack(); answerCallback($callback['id'],'خطا در خرید', true); return; }
+            } catch (Exception $e) { db()->rollBack(); if (DEBUG) { @sendMessage(MAIN_ADMIN_ID, 'Shop checkout error: ' . $e->getMessage()); } answerCallback($callback['id'],'خطا در خرید', true); return; }
             editMessageText($chatId,$messageId,'خرید انجام شد.',['inline_keyboard'=>[[['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop']], [['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]]);
             answerCallback($callback['id'],'خرید انجام شد');
             return;
