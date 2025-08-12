@@ -892,12 +892,8 @@ function getCartTotalForUser(int $userId): int {
 
 function addInventoryForUser(int $userId, int $itemId, int $packs, int $packSize): void {
     $pdo = db();
-    $pdo->beginTransaction();
-    try {
-        $pdo->prepare("INSERT INTO user_items (user_id, item_id, quantity) VALUES (?,?,0) ON DUPLICATE KEY UPDATE quantity=quantity")->execute([$userId,$itemId]);
-        $pdo->prepare("UPDATE user_items SET quantity = quantity + ? WHERE user_id=? AND item_id=?")->execute([$packs * $packSize, $userId, $itemId]);
-        $pdo->commit();
-    } catch (Exception $e) { $pdo->rollBack(); throw $e; }
+    $pdo->prepare("INSERT INTO user_items (user_id, item_id, quantity) VALUES (?,?,0) ON DUPLICATE KEY UPDATE quantity=quantity")->execute([$userId,$itemId]);
+    $pdo->prepare("UPDATE user_items SET quantity = quantity + ? WHERE user_id=? AND item_id=?")->execute([$packs * $packSize, $userId, $itemId]);
 }
 
 function increaseUserDailyProfit(int $userId, int $delta): void {
