@@ -189,8 +189,15 @@ function bootstrapDatabase(PDO $pdo): void {
         id INT AUTO_INCREMENT PRIMARY KEY,
         `key` VARCHAR(64) UNIQUE,
         title VARCHAR(64) NOT NULL,
-        enabled TINYINT(1) NOT NULL DEFAULT 1
+        enabled TINYINT(1) NOT NULL DEFAULT 1,
+        days VARCHAR(32) NULL,
+        time_start CHAR(5) NULL,
+        time_end CHAR(5) NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+    // Backfill columns for older deployments (ignore errors if already exists)
+    try { $pdo->exec("ALTER TABLE button_settings ADD COLUMN days VARCHAR(32) NULL"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE button_settings ADD COLUMN time_start CHAR(5) NULL"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE button_settings ADD COLUMN time_end CHAR(5) NULL"); } catch (Exception $e) {}
 
     // Seed default buttons if not present
     $defaults = [
@@ -673,10 +680,36 @@ function getInlineButtonTitle(string $key): string {
 }
 
 function isButtonEnabled(string $key): bool {
-    $stmt = db()->prepare("SELECT enabled FROM button_settings WHERE `key` = ?");
+    $stmt = db()->prepare("SELECT enabled, days, time_start, time_end FROM button_settings WHERE `key` = ?");
     $stmt->execute([$key]);
     $row = $stmt->fetch();
-    return $row ? (int)$row['enabled'] === 1 : true;
+    if (!$row) return true;
+    if ((int)$row['enabled'] !== 1) return false;
+    // Check schedule if defined
+    $days = $row['days'] ?? null; $t1 = $row['time_start'] ?? null; $t2 = $row['time_end'] ?? null;
+    // Day check
+    if ($days && strtolower($days) !== 'all') {
+        $map = ['su'=>0,'mo'=>1,'tu'=>2,'we'=>3,'th'=>4,'fr'=>5,'sa'=>6];
+        $todayIdx = (int)gmdate('w'); // 0=Sun ... 6=Sat in GMT
+        // Convert to Tehran local
+        $tz = new DateTimeZone('Asia/Tehran'); $now = new DateTime('now',$tz); $todayIdx = (int)$now->format('w');
+        $allowed = array_map('trim', explode(',', strtolower($days)));
+        $allowedIdx = [];
+        foreach ($allowed as $d) { if (isset($map[$d])) $allowedIdx[] = $map[$d]; }
+        if ($allowedIdx && !in_array($todayIdx, $allowedIdx, true)) return false;
+    }
+    // Time range check (Tehran time). 00:00-00:00 means always
+    if ($t1 && $t2 && !($t1==='00:00' && $t2==='00:00')) {
+        $tz = new DateTimeZone('Asia/Tehran'); $now = new DateTime('now',$tz); $cur = (int)$now->format('H')*60 + (int)$now->format('i');
+        list($h1,$m1) = explode(':',$t1); $s = (int)$h1*60 + (int)$m1;
+        list($h2,$m2) = explode(':',$t2); $e = (int)$h2*60 + (int)$m2;
+        if ($s <= $e) { // same-day window
+            if ($cur < $s || $cur > $e) return false;
+        } else { // overnight (e.g., 22:00-06:00)
+            if (!($cur >= $s || $cur <= $e)) return false;
+        }
+    }
+    return true;
 }
 
 function mainMenuKeyboard(bool $isRegistered, bool $isAdmin): array {
@@ -1125,8 +1158,8 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             answerCallback($_POST['callback_query']['id'] ?? '', '');
             break;
         case 'buttons':
-            $rows = db()->query("SELECT `key`, title, enabled FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance') ORDER BY id ASC")->fetchAll();
-            $kb=[]; foreach($rows as $r){ $txt = ($r['enabled']? 'روشن':'خاموش').' - '.$r['title']; $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']] ]; }
+            $rows = db()->query("SELECT `key`, title, enabled FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance','shop') ORDER BY id ASC")->fetchAll();
+            $kb=[]; foreach($rows as $r){ $txt = ($r['enabled']? 'روشن':'خاموش').' - '.$r['title']; $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']], ['text'=>'زمان‌بندی','callback_data'=>'admin:btn_sched|key='.$r['key']] ]; }
             $kb[]=[ ['text'=>'حالت نگهداری','callback_data'=>'admin:maint'] ];
             $kb[]=[ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ];
             editMessageText($chatId,$messageId,'تنظیمات دکمه ها',['inline_keyboard'=>$kb]);
@@ -1343,8 +1376,9 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             else { sendMessage($chatId,'متن دارایی را ارسال کنید.'); }
             break;
         case 'buttons':
-            $rows = db()->query("SELECT `key`, title, enabled FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance') ORDER BY id ASC")->fetchAll();
-            $kb=[]; foreach($rows as $r){ $txt = ($r['enabled']? 'روشن':'خاموش').' - '.$r['title']; $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']] ]; }
+            $rows = db()->query("SELECT `key`, title, enabled FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance','shop') ORDER BY id ASC")->fetchAll();
+            $kb=[]; foreach($rows as $r){ $txt = ($r['enabled']? 'روشن':'خاموش').' - '.$r['title']; $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']], ['text'=>'زمان‌بندی','callback_data'=>'admin:btn_sched|key='.$r['key']] ]; }
+            $kb[]=[ ['text'=>'حالت نگهداری','callback_data'=>'admin:maint'] ];
             $kb[]=[ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ];
             editMessageText($chatId,$messageId,'تنظیمات دکمه ها',['inline_keyboard'=>$kb]);
             break;
@@ -1357,6 +1391,27 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
             setAdminState($chatId,'await_btn_rename',['key'=>$key]);
             answerCallback($_POST['callback_query']['id'] ?? '', 'نام جدید دکمه را ارسال کنید');
+            break;
+        case 'btn_sched':
+            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            // fetch current
+            $r = db()->prepare("SELECT days,time_start,time_end FROM button_settings WHERE `key`=?"); $r->execute([$key]); $row=$r->fetch();
+            $days = $row && $row['days'] ? $row['days'] : 'all';
+            $t1 = $row && $row['time_start'] ? $row['time_start'] : '00:00';
+            $t2 = $row && $row['time_end'] ? $row['time_end'] : '00:00';
+            $txt = "زمان‌بندی دکمه: ".$key."\nروزها: ".$days."\nبازه ساعت: ".$t1." تا ".$t2."\n\n- روزها: یکی از all یا ترکیب حروف: su,mo,tu,we,th,fr,sa (مثلاً mo,we,fr)\n- ساعت: فرم HH:MM. اگر 00:00 تا 00:00 باشد یعنی همیشه روشن";
+            $kb=[ [ ['text'=>'تنظیم روزها','callback_data'=>'admin:btn_sched_days|key='.$key], ['text'=>'تنظیم ساعت','callback_data'=>'admin:btn_sched_time|key='.$key] ], [ ['text'=>'بازگشت','callback_data'=>'admin:buttons'] ] ];
+            editMessageText($chatId,$messageId,$txt,['inline_keyboard'=>$kb]);
+            break;
+        case 'btn_sched_days':
+            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            setAdminState($chatId,'await_btn_days',['key'=>$key]);
+            sendMessage($chatId,'روزها را ارسال کنید: all یا مثل: mo,tu,we (حروف کوچک، با کاما)');
+            break;
+        case 'btn_sched_time':
+            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            setAdminState($chatId,'await_btn_time',['key'=>$key]);
+            sendMessage($chatId,'بازه ساعت را ارسال کنید به فرم HH:MM-HH:MM (مثلاً 09:00-22:00). برای همیشه 00:00-00:00 بفرستید.');
             break;
         case 'users':
             $kb=[ [ ['text'=>'ثبت کاربر','callback_data'=>'admin:user_register'] , ['text'=>'لیست کاربران','callback_data'=>'admin:user_list|page=1'] ], [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ] ];
@@ -2004,6 +2059,26 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             if ($title===''){ sendMessage($chatId,'نام نامعتبر'); return; }
             db()->prepare("UPDATE button_settings SET title=? WHERE `key`=?")->execute([$title,$key]);
             sendMessage($chatId,'نام دکمه تغییر کرد.'); clearAdminState($chatId);
+            break;
+        case 'await_btn_days':
+            $key = $data['key'] ?? '';
+            $val = strtolower(trim((string)$text));
+            if ($val === '') { sendMessage($chatId,'الگو نامعتبر'); return; }
+            if ($val !== 'all') {
+                if (!preg_match('/^(su|mo|tu|we|th|fr|sa)(,(su|mo|tu|we|th|fr|sa))*$/', $val)) { sendMessage($chatId,'فرمت روزها نامعتبر است. نمونه: mo,tu,we یا all'); return; }
+            }
+            db()->prepare("UPDATE button_settings SET days=? WHERE `key`=?")->execute([$val, $key]);
+            sendMessage($chatId,'روزهای مجاز تنظیم شد.');
+            clearAdminState($chatId);
+            break;
+        case 'await_btn_time':
+            $key = $data['key'] ?? '';
+            $val = trim((string)$text);
+            if (!preg_match('/^(\\d{2}:\\d{2})-(\\d{2}:\\d{2})$/', $val, $m)) { sendMessage($chatId,'فرمت ساعت نامعتبر. نمونه: 09:00-22:00'); return; }
+            $t1 = $m[1]; $t2 = $m[2];
+            db()->prepare("UPDATE button_settings SET time_start=?, time_end=? WHERE `key`=?")->execute([$t1,$t2,$key]);
+            sendMessage($chatId,'بازه ساعت تنظیم شد.');
+            clearAdminState($chatId);
             break;
         case 'await_user_ident':
             $tgid = extractTelegramIdFromMessage($message);
