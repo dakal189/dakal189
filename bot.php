@@ -203,6 +203,7 @@ function bootstrapDatabase(PDO $pdo): void {
         ['assets','لیست دارایی'],
         ['support','پشتیبانی'],
         ['alliance','اتحاد'],
+        ['shop','فروشگاه'],
         ['admin_panel','پنل مدیریت'],
     ];
     foreach ($defaults as [$key,$title]) {
@@ -237,6 +238,109 @@ function bootstrapDatabase(PDO $pdo): void {
         UNIQUE KEY unique_member (alliance_id, user_id),
         CONSTRAINT fk_member_alliance FOREIGN KEY (alliance_id) REFERENCES alliances(id) ON DELETE CASCADE,
         CONSTRAINT fk_member_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    // Shop categories
+    $pdo->exec("CREATE TABLE IF NOT EXISTS shop_categories (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(128) NOT NULL,
+        sort_order INT NOT NULL DEFAULT 0,
+        UNIQUE KEY uq_cat_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    // Shop items
+    $pdo->exec("CREATE TABLE IF NOT EXISTS shop_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        category_id INT NOT NULL,
+        name VARCHAR(128) NOT NULL,
+        unit_price BIGINT NOT NULL DEFAULT 0,
+        pack_size INT NOT NULL DEFAULT 1,
+        per_user_limit INT NOT NULL DEFAULT 0,
+        daily_profit_per_pack INT NOT NULL DEFAULT 0,
+        enabled TINYINT(1) NOT NULL DEFAULT 1,
+        UNIQUE KEY uq_item_cat_name (category_id, name),
+        CONSTRAINT fk_item_cat FOREIGN KEY (category_id) REFERENCES shop_categories(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    // User carts (simple: keyed by user_id)
+    $pdo->exec("CREATE TABLE IF NOT EXISTS user_carts (
+        user_id INT PRIMARY KEY,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        CONSTRAINT fk_cart_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS user_cart_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        item_id INT NOT NULL,
+        quantity INT NOT NULL DEFAULT 0,
+        UNIQUE KEY uq_cart_item (user_id, item_id),
+        CONSTRAINT fk_uci_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        CONSTRAINT fk_uci_item FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    // User owned items (inventory)
+    $pdo->exec("CREATE TABLE IF NOT EXISTS user_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        item_id INT NOT NULL,
+        quantity BIGINT NOT NULL DEFAULT 0,
+        UNIQUE KEY uq_user_item (user_id, item_id),
+        CONSTRAINT fk_ui_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        CONSTRAINT fk_ui_item FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    // Track packs purchased per user per item to enforce per_user_limit
+    $pdo->exec("CREATE TABLE IF NOT EXISTS user_item_purchases (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        item_id INT NOT NULL,
+        packs_bought BIGINT NOT NULL DEFAULT 0,
+        UNIQUE KEY uq_user_item_purchase (user_id, item_id),
+        CONSTRAINT fk_uip_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        CONSTRAINT fk_uip_item FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    // Factories
+    $pdo->exec("CREATE TABLE IF NOT EXISTS factories (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(128) NOT NULL,
+        price_l1 BIGINT NOT NULL DEFAULT 0,
+        price_l2 BIGINT NOT NULL DEFAULT 0,
+        UNIQUE KEY uq_factory_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS factory_products (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        factory_id INT NOT NULL,
+        item_id INT NOT NULL,
+        qty_l1 INT NOT NULL DEFAULT 0,
+        qty_l2 INT NOT NULL DEFAULT 0,
+        CONSTRAINT fk_fp_factory FOREIGN KEY (factory_id) REFERENCES factories(id) ON DELETE CASCADE,
+        CONSTRAINT fk_fp_item FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS user_factories (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        factory_id INT NOT NULL,
+        level TINYINT NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_user_factory (user_id, factory_id),
+        CONSTRAINT fk_uf_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        CONSTRAINT fk_uf_factory FOREIGN KEY (factory_id) REFERENCES factories(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    // Daily production grants
+    $pdo->exec("CREATE TABLE IF NOT EXISTS user_factory_grants (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_factory_id INT NOT NULL,
+        for_date DATE NOT NULL,
+        granted TINYINT(1) NOT NULL DEFAULT 0,
+        chosen_item_id INT NULL,
+        UNIQUE KEY uq_ufd (user_factory_id, for_date),
+        CONSTRAINT fk_ufg_uf FOREIGN KEY (user_factory_id) REFERENCES user_factories(id) ON DELETE CASCADE,
+        CONSTRAINT fk_ufg_item FOREIGN KEY (chosen_item_id) REFERENCES shop_items(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS alliance_invites (
@@ -594,6 +698,7 @@ function mainMenuKeyboard(bool $isRegistered, bool $isAdmin): array {
         if (isButtonEnabled('war')) $line[] = $btn('war', 'nav:war');
         if ($line) $rows[] = $line;
         $line = [];
+        if (isButtonEnabled('shop')) $line[] = $btn('shop', 'nav:shop');
         if (isButtonEnabled('assets')) $line[] = $btn('assets', 'nav:assets');
         if (isButtonEnabled('support')) $line[] = $btn('support', 'nav:support');
         if ($line) $rows[] = $line;
@@ -778,6 +883,27 @@ function paginate(int $page, int $perPage): array {
     return [$offset, $perPage];
 }
 
+function formatPrice(int $amount): string { return number_format($amount, 0, '.', ','); }
+
+function getCartTotalForUser(int $userId): int {
+    $sql = "SELECT SUM(uci.quantity * si.unit_price) total FROM user_cart_items uci JOIN shop_items si ON si.id=uci.item_id WHERE uci.user_id=?";
+    $st = db()->prepare($sql); $st->execute([$userId]); $row=$st->fetch(); return (int)($row['total']??0);
+}
+
+function addInventoryForUser(int $userId, int $itemId, int $packs, int $packSize): void {
+    $pdo = db();
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare("INSERT INTO user_items (user_id, item_id, quantity) VALUES (?,?,0) ON DUPLICATE KEY UPDATE quantity=quantity")->execute([$userId,$itemId]);
+        $pdo->prepare("UPDATE user_items SET quantity = quantity + ? WHERE user_id=? AND item_id=?")->execute([$packs * $packSize, $userId, $itemId]);
+        $pdo->commit();
+    } catch (Exception $e) { $pdo->rollBack(); throw $e; }
+}
+
+function increaseUserDailyProfit(int $userId, int $delta): void {
+    db()->prepare("UPDATE users SET daily_profit = GREATEST(0, daily_profit + ?) WHERE id=?")->execute([$delta, $userId]);
+}
+
 function paginationKeyboard(string $baseCb, int $page, bool $hasMore, string $backCb): array {
     $buttons = [];
     $nav = [];
@@ -865,7 +991,7 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
             if (!$isRegistered) { answerCallback($_POST['callback_query']['id'] ?? '', 'برای استفاده باید ثبت شوید.', true); return; }
             $country = $userRow['country'];
             // Prefer user-specific assets_text, else country assets
-            $stmtU = db()->prepare("SELECT assets_text, money, daily_profit FROM users WHERE id=?");
+            $stmtU = db()->prepare("SELECT assets_text, money, daily_profit, id FROM users WHERE id=?");
             $stmtU->execute([(int)$userRow['id']]);
             $ur = $stmtU->fetch();
             $content = '';
@@ -877,9 +1003,30 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
                 $row = $stmt->fetch();
                 $content = $row && $row['content'] ? $row['content'] : 'دارایی برای کشور شما ثبت نشده است.';
             }
+            // Append shop items grouped by category
+            $lines = [];
+            $cats = db()->query("SELECT id,name FROM shop_categories ORDER BY sort_order ASC, name ASC")->fetchAll();
+            foreach($cats as $c){
+                $st = db()->prepare("SELECT si.name, ui.quantity FROM user_items ui JOIN shop_items si ON si.id=ui.item_id WHERE ui.user_id=? AND si.category_id=? AND ui.quantity>0 ORDER BY si.name ASC");
+                $st->execute([(int)$ur['id'], (int)$c['id']]); $items=$st->fetchAll();
+                if ($items){
+                    $lines[] = $c['name'];
+                    foreach($items as $it){ $lines[] = e($it['name']).' : '.$it['quantity']; }
+                    $lines[]='';
+                }
+            }
+            if ($lines) { $content = trim($content) . "\n\n" . implode("\n", array_filter($lines)); }
             $wallet = '';
             if ($ur) { $wallet = "\n\nپول: ".$ur['money']." | سود روزانه: ".$ur['daily_profit']; }
             editMessageText($chatId, $messageId, 'دارایی های شما (' . e($country) . "):\n\n" . e($content) . $wallet, backButton('nav:home'));
+            break;
+        case 'shop':
+            if (!$isRegistered) { answerCallback($_POST['callback_query']['id'] ?? '', 'برای استفاده باید ثبت شوید.', true); return; }
+            // list categories + cart button
+            $cats = db()->query("SELECT id, name FROM shop_categories ORDER BY sort_order ASC, name ASC")->fetchAll();
+            $kb=[]; foreach($cats as $c){ $kb[]=[ ['text'=>$c['name'], 'callback_data'=>'user_shop:cat|id='.$c['id']] ]; }
+            $kb[]=[ ['text'=>'سبد خرید','callback_data'=>'user_shop:cart'] ];
+            editMessageText($chatId,$messageId,'فروشگاه',['inline_keyboard'=>$kb]);
             break;
         case 'alliance':
             if (!$isRegistered) { answerCallback($_POST['callback_query']['id'] ?? '', 'برای استفاده باید ثبت شوید.', true); return; }
@@ -902,6 +1049,7 @@ function renderAdminHome(int $chatId, int $messageId, array $userRow): void {
     if (in_array('all', $perms, true) || hasPerm($chatId, 'statement') || hasPerm($chatId, 'war')) $rows[] = [ ['text' => 'اعلام جنگ / بیانیه', 'callback_data' => 'admin:sw'] ];
     if (in_array('all', $perms, true) || hasPerm($chatId, 'roles')) $rows[] = [ ['text' => 'رول ها', 'callback_data' => 'admin:roles|page=1'] ];
     if (in_array('all', $perms, true) || hasPerm($chatId, 'assets')) $rows[] = [ ['text' => 'دارایی ها', 'callback_data' => 'admin:assets'] ];
+    if (in_array('all', $perms, true) || hasPerm($chatId, 'shop')) $rows[] = [ ['text' => 'فروشگاه', 'callback_data' => 'admin:shop'] ];
     if (in_array('all', $perms, true) || hasPerm($chatId, 'settings')) $rows[] = [ ['text' => 'تنظیمات دکمه ها', 'callback_data' => 'admin:buttons'] ];
     if (in_array('all', $perms, true) || hasPerm($chatId, 'users')) $rows[] = [ ['text' => 'کاربران ثبت شده', 'callback_data' => 'admin:users'] ];
     if (in_array('all', $perms, true) || hasPerm($chatId, 'bans')) $rows[] = [ ['text' => 'مدیریت بن', 'callback_data' => 'admin:bans'] ];
@@ -1433,6 +1581,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 [ ['text'=>'+100','callback_data'=>'admin:user_money_delta|id='.$id.'|d=100'], ['text'=>'+1000','callback_data'=>'admin:user_money_delta|id='.$id.'|d=1000'], ['text'=>'-100','callback_data'=>'admin:user_money_delta|id='.$id.'|d=-100'], ['text'=>'-1000','callback_data'=>'admin:user_money_delta|id='.$id.'|d=-1000'] ],
                 [ ['text'=>'+10 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=10'], ['text'=>'+100 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=100'], ['text'=>'-10 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=-10'], ['text'=>'-100 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=-100'] ],
                 [ ['text'=>'تنظیم مستقیم پول','callback_data'=>'admin:user_money_set|id='.$id.'|page='.$page], ['text'=>'تنظیم مستقیم سود','callback_data'=>'admin:user_profit_set|id='.$id.'|page='.$page] ],
+                [ ['text'=>'مدیریت آیتم‌های فروشگاه','callback_data'=>'admin:user_items|id='.$id.'|page='.$page] ],
                 [ ['text'=>'بازگشت','callback_data'=>'admin:user_view|id='.$id.'|page='.$page] ]
             ];
             deleteMessage($chatId, $messageId);
@@ -1473,6 +1622,71 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 sendMessage($chatId, 'عکس پرچم برای ' . e($urow['country']) . ' را ارسال کنید.');
             }
             break;
+        case 'shop':
+            if (!hasPerm($chatId,'shop') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
+            $kb = [
+                [ ['text'=>'دسته‌بندی‌ها','callback_data'=>'admin:shop_cats|page=1'] ],
+                [ ['text'=>'کارخانه‌های نظامی','callback_data'=>'admin:shop_factories|page=1'] ],
+                [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ]
+            ];
+            editMessageText($chatId,$messageId,'مدیریت فروشگاه',['inline_keyboard'=>$kb]);
+            sendGuide($chatId,'راهنما: از اینجا می‌توانید دسته‌بندی اضافه/حذف کنید، آیتم بسازید و کارخانه‌ها را مدیریت کنید.');
+            break;
+        case 'shop_cats':
+            $page=(int)($params['page']??1); $per=10; [$offset,$limit]=paginate($page,$per);
+            $tot = db()->query("SELECT COUNT(*) c FROM shop_categories")->fetch()['c']??0;
+            $st = db()->prepare("SELECT id,name,sort_order FROM shop_categories ORDER BY sort_order ASC, name ASC LIMIT ?,?"); $st->bindValue(1,$offset,PDO::PARAM_INT); $st->bindValue(2,$limit,PDO::PARAM_INT); $st->execute(); $rows=$st->fetchAll();
+            $kb=[]; foreach($rows as $r){ $kb[]=[ ['text'=>$r['sort_order'].' - '.$r['name'],'callback_data'=>'admin:shop_cat_view|id='.$r['id'].'|page='.$page] ]; }
+            $kb[]=[ ['text'=>'افزودن دسته','callback_data'=>'admin:shop_cat_add'] ];
+            foreach(paginationKeyboard('admin:shop_cats',$page, ($offset+count($rows))<$tot, 'admin:shop')['inline_keyboard'] as $row){ $kb[]=$row; }
+            editMessageText($chatId,$messageId,'دسته‌بندی‌ها',['inline_keyboard'=>$kb]);
+            break;
+        case 'shop_cat_add':
+            setAdminState($chatId,'await_shop_cat_name',[]);
+            sendGuide($chatId,'نام دسته‌بندی را ارسال کنید. سپس عدد ترتیب (اختیاری) را بفرستید.');
+            break;
+        case 'shop_cat_view':
+            $cid=(int)($params['id']??0); $page=(int)($params['page']??1);
+            $c = db()->prepare("SELECT id,name,sort_order FROM shop_categories WHERE id=?"); $c->execute([$cid]); $cat=$c->fetch(); if(!$cat){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
+            $items = db()->prepare("SELECT id,name,unit_price,pack_size,per_user_limit,daily_profit_per_pack,enabled FROM shop_items WHERE category_id=? ORDER BY name ASC"); $items->execute([$cid]); $rows=$items->fetchAll();
+            $lines = ['دسته‌بندی: '.e($cat['name']).' (ترتیب: '.$cat['sort_order'].')','آیتم‌ها:']; if(!$rows){ $lines[]='—'; }
+            $kb=[]; foreach($rows as $r){
+                $lbl = e($r['name']).' | قیمت: '.formatPrice((int)$r['unit_price']).' | بسته: '.$r['pack_size'].' | محدودیت: '.((int)$r['per_user_limit']===0?'∞':$r['per_user_limit']).' | سود/بسته: '.$r['daily_profit_per_pack'].' | '.($r['enabled']?'روشن':'خاموش');
+                $kb[]=[ ['text'=>$lbl, 'callback_data'=>'admin:shop_item_view|id='.$r['id'].'|cid='.$cid.'|page='.$page] ];
+            }
+            $kb[]=[ ['text'=>'افزودن آیتم','callback_data'=>'admin:shop_item_add|cid='.$cid] ];
+            $kb[]=[ ['text'=>'ویرایش دسته','callback_data'=>'admin:shop_cat_edit|id='.$cid], ['text'=>'حذف دسته','callback_data'=>'admin:shop_cat_del|id='.$cid.'|page='.$page] ];
+            $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:shop_cats|page='.$page] ];
+            editMessageText($chatId,$messageId,implode("\n",$lines),['inline_keyboard'=>$kb]);
+            break;
+        case 'shop_cat_edit':
+            $cid=(int)($params['id']??0); setAdminState($chatId,'await_shop_cat_edit',['id'=>$cid]); sendMessage($chatId,'نام جدید و سپس عدد ترتیب را ارسال کنید.'); break;
+        case 'shop_cat_del':
+            $cid=(int)($params['id']??0); $page=(int)($params['page']??1);
+            db()->prepare("DELETE FROM shop_categories WHERE id=?")->execute([$cid]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'حذف شد');
+            handleAdminNav($chatId,$messageId,'shop_cats',['page'=>$page],$userRow);
+            break;
+        case 'shop_item_add':
+            $cid=(int)($params['cid']??0); setAdminState($chatId,'await_shop_item_name',['cid'=>$cid]); sendMessage($chatId,'نام آیتم را ارسال کنید.'); break;
+        case 'shop_item_view':
+            $iid=(int)($params['id']??0); $cid=(int)($params['cid']??0); $page=(int)($params['page']??1);
+            $it = db()->prepare("SELECT * FROM shop_items WHERE id=?"); $it->execute([$iid]); $r=$it->fetch(); if(!$r){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
+            $body = 'نام: '.e($r['name'])."\nقیمت واحد: ".formatPrice((int)$r['unit_price'])."\nاندازه بسته: ".$r['pack_size']."\nمحدودیت هر کاربر: ".((int)$r['per_user_limit']===0?'∞':$r['per_user_limit'])."\nسود روزانه هر بسته: ".$r['daily_profit_per_pack']."\nوضعیت: ".($r['enabled']?'روشن':'خاموش');
+            $kb=[ [ ['text'=>$r['enabled']?'خاموش کردن':'روشن کردن','callback_data'=>'admin:shop_item_toggle|id='.$iid.'|cid='.$cid.'|page='.$page] , ['text'=>'حذف','callback_data'=>'admin:shop_item_del|id='.$iid.'|cid='.$cid.'|page='.$page] ], [ ['text'=>'بازگشت','callback_data'=>'admin:shop_cat_view|id='.$cid.'|page='.$page] ] ];
+            editMessageText($chatId,$messageId,$body,['inline_keyboard'=>$kb]);
+            break;
+        case 'shop_item_toggle':
+            $iid=(int)($params['id']??0); $cid=(int)($params['cid']??0); $page=(int)($params['page']??1);
+            db()->prepare("UPDATE shop_items SET enabled = 1 - enabled WHERE id=?")->execute([$iid]);
+            handleAdminNav($chatId,$messageId,'shop_item_view',['id'=>$iid,'cid'=>$cid,'page'=>$page],$userRow);
+            break;
+        case 'shop_item_del':
+            $iid=(int)($params['id']??0); $cid=(int)($params['cid']??0); $page=(int)($params['page']??1);
+            db()->prepare("DELETE FROM shop_items WHERE id=?")->execute([$iid]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'حذف شد');
+            handleAdminNav($chatId,$messageId,'shop_cat_view',['id'=>$cid,'page'=>$page],$userRow);
+            break;
         default:
             answerCallback($_POST['callback_query']['id'] ?? '', 'بخش ناشناخته', true);
     }
@@ -1482,10 +1696,10 @@ function renderAdminPermsEditor(int $chatId, int $messageId, int $adminTid): voi
     $row = db()->prepare("SELECT is_owner, permissions FROM admin_users WHERE admin_telegram_id=?");
     $row->execute([$adminTid]); $r=$row->fetch(); if(!$r){ editMessageText($chatId,$messageId,'ادمین پیدا نشد', backButton('admin:admins')); return; }
     if ((int)$r['is_owner']===1) { editMessageText($chatId,$messageId,'این اکانت Owner است.', backButton('admin:admins')); return; }
-    $allPerms = ['support','army','missile','defense','statement','war','roles','assets','settings','wheel','users','bans','alliances','admins'];
+    $allPerms = ['support','army','missile','defense','statement','war','roles','assets','shop','settings','wheel','users','bans','alliances','admins'];
     $labels = [
         'support'=>'پشتیبانی', 'army'=>'لشکرکشی', 'missile'=>'حمله موشکی', 'defense'=>'دفاع',
-        'statement'=>'بیانیه', 'war'=>'اعلام جنگ', 'roles'=>'رول‌ها', 'assets'=>'دارایی‌ها',
+        'statement'=>'بیانیه', 'war'=>'اعلام جنگ', 'roles'=>'رول‌ها', 'assets'=>'دارایی‌ها', 'shop'=>'فروشگاه',
         'settings'=>'تنظیمات', 'wheel'=>'گردونه شانس', 'users'=>'کاربران', 'bans'=>'بن‌ها', 'alliances'=>'اتحادها', 'admins'=>'ادمین‌ها'
     ];
     $cur = $r['permissions'] ? (json_decode($r['permissions'], true) ?: []) : [];
@@ -1914,6 +2128,42 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             db()->prepare("UPDATE alliances SET banner_file_id=? WHERE id=?")->execute([$photo,$aid]);
             sendMessage($chatId,'بنر اتحاد تنظیم شد.');
             clearUserState($chatId);
+            break;
+        case 'await_shop_cat_name':
+            $name = trim((string)$text); if($name===''){ sendMessage($chatId,'نام نامعتبر'); return; }
+            db()->prepare("INSERT INTO shop_categories (name, sort_order) VALUES (?, 0)")->execute([$name]);
+            sendMessage($chatId,'ثبت شد. عدد ترتیب را ارسال کنید یا /skip بزنید.');
+            setAdminState($chatId,'await_shop_cat_sort',['name'=>$name]);
+            break;
+        case 'await_shop_cat_sort':
+            $sort = (int)preg_replace('/\D+/','',(string)$text);
+            db()->prepare("UPDATE shop_categories SET sort_order=? WHERE name=?")->execute([$sort, $state['data']['name']]);
+            sendMessage($chatId,'ترتیب ذخیره شد.'); clearAdminState($chatId);
+            break;
+        case 'await_shop_cat_edit':
+            $cid=(int)$data['id'];
+            $parts = preg_split('/\n+/', (string)$text);
+            $name = trim($parts[0] ?? ''); if($name===''){ sendMessage($chatId,'نام نامعتبر'); return; }
+            $sort = isset($parts[1]) ? (int)preg_replace('/\D+/','',$parts[1]) : 0;
+            db()->prepare("UPDATE shop_categories SET name=?, sort_order=? WHERE id=?")->execute([$name,$sort,$cid]);
+            sendMessage($chatId,'ویرایش شد.'); clearAdminState($chatId);
+            break;
+        case 'await_shop_item_name':
+            $cid=(int)$data['cid']; $name=trim((string)$text); if($name===''){ sendMessage($chatId,'نام نامعتبر'); return; }
+            setAdminState($chatId,'await_shop_item_fields',['cid'=>$cid,'name'=>$name]);
+            sendMessage($chatId,'به ترتیب در خطوط جدا قیمت واحد، اندازه بسته، محدودیت هر کاربر (۰=بی‌نهایت)، سود روزانه هر بسته را ارسال کنید.');
+            break;
+        case 'await_shop_item_fields':
+            $cid=(int)$data['cid']; $name=$data['name'];
+            $lines = preg_split('/\n+/', (string)$text);
+            if (count($lines) < 4) { sendMessage($chatId,'فرمت نامعتبر. ۴ خط لازم است.'); return; }
+            $price = (int)preg_replace('/\D+/','',$lines[0]);
+            $pack = max(1,(int)preg_replace('/\D+/','',$lines[1]));
+            $limit = (int)preg_replace('/\D+/','',$lines[2]);
+            $profit = (int)preg_replace('/\D+/','',$lines[3]);
+            db()->prepare("INSERT INTO shop_items (category_id,name,unit_price,pack_size,per_user_limit,daily_profit_per_pack) VALUES (?,?,?,?,?,?)")
+              ->execute([$cid,$name,$price,$pack,$limit,$profit]);
+            sendMessage($chatId,'آیتم اضافه شد.'); clearAdminState($chatId);
             break;
         default:
             sendMessage($chatId,'حالت ناشناخته'); clearAdminState($chatId);
