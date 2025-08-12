@@ -1698,6 +1698,57 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             db()->prepare("UPDATE user_items SET quantity = GREATEST(0, quantity + ?) WHERE user_id=? AND item_id=?")->execute([$d,$id,$item]);
             handleAdminNav($chatId,$messageId,'user_items',['id'=>$id],$userRow);
             break;
+        case 'shop_factories':
+            if (!hasPerm($chatId,'shop') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
+            $page=(int)($params['page']??1); $per=10; [$offset,$limit]=paginate($page,$per);
+            $tot = db()->query("SELECT COUNT(*) c FROM factories")->fetch()['c']??0;
+            $st = db()->prepare("SELECT id,name,price_l1,price_l2 FROM factories ORDER BY id DESC LIMIT ?,?"); $st->bindValue(1,$offset,PDO::PARAM_INT); $st->bindValue(2,$limit,PDO::PARAM_INT); $st->execute(); $rows=$st->fetchAll();
+            $kb=[]; foreach($rows as $r){ $kb[]=[ ['text'=>e($r['name']).' | L1: '.formatPrice((int)$r['price_l1']).' | L2: '.formatPrice((int)$r['price_l2']), 'callback_data'=>'admin:shop_factory_view|id='.$r['id'].'|page='.$page] ]; }
+            $kb[]=[ ['text'=>'افزودن کارخانه','callback_data'=>'admin:shop_factory_add'] ];
+            foreach(paginationKeyboard('admin:shop_factories',$page, ($offset+count($rows))<$tot, 'admin:shop')['inline_keyboard'] as $row){ $kb[]=$row; }
+            editMessageText($chatId,$messageId,'کارخانه‌های نظامی',['inline_keyboard'=>$kb]);
+            break;
+        case 'shop_factory_add':
+            setAdminState($chatId,'await_factory_name',[]);
+            sendGuide($chatId,'نام کارخانه را ارسال کنید. سپس قیمت لول ۱ و لول ۲ را در دو خط جدا بفرستید.');
+            break;
+        case 'shop_factory_view':
+            $fid=(int)($params['id']??0); $page=(int)($params['page']??1);
+            $f = db()->prepare("SELECT * FROM factories WHERE id=?"); $f->execute([$fid]); $fr=$f->fetch(); if(!$fr){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
+            $prods = db()->prepare("SELECT fp.id, si.name, fp.qty_l1, fp.qty_l2 FROM factory_products fp JOIN shop_items si ON si.id=fp.item_id WHERE fp.factory_id=? ORDER BY si.name ASC"); $prods->execute([$fid]); $ps=$prods->fetchAll();
+            $lines = ['کارخانه: '.e($fr['name']), 'قیمت لول ۱: '.formatPrice((int)$fr['price_l1']), 'قیمت لول ۲: '.formatPrice((int)$fr['price_l2']), '', 'محصولات:']; if(!$ps){ $lines[]='—'; }
+            $kb=[]; foreach($ps as $p){ $lines[]='- '.e($p['name']).' | L1: '.$p['qty_l1'].' | L2: '.$p['qty_l2']; $kb[]=[ ['text'=>'حذف ' . e($p['name']), 'callback_data'=>'admin:shop_factory_prod_del|id='.$p['id'].'|fid='.$fid.'|page='.$page] ]; }
+            $kb[]=[ ['text'=>'افزودن محصول','callback_data'=>'admin:shop_factory_prod_add|fid='.$fid] ];
+            $kb[]=[ ['text'=>'حذف کارخانه','callback_data'=>'admin:shop_factory_del|id='.$fid.'|page='.$page] ];
+            $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:shop_factories|page='.$page] ];
+            editMessageText($chatId,$messageId,implode("\n",$lines),['inline_keyboard'=>$kb]);
+            break;
+        case 'shop_factory_del':
+            $fid=(int)($params['id']??0); $page=(int)($params['page']??1);
+            db()->prepare("DELETE FROM factories WHERE id=?")->execute([$fid]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'حذف شد');
+            handleAdminNav($chatId,$messageId,'shop_factories',['page'=>$page],$userRow);
+            break;
+        case 'shop_factory_prod_add':
+            $fid=(int)($params['fid']??0);
+            // List items to pick
+            $page=(int)($params['page']??1); $per=10; [$offset,$limit]=paginate($page,$per);
+            $tot = db()->query("SELECT COUNT(*) c FROM shop_items")->fetch()['c']??0;
+            $st = db()->prepare("SELECT id,name FROM shop_items ORDER BY name ASC LIMIT ?,?"); $st->bindValue(1,$offset,PDO::PARAM_INT); $st->bindValue(2,$limit,PDO::PARAM_INT); $st->execute(); $rows=$st->fetchAll();
+            $kb=[]; foreach($rows as $r){ $kb[]=[ ['text'=>e($r['name']), 'callback_data'=>'admin:shop_factory_prod_pick|fid='.$fid.'|item='.$r['id'].'|page='.$page] ]; }
+            foreach(paginationKeyboard('admin:shop_factory_prod_add|fid='.$fid,$page, ($offset+count($rows))<$tot, 'admin:shop_factory_view|id='.$fid)['inline_keyboard'] as $row){ $kb[]=$row; }
+            editMessageText($chatId,$messageId,'انتخاب آیتم برای محصول کارخانه',['inline_keyboard'=>$kb]);
+            break;
+        case 'shop_factory_prod_pick':
+            $fid=(int)($params['fid']??0); $item=(int)($params['item']??0); setAdminState($chatId,'await_factory_prod_qty',['fid'=>$fid,'item'=>$item]);
+            sendMessage($chatId,'مقادیر تولید روزانه را در دو خط بفرستید: خط اول لول ۱، خط دوم لول ۲ (مثلاً 5\n10).');
+            break;
+        case 'shop_factory_prod_del':
+            $id=(int)($params['id']??0); $fid=(int)($params['fid']??0); $page=(int)($params['page']??1);
+            db()->prepare("DELETE FROM factory_products WHERE id=?")->execute([$id]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'حذف شد');
+            handleAdminNav($chatId,$messageId,'shop_factory_view',['id'=>$fid,'page'=>$page],$userRow);
+            break;
         default:
             answerCallback($_POST['callback_query']['id'] ?? '', 'بخش ناشناخته', true);
     }
@@ -2175,6 +2226,35 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             db()->prepare("INSERT INTO shop_items (category_id,name,unit_price,pack_size,per_user_limit,daily_profit_per_pack) VALUES (?,?,?,?,?,?)")
               ->execute([$cid,$name,$price,$pack,$limit,$profit]);
             sendMessage($chatId,'آیتم اضافه شد.'); clearAdminState($chatId);
+            break;
+        case 'await_factory_name':
+            $name = trim((string)$text); if($name===''){ sendMessage($chatId,'نام نامعتبر'); return; }
+            setAdminState($chatId,'await_factory_prices',['name'=>$name]);
+            sendMessage($chatId,'قیمت لول ۱ و سپس لول ۲ را در دو خط بفرستید.');
+            break;
+        case 'await_factory_prices':
+            $name = (string)$data['name'];
+            $parts = preg_split('/\n+/', (string)$text);
+            if (count($parts) < 2) { sendMessage($chatId,'دو عدد در دو خط ارسال کنید.'); return; }
+            $p1 = (int)preg_replace('/\D+/','',$parts[0]);
+            $p2 = (int)preg_replace('/\D+/','',$parts[1]);
+            db()->prepare("INSERT INTO factories (name, price_l1, price_l2) VALUES (?,?,?)")->execute([$name,$p1,$p2]);
+            $fid = (int)db()->lastInsertId();
+            sendMessage($chatId,'کارخانه ثبت شد. حالا می‌توانید محصول اضافه کنید.');
+            clearAdminState($chatId);
+            // show view
+            $fakeMsgId = $message['message_id'] ?? 0;
+            handleAdminNav($chatId, $fakeMsgId, 'shop_factory_view', ['id'=>$fid], ['telegram_id'=>$chatId]);
+            break;
+        case 'await_factory_prod_qty':
+            $fid=(int)$data['fid']; $item=(int)$data['item'];
+            $parts = preg_split('/\n+/', (string)$text);
+            if (count($parts) < 2) { sendMessage($chatId,'دو عدد در دو خط ارسال کنید.'); return; }
+            $q1 = (int)preg_replace('/\D+/','',$parts[0]); $q2 = (int)preg_replace('/\D+/','',$parts[1]);
+            db()->prepare("INSERT INTO factory_products (factory_id,item_id,qty_l1,qty_l2) VALUES (?,?,?,?)")
+              ->execute([$fid,$item,$q1,$q2]);
+            sendMessage($chatId,'محصول اضافه شد.');
+            clearAdminState($chatId);
             break;
         default:
             sendMessage($chatId,'حالت ناشناخته'); clearAdminState($chatId);
