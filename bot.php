@@ -1026,6 +1026,7 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
             $cats = db()->query("SELECT id, name FROM shop_categories ORDER BY sort_order ASC, name ASC")->fetchAll();
             $kb=[]; foreach($cats as $c){ $kb[]=[ ['text'=>$c['name'], 'callback_data'=>'user_shop:cat|id='.$c['id']] ]; }
             $kb[]=[ ['text'=>'سبد خرید','callback_data'=>'user_shop:cart'] ];
+            $kb[]=[ ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
             editMessageText($chatId,$messageId,'فروشگاه',['inline_keyboard'=>$kb]);
             break;
         case 'alliance':
@@ -2335,6 +2336,82 @@ function processCallback(array $callback): void {
     if (strpos($action, 'nav:') === 0) {
         $route = substr($action, 4);
         handleNav($chatId, $messageId, $route, $params, $u);
+        return;
+    }
+    if (strpos($action, 'user_shop:') === 0) {
+        $route = substr($action, 10);
+        $urow = userByTelegramId($chatId); $uid = (int)$urow['id'];
+        if ($route === 'cart') {
+            $rows = db()->prepare("SELECT uci.item_id, uci.quantity, si.name, si.unit_price FROM user_cart_items uci JOIN shop_items si ON si.id=uci.item_id WHERE uci.user_id=? ORDER BY si.name ASC");
+            $rows->execute([$uid]); $items=$rows->fetchAll();
+            if (!$items) { editMessageText($chatId,$messageId,'سبد خرید شما خالی است.', ['inline_keyboard'=>[[['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop']], [['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]] ); return; }
+            $lines=['سبد خرید:']; $kb=[]; foreach($items as $it){ $lines[]='- '.e($it['name']).' | تعداد: '.$it['quantity'].' | قیمت: '.formatPrice((int)$it['unit_price']*$it['quantity']); $kb[]=[ ['text'=>'+','callback_data'=>'user_shop:inc|id='.$it['item_id']], ['text'=>'-','callback_data'=>'user_shop:dec|id='.$it['item_id']] ]; }
+            $total = getCartTotalForUser($uid);
+            $kb[]=[ ['text'=>'خرید','callback_data'=>'user_shop:checkout'] ];
+            $kb[]=[ ['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop'], ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
+            editMessageText($chatId,$messageId,implode("\n",$lines)."\n\nجمع کل: ".formatPrice($total), ['inline_keyboard'=>$kb]);
+            return;
+        }
+        if (strpos($route,'cat')===0) {
+            $cid=(int)($params['id']??0);
+            $st = db()->prepare("SELECT id,name,unit_price,pack_size,per_user_limit,daily_profit_per_pack FROM shop_items WHERE category_id=? AND enabled=1 ORDER BY name ASC"); $st->execute([$cid]); $rows=$st->fetchAll();
+            if (!$rows) { editMessageText($chatId,$messageId,'این دسته خالی است.', ['inline_keyboard'=>[[['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop']], [['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]] ); return; }
+            $kb=[]; $lines=['آیتم‌ها:']; foreach($rows as $r){ $line = e($r['name']).' | قیمت: '.formatPrice((int)$r['unit_price']).' | بسته: '.$r['pack_size']; if((int)$r['daily_profit_per_pack']>0){ $line.=' | سود روزانه/بسته: '.$r['daily_profit_per_pack']; } $lines[]=$line; $kb[]=[ ['text'=>'افزودن به سبد - '.$r['name'], 'callback_data'=>'user_shop:add|id='.$r['id']] ]; }
+            $kb[]=[ ['text'=>'مشاهده سبد خرید','callback_data'=>'user_shop:cart'] ];
+            $kb[]=[ ['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop'], ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
+            editMessageText($chatId,$messageId,implode("\n",$lines),['inline_keyboard'=>$kb]);
+            return;
+        }
+        if (strpos($route,'add')===0) {
+            $iid=(int)($params['id']??0);
+            $it = db()->prepare("SELECT per_user_limit FROM shop_items WHERE id=? AND enabled=1"); $it->execute([$iid]); $r=$it->fetch(); if(!$r){ answerCallback($callback['id'],'ناموجود', true); return; }
+            $limit=(int)$r['per_user_limit']; if($limit>0){
+                $p = db()->prepare("SELECT packs_bought FROM user_item_purchases WHERE user_id=? AND item_id=?"); $p->execute([$uid,$iid]); $pb=(int)($p->fetch()['packs_bought']??0);
+                $inCart = db()->prepare("SELECT quantity FROM user_cart_items WHERE user_id=? AND item_id=?"); $inCart->execute([$uid,$iid]); $q=(int)($inCart->fetch()['quantity']??0);
+                if ($pb + $q + 1 > $limit) { answerCallback($callback['id'],'به حد مجاز خرید رسیده‌اید', true); return; }
+            }
+            db()->prepare("INSERT INTO user_cart_items (user_id,item_id,quantity) VALUES (?,?,1) ON DUPLICATE KEY UPDATE quantity=quantity+1")->execute([$uid,$iid]);
+            answerCallback($callback['id'],'به سبد اضافه شد');
+            return;
+        }
+        if (strpos($route,'inc')===0 || strpos($route,'dec')===0) {
+            $iid=(int)($params['id']??0);
+            if (strpos($route,'inc')===0) {
+                $it = db()->prepare("SELECT per_user_limit FROM shop_items WHERE id=? AND enabled=1"); $it->execute([$iid]); $r=$it->fetch(); if(!$r){ answerCallback($callback['id'],'ناموجود', true); return; }
+                $limit=(int)$r['per_user_limit']; if($limit>0){ $p = db()->prepare("SELECT packs_bought FROM user_item_purchases WHERE user_id=? AND item_id=?"); $p->execute([$uid,$iid]); $pb=(int)($p->fetch()['packs_bought']??0); $inCart = db()->prepare("SELECT quantity FROM user_cart_items WHERE user_id=? AND item_id=?"); $inCart->execute([$uid,$iid]); $q=(int)($inCart->fetch()['quantity']??0); if ($pb + $q + 1 > $limit) { answerCallback($callback['id'],'به حد مجاز خرید رسیده‌اید', true); return; } }
+                db()->prepare("UPDATE user_cart_items SET quantity = quantity + 1 WHERE user_id=? AND item_id=?")->execute([$uid,$iid]);
+            } else {
+                db()->prepare("UPDATE user_cart_items SET quantity = GREATEST(0, quantity - 1) WHERE user_id=? AND item_id=?")->execute([$uid,$iid]);
+                db()->prepare("DELETE FROM user_cart_items WHERE user_id=? AND item_id=? AND quantity=0")->execute([$uid,$iid]);
+            }
+            // refresh cart view inline
+            $rows = db()->prepare("SELECT uci.item_id, uci.quantity, si.name, si.unit_price FROM user_cart_items uci JOIN shop_items si ON si.id=uci.item_id WHERE uci.user_id=? ORDER BY si.name ASC");
+            $rows->execute([$uid]); $items=$rows->fetchAll();
+            if (!$items) { editMessageText($chatId,$messageId,'سبد خرید شما خالی است.', ['inline_keyboard'=>[[['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop']], [['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]] ); return; }
+            $lines=['سبد خرید:']; $kb=[]; foreach($items as $it){ $lines[]='- '.e($it['name']).' | تعداد: '.$it['quantity'].' | قیمت: '.formatPrice((int)$it['unit_price']*$it['quantity']); $kb[]=[ ['text'=>'+','callback_data'=>'user_shop:inc|id='.$it['item_id']], ['text'=>'-','callback_data'=>'user_shop:dec|id='.$it['item_id']] ]; }
+            $total = getCartTotalForUser($uid);
+            $kb[]=[ ['text'=>'خرید','callback_data'=>'user_shop:checkout'] ];
+            $kb[]=[ ['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop'], ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
+            editMessageText($chatId,$messageId,implode("\n",$lines)."\n\nجمع کل: ".formatPrice($total), ['inline_keyboard'=>$kb]);
+            return;
+        }
+        if ($route === 'checkout') {
+            $items = db()->prepare("SELECT uci.item_id, uci.quantity, si.unit_price, si.pack_size, si.daily_profit_per_pack FROM user_cart_items uci JOIN shop_items si ON si.id=uci.item_id WHERE uci.user_id=?");
+            $items->execute([$uid]); $rows=$items->fetchAll(); if(!$rows){ answerCallback($callback['id'],'سبد خالی است', true); return; }
+            $total = getCartTotalForUser($uid);
+            if ((int)$urow['money'] < $total) { answerCallback($callback['id'],'موجودی کافی نیست', true); return; }
+            db()->beginTransaction();
+            try {
+                db()->prepare("UPDATE users SET money = money - ? WHERE id=?")->execute([$total, $uid]);
+                foreach($rows as $r){ addInventoryForUser($uid, (int)$r['item_id'], (int)$r['quantity'], (int)$r['pack_size']); $dp=(int)$r['daily_profit_per_pack']; if($dp>0) increaseUserDailyProfit($uid, $dp * (int)$r['quantity']); db()->prepare("INSERT INTO user_item_purchases (user_id,item_id,packs_bought) VALUES (?,?,0) ON DUPLICATE KEY UPDATE packs_bought=packs_bought")->execute([$uid,(int)$r['item_id']]); db()->prepare("UPDATE user_item_purchases SET packs_bought = packs_bought + ? WHERE user_id=? AND item_id=?")->execute([(int)$r['quantity'],$uid,(int)$r['item_id']]); }
+                db()->prepare("DELETE FROM user_cart_items WHERE user_id=?")->execute([$uid]);
+                db()->commit();
+            } catch (Exception $e) { db()->rollBack(); answerCallback($callback['id'],'خطا در خرید', true); return; }
+            editMessageText($chatId,$messageId,'خرید انجام شد.',['inline_keyboard'=>[[['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop']], [['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]]);
+            answerCallback($callback['id'],'خرید انجام شد');
+            return;
+        }
+        answerCallback($callback['id'],'دستور ناشناخته', true);
         return;
     }
     if (strpos($action, 'alli:') === 0) {
