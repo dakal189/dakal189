@@ -1227,6 +1227,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             editMessageText($chatId,$messageId,'کاربران ثبت شده',['inline_keyboard'=>$kb['inline_keyboard']]);
             break;
         case 'bans':
+            if (!hasPerm($chatId,'bans') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
             $kb = [
                 [ ['text'=>'بن کردن کاربر','callback_data'=>'admin:ban_add'], ['text'=>'حذف بن','callback_data'=>'admin:ban_remove'] ],
                 [ ['text'=>'لیست کاربران بن‌شده','callback_data'=>'admin:ban_list'] ],
@@ -1236,16 +1237,19 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             editMessageText($chatId,$messageId,'مدیریت بن',['inline_keyboard'=>$kb['inline_keyboard']]);
             break;
         case 'ban_add':
+            if (!hasPerm($chatId,'bans') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
             setAdminState($chatId,'await_ban_ident',[]);
             answerCallback($_POST['callback_query']['id'] ?? '', 'آیدی عددی یا پیام فوروارد شده کاربر را ارسال کنید');
             sendMessage($chatId,'آیدی عددی یا پیام فوروارد کاربر را برای بن ارسال کنید.');
             break;
         case 'ban_remove':
+            if (!hasPerm($chatId,'bans') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
             setAdminState($chatId,'await_unban_ident',[]);
             answerCallback($_POST['callback_query']['id'] ?? '', 'آیدی عددی یا پیام فوروارد شده کاربر را ارسال کنید');
             sendMessage($chatId,'آیدی عددی یا پیام فوروارد کاربر را برای حذف بن ارسال کنید.');
             break;
         case 'ban_list':
+            if (!hasPerm($chatId,'bans') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
             $rows = db()->query("SELECT username, telegram_id FROM users WHERE banned=1 ORDER BY id ASC LIMIT 100")->fetchAll();
             $lines = array_map(function($r){ return ($r['username']?'@'.$r['username']:$r['telegram_id']); }, $rows);
             editMessageText($chatId,$messageId, $lines ? ("لیست بن ها:\n".implode("\n",$lines)) : 'لیستی وجود ندارد', backButton('admin:bans'));
@@ -1731,6 +1735,16 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
         case 'await_ban_ident':
             $tgid = extractTelegramIdFromMessage($message);
             if (!$tgid) { sendMessage($chatId,'آیدی نامعتبر.'); return; }
+            // Protect Owner from ban
+            if ($tgid === MAIN_ADMIN_ID) { sendMessage($chatId,'بن Owner مجاز نیست.'); clearAdminState($chatId); return; }
+            // If target is an admin, only Owner can ban
+            $adm = db()->prepare("SELECT is_owner FROM admin_users WHERE admin_telegram_id=?");
+            $adm->execute([$tgid]);
+            $admRow = $adm->fetch();
+            if ($admRow) {
+                if (!isOwner($chatId)) { sendMessage($chatId,'بن ادمین فقط توسط Owner مجاز است.'); clearAdminState($chatId); return; }
+                if ((int)$admRow['is_owner'] === 1) { sendMessage($chatId,'بن Owner مجاز نیست.'); clearAdminState($chatId); return; }
+            }
             db()->prepare("UPDATE users SET banned=1 WHERE telegram_id=?")->execute([$tgid]);
             sendMessage($chatId,'کاربر بن شد: '.$tgid);
             clearAdminState($chatId);
@@ -1738,6 +1752,11 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
         case 'await_unban_ident':
             $tgid = extractTelegramIdFromMessage($message);
             if (!$tgid) { sendMessage($chatId,'آیدی نامعتبر.'); return; }
+            // If target is an admin, only Owner can unban
+            $adm = db()->prepare("SELECT is_owner FROM admin_users WHERE admin_telegram_id=?");
+            $adm->execute([$tgid]);
+            $admRow = $adm->fetch();
+            if ($admRow && !isOwner($chatId)) { sendMessage($chatId,'حذف بن ادمین فقط توسط Owner مجاز است.'); clearAdminState($chatId); return; }
             db()->prepare("UPDATE users SET banned=0 WHERE telegram_id=?")->execute([$tgid]);
             sendMessage($chatId,'بن کاربر حذف شد: '.$tgid);
             clearAdminState($chatId);
