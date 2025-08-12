@@ -1695,7 +1695,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $id=(int)$params['id']; $page=(int)($params['page']??1);
             $st = db()->prepare("SELECT ui.item_id, ui.quantity, si.name, sc.name AS cat FROM user_items ui JOIN shop_items si ON si.id=ui.item_id JOIN shop_categories sc ON sc.id=si.category_id WHERE ui.user_id=? AND ui.quantity>0 ORDER BY sc.sort_order ASC, sc.name ASC, si.name ASC");
             $st->execute([$id]); $rows=$st->fetchAll();
-            $kb=[]; $lines=['آیتم‌های فروشگاه کاربر:']; foreach($rows as $r){ $lines[] = e($r['cat']).' | '.e($r['name']).' : '.$r['quantity']; $kb[]=[ ['text'=>e($r['name']).' +1','callback_data'=>'admin:user_item_delta|id='.$id.'|item='.$r['item_id'].'|d=1'], ['text'=>'-1','callback_data'=>'admin:user_item_delta|id='.$id.'|item='.$r['item_id'].'|d=-1'] ]; }
+            $kb=[]; $lines=['آیتم‌های فروشگاه کاربر:']; foreach($rows as $r){ $lines[] = e($r['cat']).' | '.e($r['name']).' : '.$r['quantity']; $kb[]=[ ['text'=>e($r['name']).' +1','callback_data'=>'admin:user_item_delta|id='.$id.'|item='.$r['item_id'].'|d=1'], ['text'=>'-1','callback_data'=>'admin:user_item_delta|id='.$id.'|item='.$r['item_id'].'|d=-1'], ['text'=>'تنظیم سریع','callback_data'=>'admin:user_item_set|id='.$id.'|item='.$r['item_id'].'|page='.$page] ]; }
             $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:user_assets|id='.$id.'|page='.$page] ];
             editMessageText($chatId,$messageId,implode("\n",$lines),['inline_keyboard'=>$kb]);
             break;
@@ -1704,6 +1704,11 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             db()->prepare("INSERT INTO user_items (user_id,item_id,quantity) VALUES (?,?,0) ON DUPLICATE KEY UPDATE quantity=quantity")->execute([$id,$item]);
             db()->prepare("UPDATE user_items SET quantity = GREATEST(0, quantity + ?) WHERE user_id=? AND item_id=?")->execute([$d,$id,$item]);
             handleAdminNav($chatId,$messageId,'user_items',['id'=>$id],$userRow);
+            break;
+        case 'user_item_set':
+            $id=(int)$params['id']; $item=(int)($params['item']??0); $page=(int)($params['page']??1);
+            setAdminState($chatId,'await_user_item_set',['id'=>$id,'item'=>$item,'page'=>$page]);
+            sendMessage($chatId,'عدد مقدار جدید آیتم را ارسال کنید (مثلاً 1000). برای حذف، 0 بفرستید.');
             break;
         case 'shop_factories':
             if (!hasPerm($chatId,'shop') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
@@ -2262,6 +2267,19 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
               ->execute([$fid,$item,$q1,$q2]);
             sendMessage($chatId,'محصول اضافه شد.');
             clearAdminState($chatId);
+            break;
+        case 'await_user_item_set':
+            $id=(int)$data['id']; $item=(int)$data['item']; $page=(int)($data['page']??1);
+            $valRaw = trim((string)($text ?: ($message['caption'] ?? '')));
+            if ($valRaw === '') { sendMessage($chatId,'یک عدد ارسال کنید.'); return; }
+            $val = (int)preg_replace('/\D+/', '', $valRaw);
+            // allow zero to clear
+            db()->prepare("INSERT INTO user_items (user_id,item_id,quantity) VALUES (?,?,0) ON DUPLICATE KEY UPDATE quantity=VALUES(quantity)")->execute([$id,$item]);
+            db()->prepare("UPDATE user_items SET quantity=? WHERE user_id=? AND item_id=?")->execute([$val,$id,$item]);
+            sendMessage($chatId,'مقدار آیتم تنظیم شد: '.$val);
+            clearAdminState($chatId);
+            // refresh list
+            handleAdminNav($chatId, $message['message_id'] ?? 0, 'user_items', ['id'=>$id,'page'=>$page], ['telegram_id'=>$chatId]);
             break;
         default:
             sendMessage($chatId,'حالت ناشناخته'); clearAdminState($chatId);
