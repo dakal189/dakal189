@@ -1824,7 +1824,9 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $stmt = db()->prepare("SELECT id, telegram_id, username, country, created_at FROM users WHERE is_registered=1 ORDER BY id DESC LIMIT ?,?");
             $stmt->bindValue(1,$offset,PDO::PARAM_INT); $stmt->bindValue(2,$limit,PDO::PARAM_INT); $stmt->execute(); $rows=$stmt->fetchAll();
             $kbRows=[]; foreach($rows as $r){ $label = ($r['username']?'@'.$r['username']:$r['telegram_id']).' | '.e($r['country']).' | '.iranDateTime($r['created_at']); $kbRows[]=[ ['text'=>$label, 'callback_data'=>'admin:info_user_view|id='.$r['id'].'|page='.$page] ]; }
-            $kb = array_merge($kbRows, paginationKeyboard('admin:info_users', $page, ($offset+count($rows))<$total, 'admin:close_panel')['inline_keyboard']);
+            $backCb = 'admin:close_panel'; if (!empty($params['close'])) { $backCb = 'admin:close_panel'; }
+            $kb = array_merge($kbRows, paginationKeyboard('admin:info_users', $page, ($offset+count($rows))<$total, $backCb)['inline_keyboard']);
+            if (!empty($messageId)) deleteMessage($chatId,$messageId);
             sendMessage($chatId,'کاربران ثبت‌شده (برای مشاهده اطلاعات کلیک کنید)',['inline_keyboard'=>$kb]);
             break;
         case 'info_user_view':
@@ -1847,11 +1849,11 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             ];
             $kb = [
                 [ ['text'=>'پیام‌های پشتیبانی','callback_data'=>'admin:info_user_msgs|id='.$id.'|cat=support|page=1'] ],
-                [ ['text'=>'رول‌ها','callback_data'=>'admin:info_user_msgs|id='.$id.'|cat=role|page=1'], ['text'=>'موشکی','callback_data'=>'admin:info_user_msgs|id='.$id.'|cat=missile|page=1'] ],
+                [ ['text'=>'رول‌ها','callback_data'=>'admin:info_user_msgs|id='.$id.'|cat=role|page=1'], ['text'=>'حمله موشکی','callback_data'=>'admin:info_user_msgs|id='.$id.'|cat=missile|page=1'] ],
                 [ ['text'=>'دفاع','callback_data'=>'admin:info_user_msgs|id='.$id.'|cat=defense|page=1'], ['text'=>'بیانیه','callback_data'=>'admin:info_user_msgs|id='.$id.'|cat=statement|page=1'] ],
                 [ ['text'=>'اعلام جنگ','callback_data'=>'admin:info_user_msgs|id='.$id.'|cat=war|page=1'], ['text'=>'لشکرکشی','callback_data'=>'admin:info_user_msgs|id='.$id.'|cat=army|page=1'] ],
                 [ ['text'=>'دارایی‌ها','callback_data'=>'admin:info_user_assets|id='.$id] ],
-                [ ['text'=>'بازگشت','callback_data'=>'admin:info_users|page='.$page] ]
+                [ ['text'=>'بازگشت','callback_data'=>'admin:info_users|page='.$page.'|close=1'] ]
             ];
             editMessageText($chatId,$messageId,implode("\n",$lines),['inline_keyboard'=>$kb]);
             break;
