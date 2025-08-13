@@ -1633,11 +1633,8 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             break;
         case 'user_del':
             $id=(int)$params['id']; $page=(int)($params['page']??1);
-            // reset registration instead of hard delete
-            db()->prepare("UPDATE users SET is_registered=0, country=NULL WHERE id=?")->execute([$id]);
-            answerCallback($_POST['callback_query']['id'] ?? '', 'حذف شد');
-            // back to user list
-            handleAdminNav($chatId,$messageId,'user_list',['page'=>$page],$userRow);
+            setAdminState($chatId,'await_user_delete_reason',['id'=>$id,'page'=>$page]);
+            sendMessage($chatId,'دلیل حذف کاربر را ارسال کنید.');
             break;
         case 'user_view':
             $id=(int)$params['id']; $page=(int)($params['page']??1);
@@ -2232,6 +2229,10 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             db()->prepare("UPDATE users SET is_registered=1, country=? WHERE telegram_id=?")->execute([$country,$tgid]);
             sendMessage($chatId,'کاربر ثبت شد.');
             sendMessage($tgid,'ثبت شما تکمیل شد.');
+            $header = '🚨 𝗪𝗼𝗿𝗹𝗱 𝗡𝗲𝘄𝘀 | اخبار جهانی 🚨';
+            $uname = $u['username'] ? '@'.$u['username'] : ('ID: '.$tgid);
+            $msg = $header."\n\n".'اسم کشور پر شد ✅'."\n\n".$uname;
+            sendToChannel($msg);
             clearAdminState($chatId);
             break;
         case 'await_ban_ident':
@@ -2335,6 +2336,20 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             db()->prepare("UPDATE users SET daily_profit=? WHERE id=?")->execute([$val, $id]);
             sendMessage($chatId,'سود روزانه کاربر تنظیم شد: '.$val);
             clearAdminState($chatId);
+            break;
+        case 'await_user_delete_reason':
+            $uid=(int)$data['id']; $page=(int)($data['page']??1);
+            $reason = trim((string)($text ?: ($message['caption'] ?? '')));
+            $row = db()->prepare("SELECT telegram_id, username, country FROM users WHERE id=?"); $row->execute([$uid]); $u=$row->fetch();
+            // reset registration instead of hard delete
+            db()->prepare("UPDATE users SET is_registered=0, country=NULL WHERE id=?")->execute([$uid]);
+            sendMessage($chatId,'حذف شد.');
+            // Channel notify
+            $header = '🚨 𝗪𝗼𝗿𝗹𝗱 𝗡𝗲𝘄𝘀 | اخبار جهانی 🚨';
+            $msg = $header."\n\n".'اسم کشور خالی شد ❌' . "\n\n" . 'دلیل : ' . ($reason?:'—');
+            sendToChannel($msg);
+            clearAdminState($chatId);
+            handleAdminNav($chatId,$message['message_id'] ?? 0,'user_list',['page'=>$page],['telegram_id'=>$chatId]);
             break;
         case 'await_country_flag':
             $country = $data['country'];
