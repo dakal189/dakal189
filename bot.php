@@ -1279,8 +1279,11 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 db()->prepare("DELETE FROM submissions WHERE id=?")->execute([$id]);
                 answerCallback($_POST['callback_query']['id'] ?? '', 'ارسال شد');
             } else {
+                $header = '🚨 𝗪𝗼𝗿𝗹𝗱 𝗡𝗲𝘄𝘀 | اخبار جهانی 🚨';
                 $title = 'بیانیه ' . e($r['country']?:'');
-                $text = $title . "\n" . 'یوزنیم: ' . ($r['username'] ? '@'.e($r['username']) : '') . "\n\n" . ($r['text']?e($r['text']):'');
+                $pv = 'Pv | ' . ($r['username'] ? '@'.e($r['username']) : ('ID: '.(int)$r['telegram_id']));
+                $body = $r['text'] ? e($r['text']) : '';
+                $text = $header . "\n\n" . $title . "\n\n" . $pv . "\n\n" . $body;
                 if ($r['photo_file_id']) sendPhotoToChannel($r['photo_file_id'], $text); else sendToChannel($text);
                 // cleanup: delete UI and remove from list
                 deleteMessage($chatId, $messageId);
