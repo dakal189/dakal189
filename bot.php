@@ -1384,9 +1384,11 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $hdr = 'کاربر: '.($ur['username']?'@'.$ur['username']:$ur['telegram_id'])."\nکشور: ".($ur['country']?:'—')."\nپول: ".$ur['money']." | سود روزانه: ".$ur['daily_profit'];
             $text = $ur['assets_text'] ?: '—';
             $kb=[ [ ['text'=>'تغییر دارایی متنی','callback_data'=>'admin:asset_user_edit|id='.$uid.'|page='.$page] ], [ ['text'=>'بازگشت','callback_data'=>'admin:assets|page='.$page] ] ];
-            deleteMessage($chatId,$messageId);
-            sendMessage($chatId, $hdr, ['inline_keyboard'=>$kb]);
-            sendMessage($chatId, '<pre>' . e($text) . '</pre>');
+            if (!empty($messageId)) { @deleteMessage($chatId,$messageId); }
+            $resp1 = sendMessage($chatId, $hdr, ['inline_keyboard'=>$kb]);
+            if ($resp1 && ($resp1['ok']??false)) { setSetting('asset_hdr_'.$chatId, (string)($resp1['result']['message_id']??0)); }
+            $resp2 = sendMessage($chatId, '<pre>' . e($text) . '</pre>');
+            if ($resp2 && ($resp2['ok']??false)) { setSetting('asset_txt_'.$chatId, (string)($resp2['result']['message_id']??0)); }
             break;
         case 'asset_user_edit':
             $uid=(int)($params['id']??0); $page=(int)($params['page']??1);
@@ -2179,9 +2181,12 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             $uid=(int)$data['id']; $page=(int)($data['page']??1);
             $content = $text ?: ($message['caption'] ?? '');
             db()->prepare("UPDATE users SET assets_text=? WHERE id=?")->execute([$content,$uid]);
-            // Clean previous UI and send confirmation then the updated asset
+            // Clean previous asset messages
+            $mh = getSetting('asset_hdr_'.$chatId); if ($mh) { @deleteMessage($chatId, (int)$mh); setSetting('asset_hdr_'.$chatId,''); }
+            $mt = getSetting('asset_txt_'.$chatId); if ($mt) { @deleteMessage($chatId, (int)$mt); setSetting('asset_txt_'.$chatId,''); }
+            // delete the prompt message too
             if (!empty($message['message_id'])) { @deleteMessage($chatId, (int)$message['message_id']); }
-            sendMessage($chatId,'دارایی‌های کاربر ویرایش شد.');
+            // Re-render updated asset view
             clearAdminState($chatId);
             handleAdminNav($chatId, 0, 'asset_user_view', ['id'=>$uid,'page'=>$page], ['telegram_id'=>$chatId]);
             break;
