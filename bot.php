@@ -1310,7 +1310,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $page=(int)($params['page']??1); $perPage=10; [$offset,$limit]=paginate($page,$perPage);
             $stmt = db()->prepare("SELECT * FROM approved_roles ORDER BY approved_at DESC LIMIT ?,?");
             $stmt->bindValue(1,$offset,PDO::PARAM_INT); $stmt->bindValue(2,$limit,PDO::PARAM_INT); $stmt->execute(); $rows=$stmt->fetchAll();
-            $kb=[]; foreach($rows as $r){ $label = iranDateTime($r['approved_at']).' | '.($r['username']?'@'.$r['username']:$r['telegram_id']).' | '.e($r['country']).' | هزینه: '.($r['cost_amount']?:0); $kb[]=[ ['text'=>$label, 'callback_data'=>'admin:roles_approved_view|id='.$r['id'].'|page='.$page] ]; }
+            $kb=[]; foreach($rows as $r){ $label = iranDateTime($r['approved_at']).' | '.($r['username']?'@'.$r['username']:$r['telegram_id']).' | '.e($r['country']); if((int)($r['cost_amount']?:0)>0){ $label.=' | هزینه: '.(int)$r['cost_amount']; } $kb[]=[ ['text'=>$label, 'callback_data'=>'admin:roles_approved_view|id='.$r['id'].'|page='.$page] ]; }
             $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:roles|page=1'] ];
             $kb = widenKeyboard(['inline_keyboard'=>$kb]);
             editMessageText($chatId,$messageId,'رول‌های تایید شده',['inline_keyboard'=>$kb['inline_keyboard']]);
@@ -1318,7 +1318,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
         case 'roles_approved_view':
             $id=(int)$params['id']; $page=(int)($params['page']??1);
             $stmt = db()->prepare("SELECT * FROM approved_roles WHERE id=?"); $stmt->execute([$id]); $r=$stmt->fetch(); if(!$r){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
-            $body = 'کاربر: '.($r['username']?'@'.$r['username']:$r['telegram_id'])."\nکشور: ".e($r['country'])."\nhزینه: ".($r['cost_amount']?:0)."\n\n".e($r['text']);
+            $body = 'کاربر: '.($r['username']?'@'.$r['username']:$r['telegram_id'])."\nکشور: ".e($r['country']); if((int)($r['cost_amount']?:0)>0){ $body .= "\nهزینه: ".(int)$r['cost_amount']; } $body .= "\n\n".e($r['text']);
             $kb=[ ['text'=>'بازگشت','callback_data'=>'admin:roles_approved|page='.$page] ];
             editMessageText($chatId,$messageId,$body,['inline_keyboard'=>[$kb]]);
             break;
@@ -1357,7 +1357,8 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
         case 'role_cost':
             $id=(int)$params['id']; $page=(int)($params['page']??1);
             setAdminState($chatId,'await_role_cost',['submission_id'=>$id,'page'=>$page]);
-            answerCallback($_POST['callback_query']['id'] ?? '', 'هزینه را ارسال کنید (عدد)');
+            answerCallback($_POST['callback_query']['id'] ?? '', '');
+            sendMessage($chatId,'هزینه رول را ارسال کنید (فقط عدد).');
             break;
         case 'assets':
             // Show country list from assets + users countries
@@ -2134,9 +2135,9 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             if ($cost > 2147483647) $cost = 2147483647;
             $stmt = db()->prepare("UPDATE submissions SET status='cost_proposed', cost_amount=? WHERE id=?"); $stmt->execute([$cost,$id]);
             // Notify user with confirm buttons
-            $r = db()->prepare("SELECT s.id, s.user_id, s.cost_amount, u.telegram_id FROM submissions s JOIN users u ON u.id=s.user_id WHERE s.id=?"); $r->execute([$id]); $row=$r->fetch();
+            $r = db()->prepare("SELECT s.id, s.user_id, s.text, s.cost_amount, s.photo_file_id, u.telegram_id FROM submissions s JOIN users u ON u.id=s.user_id WHERE s.id=?"); $r->execute([$id]); $row=$r->fetch();
             if ($row) {
-                $kb = [ [ ['text'=>'تایید','callback_data'=>'rolecost:accept|id='.$id], ['text'=>'رد','callback_data'=>'rolecost:reject|id='.$id] ] ];
+                $kb = [ [ ['text'=>'دیدن رول','callback_data'=>'rolecost_view:open|id='.$id] ], [ ['text'=>'تایید','callback_data'=>'rolecost:accept|id='.$id], ['text'=>'رد','callback_data'=>'rolecost:reject|id='.$id] ] ];
                 sendMessage((int)$row['telegram_id'], 'هزینه رول شما: ' . $cost . "\nآیا تایید می‌کنید؟", ['inline_keyboard'=>$kb]);
                 sendMessage($chatId, 'هزینه درخواست شد.');
             }
@@ -2827,6 +2828,11 @@ function processCallback(array $callback): void {
     if (strpos($action, 'rolecost:') === 0) {
         $route = substr($action, 9); $id=(int)($params['id']??0);
         $stmt = db()->prepare("SELECT s.*, u.telegram_id, u.id AS uid FROM submissions s JOIN users u ON u.id=s.user_id WHERE s.id=?"); $stmt->execute([$id]); $r=$stmt->fetch(); if(!$r){ answerCallback($callback['id'],'یافت نشد',true); return; }
+        if ($route==='view') {
+            $body = $r['text'] ? e($r['text']) : '—';
+            if ($r['photo_file_id']) sendPhoto($chatId, $r['photo_file_id'], $body); else sendMessage($chatId,$body);
+            answerCallback($callback['id'],''); return;
+        }
         if ($route==='accept') {
             // if cost defined, check and deduct
             if (!empty($r['cost_amount'])) {
@@ -2835,14 +2841,23 @@ function processCallback(array $callback): void {
                 db()->prepare("UPDATE users SET money = money - ? WHERE id=?")->execute([(int)$r['cost_amount'], (int)$r['uid']]);
             }
             db()->prepare("UPDATE submissions SET status='user_confirmed' WHERE id=?")->execute([$id]);
-            // notify admins with roles perm
-            notifySectionAdmins('roles', 'کاربر هزینه رول را تایید کرد: ID '.$r['telegram_id']);
-            sendMessage((int)$r['telegram_id'],'تایید ثبت شد.');
+            // Insert into approved_roles upon user confirm
+            $usr = db()->prepare("SELECT username, country FROM users WHERE id=?"); $usr->execute([(int)$r['uid']]); $urx=$usr->fetch();
+            db()->prepare("INSERT INTO approved_roles (submission_id, user_id, text, cost_amount, username, telegram_id, country) VALUES (?,?,?,?,?,?,?)")
+              ->execute([$id, (int)$r['uid'], $r['text'], (int)($r['cost_amount']?:0), $urx['username']??null, $r['telegram_id'], $urx['country']??null]);
+            // notify admins with roles perm with details and view button
+            $uname = $urx['username'] ? '@'.$urx['username'] : '—';
+            $body = "کاربر هزینه رول را تایید کرد:\nیوزرنیم: ".$uname."\nID: ".$r['telegram_id']."\nکشور: ".($urx['country']?:'—')."\nهزینه: ".(int)($r['cost_amount']?:0);
+            $kb=[ [ ['text'=>'دیدن رول','callback_data'=>'admin:roles_approved|page=1'] ] ];
+            $q = db()->query("SELECT admin_telegram_id, is_owner, permissions FROM admin_users"); foreach($q as $row){ $adminId=(int)$row['admin_telegram_id']; $perms=(int)$row['is_owner']===1?['all']:((($row['permissions']?json_decode($row['permissions'],true):[])?:[])); if(in_array('all',$perms,true)||in_array('roles',$perms,true)){ sendMessage($adminId,$body,['inline_keyboard'=>$kb]); } }
             if (!empty($callback['message']['message_id'])) deleteMessage($chatId,(int)$callback['message']['message_id']);
             answerCallback($callback['id'],'تایید شد');
         } else {
             db()->prepare("UPDATE submissions SET status='user_declined' WHERE id=?")->execute([$id]);
-            notifySectionAdmins('roles', 'کاربر هزینه رول را رد کرد: ID '.$r['telegram_id']);
+            // notify admins with details
+            $usr = db()->prepare("SELECT username, country FROM users WHERE id=?"); $usr->execute([(int)$r['uid']]); $urx=$usr->fetch(); $uname = $urx['username'] ? '@'.$urx['username'] : '—';
+            $body = "کاربر هزینه رول را رد کرد:\nیوزرنیم: ".$uname."\nID: ".$r['telegram_id']."\nکشور: ".($urx['country']?:'—');
+            $q = db()->query("SELECT admin_telegram_id, is_owner, permissions FROM admin_users"); foreach($q as $row){ $adminId=(int)$row['admin_telegram_id']; $perms=(int)$row['is_owner']===1?['all']:((($row['permissions']?json_decode($row['permissions'],true):[])?:[])); if(in_array('all',$perms,true)||in_array('roles',$perms,true)){ sendMessage($adminId,$body); } }
             sendMessage((int)$r['telegram_id'],'رد ثبت شد.');
             // remove from list per requirement
             db()->prepare("DELETE FROM submissions WHERE id=?")->execute([$id]);
