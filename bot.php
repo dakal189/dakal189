@@ -2305,7 +2305,7 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             sendMessage($chatId,'کاربر ثبت شد.');
             sendMessage($tgid,'ثبت شما تکمیل شد.');
             $header = '🚨 𝗪𝗼𝗿𝗹𝗱 𝗡𝗲𝘄𝘀 | اخبار جهانی 🚨';
-            $uname = $u['username'] ? '@'.$u['username'] : ('ID: '.$tgid);
+            $uname = $u['username'] ? '@'.$u['username'] : '';
             $msg = $header."\n\n".e($country).' پر شد ✅' . "\n\n" . $uname;
             sendToChannel($msg);
             clearAdminState($chatId);
