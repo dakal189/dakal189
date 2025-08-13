@@ -197,10 +197,31 @@ function bootstrapDatabase(PDO $pdo): void {
     // Backfill columns for older deployments (ignore errors if already exists)
     try { $pdo->exec("ALTER TABLE button_settings ADD COLUMN days VARCHAR(32) NULL"); } catch (Exception $e) {}
     try { $pdo->exec("ALTER TABLE button_settings ADD COLUMN time_start CHAR(5) NULL"); } catch (Exception $e) {}
-    try { $pdo->exec("ALTER TABLE button_settings ADD COLUMN time_end CHAR(5) NULL"); } catch (Exception $e) {}
-
-    // Seed default buttons if not present
-    $defaults = [
+        try { $pdo->exec("ALTER TABLE button_settings ADD COLUMN time_end CHAR(5) NULL"); } catch (Exception $e) {}
+ 
+     // Discount codes
+     $pdo->exec("CREATE TABLE IF NOT EXISTS discount_codes (
+         id INT AUTO_INCREMENT PRIMARY KEY,
+         code VARCHAR(64) UNIQUE,
+         percent TINYINT NOT NULL,
+         max_uses INT NOT NULL DEFAULT 0,
+         used_count INT NOT NULL DEFAULT 0,
+         per_user_limit INT NOT NULL DEFAULT 1,
+         expires_at DATETIME NULL,
+         disabled TINYINT(1) NOT NULL DEFAULT 0,
+         created_by BIGINT NULL,
+         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+     $pdo->exec("CREATE TABLE IF NOT EXISTS discount_usages (
+         id INT AUTO_INCREMENT PRIMARY KEY,
+         code_id INT NOT NULL,
+         user_id INT NOT NULL,
+         used_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         FOREIGN KEY (code_id) REFERENCES discount_codes(id) ON DELETE CASCADE
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+ 
+     // Seed default buttons if not present
+$defaults = [
         ['army','لشکر کشی'],
         ['missile','حمله موشکی'],
         ['defense','دفاع'],
@@ -1707,6 +1728,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $kb = [
                 [ ['text'=>'دسته‌بندی‌ها','callback_data'=>'admin:shop_cats|page=1'] ],
                 [ ['text'=>'کارخانه‌های نظامی','callback_data'=>'admin:shop_factories|page=1'] ],
+                [ ['text'=>'کدهای تخفیف','callback_data'=>'admin:disc_list|page=1'] ],
                 [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ]
             ];
             editMessageText($chatId,$messageId,'مدیریت فروشگاه',['inline_keyboard'=>$kb]);
