@@ -1385,7 +1385,8 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $text = $ur['assets_text'] ?: '—';
             $kb=[ [ ['text'=>'تغییر دارایی متنی','callback_data'=>'admin:asset_user_edit|id='.$uid.'|page='.$page] ], [ ['text'=>'بازگشت','callback_data'=>'admin:assets|page='.$page] ] ];
             deleteMessage($chatId,$messageId);
-            sendMessage($chatId, $hdr."\n\n".$text, ['inline_keyboard'=>$kb]);
+            sendMessage($chatId, $hdr, ['inline_keyboard'=>$kb]);
+            sendMessage($chatId, '<pre>' . e($text) . '</pre>');
             break;
         case 'asset_user_edit':
             $uid=(int)($params['id']??0); $page=(int)($params['page']??1);
@@ -2176,9 +2177,11 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             $uid=(int)$data['id']; $page=(int)($data['page']??1);
             $content = $text ?: ($message['caption'] ?? '');
             db()->prepare("UPDATE users SET assets_text=? WHERE id=?")->execute([$content,$uid]);
-            sendMessage($chatId,'دارایی متنی کاربر به‌روزرسانی شد.');
+            // Clean previous UI and send confirmation then the updated asset
+            if (!empty($message['message_id'])) { @deleteMessage($chatId, (int)$message['message_id']); }
+            sendMessage($chatId,'دارایی‌های کاربر ویرایش شد.');
             clearAdminState($chatId);
-            handleAdminNav($chatId, $message['message_id'] ?? 0, 'asset_user_view', ['id'=>$uid,'page'=>$page], ['telegram_id'=>$chatId]);
+            handleAdminNav($chatId, 0, 'asset_user_view', ['id'=>$uid,'page'=>$page], ['telegram_id'=>$chatId]);
             break;
         case 'await_btn_rename':
             $key = $data['key']; $title = trim((string)$text);
