@@ -1383,9 +1383,9 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $u = db()->prepare("SELECT username, telegram_id, country, assets_text, money, daily_profit FROM users WHERE id=?"); $u->execute([$uid]); $ur=$u->fetch(); if(!$ur){ answerCallback($_POST['callback_query']['id']??'','کاربر یافت نشد',true); return; }
             $hdr = 'کاربر: '.($ur['username']?'@'.$ur['username']:$ur['telegram_id'])."\nکشور: ".($ur['country']?:'—')."\nپول: ".$ur['money']." | سود روزانه: ".$ur['daily_profit'];
             $text = $ur['assets_text'] ?: '—';
-            $kb=[ [ ['text'=>'تغییر دارایی متنی','callback_data'=>'admin:asset_user_edit|id='.$uid.'|page='.$page], ['text'=>'کپی دارایی','callback_data'=>'admin:asset_user_copy|id='.$uid.'|page='.$page] ], [ ['text'=>'بازگشت','callback_data'=>'admin:assets|page='.$page] ] ];
+            $kb=[ [ ['text'=>'تغییر دارایی متنی','callback_data'=>'admin:asset_user_edit|id='.$uid.'|page='.$page], ['text'=>'کپی دارایی','copy_text'=>['text'=>$text]] ], [ ['text'=>'بازگشت','callback_data'=>'admin:assets|page='.$page] ] ];
             if (!empty($messageId)) { @deleteMessage($chatId,$messageId); }
-            $body = $hdr."\n\n".'<pre>'.e($text).'</pre>';
+            $body = $hdr."\n\n".e($text);
             $resp = sendMessage($chatId, $body, ['inline_keyboard'=>$kb]);
             if ($resp && ($resp['ok']??false)) { setSetting('asset_msg_'.$chatId, (string)($resp['result']['message_id']??0)); }
             break;
