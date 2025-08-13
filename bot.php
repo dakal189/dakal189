@@ -1870,7 +1870,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             break;
         case 'disc_add':
             setAdminState($chatId,'await_disc_new',[]);
-            sendMessage($chatId,'فرمت: کد یا random\nدرصد (1-100)\nتعداد کل مجاز (0=بدون محدودیت)\nتعداد برای هر کاربر (>=1)\nتاریخ انقضا (YYYY-MM-DD HH:MM یا خالی)');
+            sendMessage($chatId,"فرمت را در 5 خط بفرستید:\n1) کد یا random\n2) درصد تخفیف (1 تا 100)\n3) سقف کل استفاده (0 = نامحدود)\n4) سقف هر کاربر (>=1)\n5) تاریخ انقضا به صورت YYYY-MM-DD HH:MM یا خالی بگذارید");
             break;
         case 'disc_view':
             $id=(int)($params['id']??0); $page=(int)($params['page']??1);
