@@ -1824,7 +1824,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $stmt = db()->prepare("SELECT id, telegram_id, username, country, created_at FROM users WHERE is_registered=1 ORDER BY id DESC LIMIT ?,?");
             $stmt->bindValue(1,$offset,PDO::PARAM_INT); $stmt->bindValue(2,$limit,PDO::PARAM_INT); $stmt->execute(); $rows=$stmt->fetchAll();
             $kbRows=[]; foreach($rows as $r){ $label = ($r['username']?'@'.$r['username']:$r['telegram_id']).' | '.e($r['country']).' | '.iranDateTime($r['created_at']); $kbRows[]=[ ['text'=>$label, 'callback_data'=>'admin:info_user_view|id='.$r['id'].'|page='.$page] ]; }
-            $kb = array_merge($kbRows, paginationKeyboard('admin:info_users', $page, ($offset+count($rows))<$total, 'nav:admin')['inline_keyboard']);
+            $kb = array_merge($kbRows, paginationKeyboard('admin:info_users', $page, ($offset+count($rows))<$total, 'admin:close_panel')['inline_keyboard']);
             sendMessage($chatId,'کاربران ثبت‌شده (برای مشاهده اطلاعات کلیک کنید)',['inline_keyboard'=>$kb]);
             break;
         case 'info_user_view':
@@ -1877,14 +1877,16 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $stmt = db()->prepare("SELECT id, text, photo_file_id, created_at FROM support_messages WHERE id=? AND user_id=?"); $stmt->execute([$sid,$uid]); $r=$stmt->fetch(); if(!$r){ answerCallback($_POST['callback_query']['id']??'','یافت نشد',true); return; }
             $kb=[ [ ['text'=>'بازگشت','callback_data'=>'admin:info_user_msgs|id='.$uid.'|cat=support|page='.$page] ] ];
             $body = iranDateTime($r['created_at'])."\n\n".($r['text']?e($r['text']):'—');
-            if ($r['photo_file_id']) sendPhoto($chatId, $r['photo_file_id'], $body, ['inline_keyboard'=>$kb]); else editMessageText($chatId,$messageId,$body, ['inline_keyboard'=>$kb]);
+            deleteMessage($chatId,$messageId);
+            if ($r['photo_file_id']) sendPhoto($chatId, $r['photo_file_id'], $body, ['inline_keyboard'=>$kb]); else sendMessage($chatId,$body, ['inline_keyboard'=>$kb]);
             break;
         case 'info_user_subm_view':
             $uid=(int)$params['uid']; $sid=(int)$params['sid']; $cat=$params['cat']??''; $page=(int)($params['page']??1);
             $stmt = db()->prepare("SELECT id, text, photo_file_id, created_at FROM submissions WHERE id=? AND user_id=?"); $stmt->execute([$sid,$uid]); $r=$stmt->fetch(); if(!$r){ answerCallback($_POST['callback_query']['id']??'','یافت نشد',true); return; }
             $kb=[ [ ['text'=>'بازگشت','callback_data'=>'admin:info_user_msgs|id='.$uid.'|cat='.$cat.'|page='.$page] ] ];
             $body = iranDateTime($r['created_at'])."\n\n".($r['text']?e($r['text']):'—');
-            if ($r['photo_file_id']) sendPhoto($chatId, $r['photo_file_id'], $body, ['inline_keyboard'=>$kb]); else editMessageText($chatId,$messageId,$body, ['inline_keyboard'=>$kb]);
+            deleteMessage($chatId,$messageId);
+            if ($r['photo_file_id']) sendPhoto($chatId, $r['photo_file_id'], $body, ['inline_keyboard'=>$kb]); else sendMessage($chatId,$body, ['inline_keyboard'=>$kb]);
             break;
         case 'info_user_assets':
             $id=(int)$params['id'];
@@ -1901,6 +1903,9 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             if ($lines) { $content = trim($content) . "\n\n" . implode("\n", array_filter($lines)); }
             $wallet = "\n\nپول: ".$ur['money']." | سود روزانه: ".$ur['daily_profit'];
             editMessageText($chatId,$messageId,'دارایی‌های کاربر (' . e($ur['country']) . "):\n\n" . e($content) . $wallet, backButton('admin:info_user_view|id='.$id));
+            break;
+        case 'close_panel':
+            if (!empty($_POST['callback_query']['message']['message_id'])) deleteMessage($chatId, (int)$_POST['callback_query']['message']['message_id']);
             break;
         default:
             sendMessage($chatId,'حالت ناشناخته'); clearAdminState($chatId);
