@@ -1843,7 +1843,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 '',
                 'تعداد پیام‌ها:',
                 'پشتیبانی: ' . ((int)(db()->prepare("SELECT COUNT(*) c FROM support_messages WHERE user_id=?")->execute([$id]) || true) ? (int)(db()->query("SELECT COUNT(*) c FROM support_messages WHERE user_id={$id}")->fetch()['c']??0) : 0),
-                'role: '.($map['role']??0), 'missile: '.($map['missile']??0), 'defense: '.($map['defense']??0), 'statement: '.($map['statement']??0), 'war: '.($map['war']??0), 'army: '.($map['army']??0)
+                'رول    : '.($map['role']??0), 'حمله موشکی: '.($map['missile']??0), 'دفاع: '.($map['defense']??0), 'بیانیه: '.($map['statement']??0), 'اعلام جنگ: '.($map['war']??0), 'لشکرکشی: '.($map['army']??0)
             ];
             $kb = [
                 [ ['text'=>'پیام‌های پشتیبانی','callback_data'=>'admin:info_user_msgs|id='.$id.'|cat=support|page=1'] ],
@@ -2142,7 +2142,7 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             // Notify user with confirm buttons
             $r = db()->prepare("SELECT s.id, s.user_id, s.text, s.cost_amount, s.photo_file_id, u.telegram_id FROM submissions s JOIN users u ON u.id=s.user_id WHERE s.id=?"); $r->execute([$id]); $row=$r->fetch();
             if ($row) {
-                $kb = [ [ ['text'=>'دیدن رول','callback_data'=>'rolecost_view:open|id='.$id] ], [ ['text'=>'تایید','callback_data'=>'rolecost:accept|id='.$id], ['text'=>'رد','callback_data'=>'rolecost:reject|id='.$id] ] ];
+                $kb = [ [ ['text'=>'دیدن رول','callback_data'=>'rolecost:view|id='.$id] ], [ ['text'=>'تایید','callback_data'=>'rolecost:accept|id='.$id], ['text'=>'رد','callback_data'=>'rolecost:reject|id='.$id] ] ];
                 sendMessage((int)$row['telegram_id'], 'هزینه رول شما: ' . $cost . "\nآیا تایید می‌کنید؟", ['inline_keyboard'=>$kb]);
                 sendMessage($chatId, 'هزینه درخواست شد.');
             }
