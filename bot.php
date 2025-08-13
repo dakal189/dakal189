@@ -1877,6 +1877,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
         case 'info_user_msgs':
             if (!hasPerm($chatId,'user_info') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
             $id=(int)$params['id']; $cat=$params['cat']??'support'; $page=(int)($params['page']??1); $perPage=10; [$offset,$limit]=paginate($page,$perPage);
+            $labelsMap = ['role'=>'رول‌ها','missile'=>'حمله موشکی','defense'=>'دفاع','statement'=>'بیانیه','war'=>'اعلام جنگ','army'=>'لشکرکشی'];
             if ($cat==='support') {
                 $total = db()->prepare("SELECT COUNT(*) c FROM support_messages WHERE user_id=?"); $total->execute([$id]); $ttl=(int)($total->fetch()['c']??0);
                 $st = db()->prepare("SELECT id, created_at, text FROM support_messages WHERE user_id=? ORDER BY created_at DESC LIMIT ?,?"); $st->bindValue(1,$id,PDO::PARAM_INT); $st->bindValue(2,$offset,PDO::PARAM_INT); $st->bindValue(3,$limit,PDO::PARAM_INT); $st->execute(); $rows=$st->fetchAll();
@@ -1888,7 +1889,8 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 $st = db()->prepare("SELECT id, created_at, text FROM submissions WHERE user_id=? AND type=? ORDER BY created_at DESC LIMIT ?,?"); $st->bindValue(1,$id,PDO::PARAM_INT); $st->bindValue(2,$cat); $st->bindValue(3,$offset,PDO::PARAM_INT); $st->bindValue(4,$limit,PDO::PARAM_INT); $st->execute(); $rows=$st->fetchAll();
                 $kbRows=[]; foreach($rows as $r){ $label = iranDateTime($r['created_at']).' | '.mb_substr($r['text']?:'—',0,32); $kbRows[]=[ ['text'=>$label,'callback_data'=>'admin:info_user_subm_view|uid='.$id.'|sid='.$r['id'].'|page='.$page.'|cat='.$cat] ]; }
                 $kb = array_merge($kbRows, paginationKeyboard('admin:info_user_msgs|id='.$id.'|cat='.$cat, $page, ($offset+count($rows))<$ttl, 'admin:info_user_view|id='.$id)['inline_keyboard']);
-                editMessageText($chatId,$messageId,'پیام‌ها: '.$cat,['inline_keyboard'=>$kb]);
+                $title = $labelsMap[$cat] ?? 'پیام‌ها';
+                editMessageText($chatId,$messageId,$title,['inline_keyboard'=>$kb]);
             }
             break;
         case 'info_user_support_view':
