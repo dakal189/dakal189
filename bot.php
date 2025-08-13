@@ -2306,7 +2306,7 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             sendMessage($tgid,'ثبت شما تکمیل شد.');
             $header = '🚨 𝗪𝗼𝗿𝗹𝗱 𝗡𝗲𝘄𝘀 | اخبار جهانی 🚨';
             $uname = $u['username'] ? '@'.$u['username'] : ('ID: '.$tgid);
-            $msg = $header."\n\n".'اسم کشور پر شد ✅'."\n\n".$uname;
+            $msg = $header."\n\n".e($country).' پر شد ✅' . "\n\n" . $uname;
             sendToChannel($msg);
             clearAdminState($chatId);
             break;
@@ -2420,8 +2420,9 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             db()->prepare("UPDATE users SET is_registered=0, country=NULL WHERE id=?")->execute([$uid]);
             sendMessage($chatId,'حذف شد.');
             // Channel notify
-            $header = '🚨 𝗪𝗼𝗿𝗹𝗱 𝗡𝗲𝘄𝘀 | اخبار جهانی 🚨';
-            $msg = $header."\n\n".'اسم کشور خالی شد ❌' . "\n\n" . 'دلیل : ' . ($reason?:'—');
+            $header = '🚨 𝗪𝗼𝗿ْل𝗱 𝗡𝗲𝘄𝘀 | اخبار جهانی 🚨';
+            $name = $u && $u['country'] ? $u['country'] : 'کشور';
+            $msg = $header."\n\n".e($name).' خالی شد ❌' . "\n\n" . 'دلیل: ' . ($reason?:'—');
             sendToChannel($msg);
             clearAdminState($chatId);
             handleAdminNav($chatId,$message['message_id'] ?? 0,'user_list',['page'=>$page],['telegram_id'=>$chatId]);
