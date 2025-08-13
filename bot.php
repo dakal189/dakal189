@@ -1361,12 +1361,14 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             sendMessage($chatId,'هزینه رول را ارسال کنید (فقط عدد).');
             break;
         case 'assets':
-            // Show country list from assets + users countries
-            $rows = db()->query("SELECT DISTINCT country FROM users WHERE country IS NOT NULL AND is_registered=1 ORDER BY country ASC")->fetchAll();
-            $kb=[]; foreach($rows as $r){ $country=$r['country']; if(!$country) continue; $kb[] = [ ['text'=>$country, 'callback_data'=>'admin:asset_edit|country='.urlencode($country)] ]; }
-            $kb[] = [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ];
-            editMessageText($chatId,$messageId,'انتخاب کشور برای ویرایش دارایی',['inline_keyboard'=>$kb]);
-            sendGuide($chatId,'راهنما: دارایی متنی برای کشورها را از این بخش ثبت/ویرایش کنید. برای دارایی اختصاصی هر کاربر از پروفایل کاربر استفاده کنید.');
+            if (!hasPerm($chatId,'assets') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
+            $page=(int)($params['page']??1); $perPage=10; [$offset,$limit]=paginate($page,$perPage);
+            $total = db()->query("SELECT COUNT(*) c FROM users WHERE is_registered=1")->fetch()['c']??0;
+            $stmt = db()->prepare("SELECT id, telegram_id, username, country FROM users WHERE is_registered=1 ORDER BY id DESC LIMIT ?,?");
+            $stmt->bindValue(1,$offset,PDO::PARAM_INT); $stmt->bindValue(2,$limit,PDO::PARAM_INT); $stmt->execute(); $rows=$stmt->fetchAll();
+            $kbRows=[]; foreach($rows as $r){ $label = ($r['username']?'@'.$r['username']:$r['telegram_id']).' | '.($r['country']?:'—'); $kbRows[]=[ ['text'=>$label,'callback_data'=>'admin:asset_user_view|id='.$r['id'].'|page='.$page] ]; }
+            $kb = array_merge($kbRows, paginationKeyboard('admin:assets', $page, ($offset+count($rows))<$total, 'nav:admin')['inline_keyboard']);
+            editMessageText($chatId,$messageId,'انتخاب کاربر برای مشاهده/ویرایش دارایی',['inline_keyboard'=>$kb]);
             break;
         case 'asset_edit':
             $country = urldecode($params['country'] ?? ''); if(!$country){ answerCallback($_POST['callback_query']['id']??'','کشور نامعتبر',true); return; }
@@ -1375,6 +1377,20 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $flag = db()->prepare("SELECT photo_file_id FROM country_flags WHERE country=?"); $flag->execute([$country]); $fr=$flag->fetch();
             if ($fr && $fr['photo_file_id']) { sendPhoto($chatId, $fr['photo_file_id'], 'پرچم کشور '.e($country).'\nلطفاً متن دارایی را ارسال کنید.'); }
             else { sendMessage($chatId,'متن دارایی را ارسال کنید.'); }
+            break;
+        case 'asset_user_view':
+            $uid=(int)($params['id']??0); $page=(int)($params['page']??1);
+            $u = db()->prepare("SELECT username, telegram_id, country, assets_text, money, daily_profit FROM users WHERE id=?"); $u->execute([$uid]); $ur=$u->fetch(); if(!$ur){ answerCallback($_POST['callback_query']['id']??'','کاربر یافت نشد',true); return; }
+            $hdr = 'کاربر: '.($ur['username']?'@'.$ur['username']:$ur['telegram_id'])."\nکشور: ".($ur['country']?:'—')."\nپول: ".$ur['money']." | سود روزانه: ".$ur['daily_profit'];
+            $text = $ur['assets_text'] ?: '—';
+            $kb=[ [ ['text'=>'تغییر دارایی متنی','callback_data'=>'admin:asset_user_edit|id='.$uid.'|page='.$page] ], [ ['text'=>'بازگشت','callback_data'=>'admin:assets|page='.$page] ] ];
+            deleteMessage($chatId,$messageId);
+            sendMessage($chatId, $hdr."\n\n".$text, ['inline_keyboard'=>$kb]);
+            break;
+        case 'asset_user_edit':
+            $uid=(int)($params['id']??0); $page=(int)($params['page']??1);
+            setAdminState($chatId,'await_asset_user_text',['id'=>$uid,'page'=>$page]);
+            sendMessage($chatId,'متن جدید دارایی کاربر را ارسال کنید.');
             break;
         case 'buttons':
             $rows = db()->query("SELECT `key`, title, enabled FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance','shop') ORDER BY id ASC")->fetchAll();
@@ -2155,6 +2171,14 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             $stmt = db()->prepare("INSERT INTO assets (country, content) VALUES (?, ?) ON DUPLICATE KEY UPDATE content=VALUES(content), updated_at=NOW()"); $stmt->execute([$country, $content]);
             sendMessage($chatId, 'متن دارایی این کشور ثبت شد: ' . e($country));
             clearAdminState($chatId);
+            break;
+        case 'await_asset_user_text':
+            $uid=(int)$data['id']; $page=(int)($data['page']??1);
+            $content = $text ?: ($message['caption'] ?? '');
+            db()->prepare("UPDATE users SET assets_text=? WHERE id=?")->execute([$content,$uid]);
+            sendMessage($chatId,'دارایی متنی کاربر به‌روزرسانی شد.');
+            clearAdminState($chatId);
+            handleAdminNav($chatId, $message['message_id'] ?? 0, 'asset_user_view', ['id'=>$uid,'page'=>$page], ['telegram_id'=>$chatId]);
             break;
         case 'await_btn_rename':
             $key = $data['key']; $title = trim((string)$text);
