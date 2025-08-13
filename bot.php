@@ -1859,6 +1859,32 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             answerCallback($_POST['callback_query']['id'] ?? '', 'حذف شد');
             handleAdminNav($chatId,$messageId,'shop_factory_view',['id'=>$fid,'page'=>$page],$userRow);
             break;
+        case 'disc_list':
+            $page=(int)($params['page']??1); $per=10; $off=($page-1)*$per;
+            $tot = db()->query("SELECT COUNT(*) c FROM discount_codes")->fetch()['c']??0;
+            $st = db()->prepare("SELECT id, code, percent, max_uses, used_count, per_user_limit, expires_at, disabled FROM discount_codes ORDER BY id DESC LIMIT ?,?"); $st->bindValue(1,$off,PDO::PARAM_INT); $st->bindValue(2,$per,PDO::PARAM_INT); $st->execute(); $rows=$st->fetchAll();
+            $kb=[]; foreach($rows as $r){ $label = ((int)$r['disabled']?'[خاموش] ':'').$r['code'].' | '.$r['percent'].'% | '.$r['used_count'].'/'.$r['max_uses'].' | هرکاربر: '.$r['per_user_limit'].' | تا: '.($r['expires_at']?:'∞'); $kb[]=[ ['text'=>$label, 'callback_data'=>'admin:disc_view|id='.$r['id'].'|page='.$page] ]; }
+            $kb[]=[ ['text'=>'افزودن کد جدید','callback_data'=>'admin:disc_add'] ];
+            foreach(paginationKeyboard('admin:disc_list',$page, ($off+count($rows))<$tot, 'admin:shop')['inline_keyboard'] as $row){ $kb[]=$row; }
+            editMessageText($chatId,$messageId,'کدهای تخفیف',['inline_keyboard'=>$kb]);
+            break;
+        case 'disc_add':
+            setAdminState($chatId,'await_disc_new',[]);
+            sendMessage($chatId,'فرمت: کد یا random\nدرصد (1-100)\nتعداد کل مجاز (0=بدون محدودیت)\nتعداد برای هر کاربر (>=1)\nتاریخ انقضا (YYYY-MM-DD HH:MM یا خالی)');
+            break;
+        case 'disc_view':
+            $id=(int)($params['id']??0); $page=(int)($params['page']??1);
+            $r = db()->prepare("SELECT * FROM discount_codes WHERE id=?"); $r->execute([$id]); $dc=$r->fetch(); if(!$dc){ answerCallback($_POST['callback_query']['id']??'','یافت نشد',true); return; }
+            $lines=['کد: '.$dc['code'],'درصد: '.$dc['percent'],'مصرف: '.$dc['used_count'].'/'.$dc['max_uses'],'هرکاربر: '.$dc['per_user_limit'],'انقضا: '.($dc['expires_at']?:'∞'),'وضعیت: '.((int)$dc['disabled']?'خاموش':'روشن')];
+            $kb=[ [ ['text'=>$dc['disabled']?'روشن کردن':'خاموش کردن','callback_data'=>'admin:disc_toggle|id='.$id.'|page='.$page], ['text'=>'ویرایش','callback_data'=>'admin:disc_edit|id='.$id.'|page='.$page] ], [ ['text'=>'حذف','callback_data'=>'admin:disc_del|id='.$id.'|page='.$page] ], [ ['text'=>'بازگشت','callback_data'=>'admin:disc_list|page='.$page] ] ];
+            editMessageText($chatId,$messageId,implode("\n",$lines),['inline_keyboard'=>$kb]);
+            break;
+        case 'disc_toggle':
+            $id=(int)($params['id']??0); db()->prepare("UPDATE discount_codes SET disabled=1-disabled WHERE id=?")->execute([$id]); handleAdminNav($chatId,$messageId,'disc_view',['id'=>$id],$userRow); break;
+        case 'disc_del':
+            $id=(int)($params['id']??0); db()->prepare("DELETE FROM discount_codes WHERE id=?")->execute([$id]); answerCallback($_POST['callback_query']['id']??'','حذف شد'); handleAdminNav($chatId,$messageId,'disc_list',[],$userRow); break;
+        case 'disc_edit':
+            $id=(int)($params['id']??0); setAdminState($chatId,'await_disc_edit',['id'=>$id]); sendMessage($chatId,'ویرایش (اختیاری هر خط): درصد|max_uses|per_user|YYYY-MM-DD HH:MM یا empty'); break;
         case 'info_users':
             if (!hasPerm($chatId,'user_info') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
             $page=(int)($params['page']??1); $perPage=10; [$offset,$limit]=paginate($page,$perPage);
@@ -2217,6 +2243,33 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             if ($title===''){ sendMessage($chatId,'نام نامعتبر'); return; }
             db()->prepare("UPDATE button_settings SET title=? WHERE `key`=?")->execute([$title,$key]);
             sendMessage($chatId,'نام دکمه تغییر کرد.'); clearAdminState($chatId);
+            break;
+        case 'await_disc_new':
+            $lines = preg_split("/\r?\n/", trim((string)($text ?: ($message['caption'] ?? ''))));
+            $code = trim($lines[0] ?? ''); if ($code==='') { sendMessage($chatId,'خط اول کد یا random'); return; }
+            if (strtolower($code)==='random') { $code = strtoupper(bin2hex(random_bytes(3))); }
+            $percent = (int)($lines[1] ?? 0); if ($percent<1||$percent>100){ sendMessage($chatId,'درصد نامعتبر'); return; }
+            $maxUses = (int)($lines[2] ?? 0); $perUser = max(1,(int)($lines[3] ?? 1)); $expRaw = trim($lines[4] ?? ''); $expiresAt = $expRaw!==''? $expRaw : null;
+            db()->prepare("INSERT INTO discount_codes (code,percent,max_uses,per_user_limit,expires_at,created_by) VALUES (?,?,?,?,?,?)")
+              ->execute([$code,$percent,$maxUses,$perUser,$expiresAt,$chatId]);
+            sendMessage($chatId,'کد ایجاد شد: '.$code);
+            clearAdminState($chatId);
+            handleAdminNav($chatId,$message['message_id'] ?? 0,'disc_list',[],['telegram_id'=>$chatId]);
+            break;
+        case 'await_disc_edit':
+            $id=(int)$data['id']; $raw=trim((string)($text ?: ($message['caption'] ?? '')));
+            $parts = preg_split("/\r?\n/", $raw);
+            $percent = strlen($parts[0]??'')? (int)$parts[0] : null;
+            $maxUses = strlen($parts[1]??'')? (int)$parts[1] : null;
+            $perUser = strlen($parts[2]??'')? (int)$parts[2] : null;
+            $expiresAt = strlen($parts[3]??'')? ($parts[3]) : null;
+            if ($percent!==null) db()->prepare("UPDATE discount_codes SET percent=? WHERE id=?")->execute([$percent,$id]);
+            if ($maxUses!==null) db()->prepare("UPDATE discount_codes SET max_uses=? WHERE id=?")->execute([$maxUses,$id]);
+            if ($perUser!==null) db()->prepare("UPDATE discount_codes SET per_user_limit=? WHERE id=?")->execute([$perUser,$id]);
+            db()->prepare("UPDATE discount_codes SET expires_at=? WHERE id=?")->execute([$expiresAt,$id]);
+            sendMessage($chatId,'به‌روزرسانی شد');
+            clearAdminState($chatId);
+            handleAdminNav($chatId,$message['message_id'] ?? 0,'disc_view',['id'=>$id],['telegram_id'=>$chatId]);
             break;
         case 'await_btn_days':
             $key = $data['key'] ?? '';
@@ -2818,9 +2871,12 @@ function processCallback(array $callback): void {
             if (!$items) { editMessageText($chatId,$messageId,'سبد خرید شما خالی است.', ['inline_keyboard'=>[[['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop']], [['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]] ); return; }
             $lines=['سبد خرید:']; $kb=[]; foreach($items as $it){ $lines[]='- '.e($it['name']).' | تعداد: '.$it['quantity'].' | قیمت: '.formatPrice((int)$it['unit_price']*$it['quantity']); $kb[]=[ ['text'=>'+','callback_data'=>'user_shop:inc|id='.$it['item_id']], ['text'=>'-','callback_data'=>'user_shop:dec|id='.$it['item_id']] ]; }
             $total = getCartTotalForUser($uid);
+            // Show applied discount if any
+            $ds = getSetting('cart_disc_'.$uid); $discTxt=''; if($ds){ $disc = (int)$ds; $discAmt = (int)floor($total*$disc/100); $discTxt = "\nتخفیف (".$disc."%): -".formatPrice($discAmt)."\nمبلغ قابل پرداخت: ".formatPrice(max(0,$total-$discAmt)); }
+            $kb[]=[ ['text'=>'استفاده از کد تخفیف','callback_data'=>'user_shop:disc_apply'] ];
             $kb[]=[ ['text'=>'خرید','callback_data'=>'user_shop:checkout'] ];
             $kb[]=[ ['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop'], ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
-            editMessageText($chatId,$messageId,implode("\n",$lines)."\n\nجمع کل: ".formatPrice($total), ['inline_keyboard'=>$kb]);
+            editMessageText($chatId,$messageId,implode("\n",$lines)."\n\nجمع کل: ".formatPrice($total).$discTxt, ['inline_keyboard'=>$kb]);
             return;
         }
         if (strpos($route,'cat')===0) {
@@ -2841,8 +2897,15 @@ function processCallback(array $callback): void {
                 $inCart = db()->prepare("SELECT quantity FROM user_cart_items WHERE user_id=? AND item_id=?"); $inCart->execute([$uid,$iid]); $q=(int)($inCart->fetch()['quantity']??0);
                 if ($pb + $q + 1 > $limit) { answerCallback($callback['id'],'به حد مجاز خرید رسیده‌اید', true); return; }
             }
+            // clear any previous discount cache (cart changed)
+            setSetting('cart_disc_'+$uid, '');
             db()->prepare("INSERT INTO user_cart_items (user_id,item_id,quantity) VALUES (?,?,1) ON DUPLICATE KEY UPDATE quantity=quantity+1")->execute([$uid,$iid]);
             answerCallback($callback['id'],'به سبد اضافه شد');
+            return;
+        }
+        if ($route==='disc_apply') {
+            setUserState($chatId,'await_disc_code',[]);
+            sendMessage($chatId,'کد تخفیف را وارد کنید.');
             return;
         }
         if (strpos($route,'inc')===0 || strpos($route,'dec')===0) {
@@ -2870,6 +2933,8 @@ function processCallback(array $callback): void {
             $items = db()->prepare("SELECT uci.item_id, uci.quantity, si.unit_price, si.pack_size, si.daily_profit_per_pack FROM user_cart_items uci JOIN shop_items si ON si.id=uci.item_id WHERE uci.user_id=?");
             $items->execute([$uid]); $rows=$items->fetchAll(); if(!$rows){ answerCallback($callback['id'],'سبد خالی است', true); return; }
             $total = getCartTotalForUser($uid);
+            // apply discount if set and valid
+            $ds = getSetting('cart_disc_'.$uid); $appliedDisc = 0; if($ds){ $appliedDisc=(int)$ds; $discAmt=(int)floor($total*$appliedDisc/100); $total=max(0,$total-$discAmt); }
             if ((int)$urow['money'] < $total) { answerCallback($callback['id'],'موجودی کافی نیست', true); return; }
             db()->beginTransaction();
             try {
