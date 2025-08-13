@@ -2629,6 +2629,20 @@ function handleUserStateMessage(array $userRow, array $message, array $state): v
     };
 
     switch ($key) {
+        case 'await_disc_code':
+            $code = trim((string)($text ?: ($caption ?? '')));
+            if ($code===''){ sendMessage($chatId,'کد را وارد کنید.'); return; }
+            $row = db()->prepare("SELECT * FROM discount_codes WHERE code=? AND disabled=0"); $row->execute([$code]); $dc=$row->fetch();
+            if (!$dc) { sendMessage($chatId,'کد نامعتبر است.'); clearUserState($chatId); return; }
+            if (!empty($dc['expires_at']) && (new DateTime($dc['expires_at'])) < new DateTime('now')) { sendMessage($chatId,'کد منقضی شده است.'); clearUserState($chatId); return; }
+            if ((int)$dc['max_uses']>0 && (int)$dc['used_count'] >= (int)$dc['max_uses']) { sendMessage($chatId,'سقف مصرف کد تکمیل است.'); clearUserState($chatId); return; }
+            $cnt = db()->prepare("SELECT COUNT(*) c FROM discount_usages WHERE code_id=? AND user_id=?"); $cnt->execute([(int)$dc['id'], (int)$userId]); $uc=(int)($cnt->fetch()['c']??0);
+            if ($uc >= (int)$dc['per_user_limit']) { sendMessage($chatId,'سهمیه شما برای این کد تمام شده است.'); clearUserState($chatId); return; }
+            setSetting('cart_disc_'.(int)$userId, (string)((int)$dc['percent']));
+            setSetting('cart_disc_code_'.(int)$userId, (string)((int)$dc['id']));
+            sendMessage($chatId,'کد تخفیف اعمال شد: '.$dc['percent'].'%');
+            clearUserState($chatId);
+            break;
         case 'await_support':
             if (!$text && !$photo) { sendMessage($chatId,'فقط متن یا عکس بفرستید.'); return; }
             if ($hasRecentSupport($userId)) { sendMessage($chatId,'لطفاً کمی صبر کنید و سپس دوباره تلاش کنید.'); return; }
