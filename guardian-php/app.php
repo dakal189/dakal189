@@ -13,6 +13,7 @@ class App {
 	public string $token;
 	public string $apiBase;
 	private ?int $botId = null;
+	private function getLogChannelId(): int { return (int)($_ENV['LOG_CHANNEL_ID'] ?? 0); }
 	public function __construct() {
 		if (file_exists(__DIR__.'/.env')) Dotenv::createImmutable(__DIR__)->load();
 		$this->pdo = $this->createPdo();
@@ -259,6 +260,17 @@ SQL;
 				}
 			}
 		}
+		elseif (!empty($u['my_chat_member'])) {
+			$this->ensureBotId();
+			$mc = $u['my_chat_member'];
+			$chat = $mc['chat'] ?? [];
+			$new = $mc['new_chat_member'] ?? [];
+			$uid = (int)($new['user']['id'] ?? 0);
+			$status = $new['status'] ?? '';
+			if ($uid === $this->botId && in_array($status, ['member','administrator','creator'], true)) {
+				$this->sendInstallLog($chat);
+			}
+		}
 	}
 	private function handleCallback(array $cq): void {
 		$data=$cq['data']??''; $chatId=$cq['message']['chat']['id']??null; $userId=$cq['from']['id']??null; if(!$chatId||!$userId) return;
@@ -296,6 +308,9 @@ SQL;
 					}
 				}
 			}
+			// If bot was added, log installation
+			$this->ensureBotId();
+			foreach ($m['new_chat_members'] as $mem) { if (((int)$mem['id']) === $this->botId) { $this->sendInstallLog($m['chat']); break; } }
 			if ((int)($settings['captcha_required']??1)===1) {
 				foreach($m['new_chat_members'] as $mem){ $this->restrict($chatId,(int)$mem['id'],['can_send_messages'=>false]); $this->sendMessage($chatId,$mem['first_name'].' خوش آمدی! برای تایید روی دکمه بزنید.', ['reply_markup'=>['inline_keyboard'=>[[['text'=>'من ربات نیستم 🤖❌','callback_data'=>'captcha:'.$mem['id']]]]]]); }
 			}
@@ -370,6 +385,30 @@ SQL;
 	private function warnAndMaybeMute(int $chatId,int $userId,string $reason): void { $this->addWarn($chatId,$userId); $warns=$this->getWarn($chatId,$userId); $settings=$this->getSettings($chatId); $this->logSanction($chatId,$userId,'warn',$reason); $this->sendMessage($chatId, "کاربر {$userId}: {$reason} (اخطار {$warns}/{$settings['max_warns']})"); if($warns >= (int)$settings['max_warns']){ $this->restrict($chatId,$userId,['can_send_messages'=>false], time()+3600); $this->logSanction($chatId,$userId,'mute','auto mute after warns', time()+3600); $this->sendMessage($chatId,'کاربر به مدت ۱ ساعت میوت شد'); } }
 	private function extractTargetUserId(array $m): ?int { if(!empty($m['reply_to_message']['from']['id'])) return (int)$m['reply_to_message']['from']['id']; $parts=explode(' ', $m['text']??''); $arg=$parts[1]??''; if($arg!=='' && ctype_digit($arg)) return (int)$arg; return null; }
 	private function parseDuration(string $s): int { if(!preg_match('/^(\d+)([smhd])$/i',$s,$m)) return 600; $v=(int)$m[1]; return match(strtolower($m[2])){ 's'=>$v,'m'=>$v*60,'h'=>$v*3600,'d'=>$v*86400, default=>600 }; }
+
+	private function sendInstallLog(array $chat): void {
+		$logChat = $this->getLogChannelId(); if ($logChat === 0) return;
+		$chatId = (int)($chat['id'] ?? 0);
+		$type = $chat['type'] ?? '';
+		$title = $chat['title'] ?? ($chat['username'] ?? '');
+		$ownerInfo = 'نامشخص';
+		try {
+			$admins = $this->call('getChatAdministrators', ['chat_id' => $chatId]);
+			foreach (($admins['result'] ?? []) as $adm) {
+				if (($adm['status'] ?? '') === 'creator') {
+					$u = $adm['user'] ?? [];
+					$ownerInfo = sprintf('%s %s (@%s, id=%d)', $u['first_name'] ?? '', $u['last_name'] ?? '', $u['username'] ?? '-', (int)($u['id'] ?? 0));
+					break;
+				}
+			}
+		} catch (\Throwable $e) {}
+		$time = date('Y-m-d H:i:s');
+		$text = "افزوده شد: \n".
+			"- چت: {$title} (id={$chatId}, نوع={$type})\n".
+			"- مالک: {$ownerInfo}\n".
+			"- زمان: {$time}";
+		$this->sendMessage($logChat, $text);
+	}
 
 	// Web routing
 	public function handleWeb(): void {
