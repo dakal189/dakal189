@@ -219,6 +219,13 @@ function bootstrapDatabase(PDO $pdo): void {
          used_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
          FOREIGN KEY (code_id) REFERENCES discount_codes(id) ON DELETE CASCADE
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+     $pdo->exec("CREATE TABLE IF NOT EXISTS discount_code_blocked_countries (
+         id INT AUTO_INCREMENT PRIMARY KEY,
+         code_id INT NOT NULL,
+         country VARCHAR(128) NOT NULL,
+         UNIQUE KEY uq_code_country (code_id, country),
+         FOREIGN KEY (code_id) REFERENCES discount_codes(id) ON DELETE CASCADE
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
  
      // Seed default buttons if not present
 $defaults = [
