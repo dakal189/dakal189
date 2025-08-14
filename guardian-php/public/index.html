@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="fa">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Guardian Admin (PHP)</title>
+	<style>
+		body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;max-width:900px;margin:2rem auto;padding:0 1rem;color:#111}
+		.card{border:1px solid #ddd;border-radius:12px;padding:16px;margin:12px 0}
+		.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+		label{display:flex;justify-content:space-between;align-items:center;border:1px solid #eee;padding:10px;border-radius:10px}
+		.toggle{width:40px;height:24px;border-radius:999px;background:#ddd;position:relative;cursor:pointer}
+		.toggle.on{background:#16a34a}
+		.toggle>span{position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:999px;background:#fff;transition:all .15s}
+		.toggle.on>span{right:18px}
+		button{background:#111;color:#fff;border:none;border-radius:10px;padding:10px 14px;cursor:pointer}
+		input{border:1px solid #ddd;border-radius:8px;padding:8px}
+	</style>
+</head>
+<body dir="rtl">
+	<h1>مدیریت گاردین (PHP)</h1>
+	<div class="card">
+		<div>
+			<input id="chatId" placeholder="Chat ID" />
+			<button id="load">بارگذاری</button>
+		</div>
+	</div>
+
+	<div id="settings" class="card" style="display:none">
+		<h3>تنظیمات</h3>
+		<div class="grid">
+			<label>ضد لینک <div class="toggle" data-key="anti_link"><span></span></div></label>
+			<label>ضد فوروارد <div class="toggle" data-key="anti_forward"><span></span></div></label>
+			<label>فیلتر کلمات بد <div class="toggle" data-key="anti_badwords"><span></span></div></label>
+			<label>کپچا هنگام ورود <div class="toggle" data-key="captcha_required"><span></span></div></label>
+			<label>حداکثر اخطار <input id="max_warns" type="number" min="1" max="10" style="width:90px"/></label>
+			<label>لاکدان گروه <div class="toggle" data-key="lockdown"><span></span></div></label>
+		</div>
+		<div style="margin-top:12px">
+			<button id="save">ذخیره</button>
+		</div>
+	</div>
+
+	<div id="sanctions" class="card" style="display:none">
+		<h3>لاگ اقدامات</h3>
+		<table style="width:100%;border-collapse:collapse">
+			<thead><tr><th>کاربر</th><th>اقدام</th><th>دلیل</th><th>تاریخ</th></tr></thead>
+			<tbody></tbody>
+		</table>
+	</div>
+
+	<script>
+	const q = (s, r=document) => r.querySelector(s);
+	const qa = (s, r=document) => Array.from(r.querySelectorAll(s));
+	let chatId = null;
+	qa('.toggle').forEach(t=>t.addEventListener('click', ()=>t.classList.toggle('on')));
+
+	function renderSettings(s){
+		qa('.toggle').forEach(t=>{ const k=t.dataset.key; if (s[k]) t.classList.add('on'); else t.classList.remove('on'); });
+		q('#max_warns').value = s.max_warns;
+	}
+	function collect(){ const r={ max_warns: Number(q('#max_warns').value), chat_id: chatId }; qa('.toggle').forEach(t=>r[t.dataset.key]=t.classList.contains('on')?1:0); return r; }
+
+	q('#load').addEventListener('click', async ()=>{
+		chatId = Number(q('#chatId').value);
+		if(!chatId) return alert('Chat ID نامعتبر');
+		const r = await fetch(`/api/settings?chat_id=${chatId}`);
+		const j = await r.json();
+		if(!j.ok) return alert('خطا');
+		renderSettings(j.settings);
+		q('#settings').style.display='block';
+		loadSanctions();
+	});
+
+	async function loadSanctions(){
+		const r = await fetch(`/api/sanctions?chat_id=${chatId}`);
+		const j = await r.json();
+		if(!j.ok) return;
+		const tb = q('#sanctions tbody'); tb.innerHTML='';
+		j.sanctions.forEach(s=>{
+			const tr = document.createElement('tr');
+			tr.innerHTML = `<td>${s.user_id}</td><td>${s.action}</td><td>${s.reason||''}</td><td>${new Date(s.created_at).toLocaleString()}</td>`;
+			tb.appendChild(tr);
+		});
+		q('#sanctions').style.display='block';
+	}
+
+	q('#save').addEventListener('click', async ()=>{
+		const body = collect();
+		const r = await fetch(`/api/settings`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+		const j = await r.json();
+		if(j.ok) alert('ذخیره شد'); else alert('خطا');
+	});
+	</script>
+</body>
+</html>
