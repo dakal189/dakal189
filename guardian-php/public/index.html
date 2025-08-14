@@ -5,45 +5,83 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
 	<title>Guardian Admin (PHP)</title>
 	<style>
-		body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;max-width:900px;margin:2rem auto;padding:0 1rem;color:#111}
+		body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;max-width:1000px;margin:2rem auto;padding:0 1rem;color:#111}
 		.card{border:1px solid #ddd;border-radius:12px;padding:16px;margin:12px 0}
-		.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+		.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
 		label{display:flex;justify-content:space-between;align-items:center;border:1px solid #eee;padding:10px;border-radius:10px}
 		.toggle{width:40px;height:24px;border-radius:999px;background:#ddd;position:relative;cursor:pointer}
 		.toggle.on{background:#16a34a}
 		.toggle>span{position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:999px;background:#fff;transition:all .15s}
 		.toggle.on>span{right:18px}
 		button{background:#111;color:#fff;border:none;border-radius:10px;padding:10px 14px;cursor:pointer}
-		input{border:1px solid #ddd;border-radius:8px;padding:8px}
+		input,textarea{border:1px solid #ddd;border-radius:8px;padding:8px;width:100%}
+		.small{color:#666}
+		table{width:100%;border-collapse:collapse}
+		th,td{border-bottom:1px solid #eee;padding:8px;text-align:right}
+		.flex{display:flex;gap:8px;align-items:center}
 	</style>
 </head>
 <body dir="rtl">
 	<h1>مدیریت گاردین (PHP)</h1>
 	<div class="card">
-		<div>
-			<input id="chatId" placeholder="Chat ID" />
-			<button id="load">بارگذاری</button>
+		<div class="flex">
+			<input id="chatId" placeholder="Chat ID" style="max-width:220px"/>
+			<input id="userId" placeholder="User ID" style="max-width:220px"/>
+			<input id="timestamp" placeholder="Timestamp" style="max-width:180px"/>
+			<input id="hash" placeholder="Hash" style="max-width:380px"/>
+			<button id="auth">احراز هویت</button>
 		</div>
+		<p class="small">پارامترها را با لینک /settings پر کنید.</p>
 	</div>
 
 	<div id="settings" class="card" style="display:none">
-		<h3>تنظیمات</h3>
+		<h3>تنظیمات گروه</h3>
 		<div class="grid">
 			<label>ضد لینک <div class="toggle" data-key="anti_link"><span></span></div></label>
 			<label>ضد فوروارد <div class="toggle" data-key="anti_forward"><span></span></div></label>
 			<label>فیلتر کلمات بد <div class="toggle" data-key="anti_badwords"><span></span></div></label>
 			<label>کپچا هنگام ورود <div class="toggle" data-key="captcha_required"><span></span></div></label>
-			<label>حداکثر اخطار <input id="max_warns" type="number" min="1" max="10" style="width:90px"/></label>
+			<label>حداکثر اخطار <input id="max_warns" type="number" min="1" max="10"/></label>
+			<label>بنر خوش‌آمد (URL) <input id="welcome_banner_url" placeholder="https://..."/></label>
+			<label style="grid-column:1/-1">متن خوش‌آمد <textarea id="welcome_text" rows="3" placeholder="خوش آمدید..."></textarea></label>
 			<label>لاکدان گروه <div class="toggle" data-key="lockdown"><span></span></div></label>
 		</div>
-		<div style="margin-top:12px">
+		<div class="flex" style="margin-top:12px">
 			<button id="save">ذخیره</button>
+		</div>
+	</div>
+
+	<div id="admins" class="card" style="display:none">
+		<h3>ادمین‌ها و دسترسی‌ها</h3>
+		<table>
+			<thead><tr><th>کاربر</th><th>دسترسی حذف</th><th>محدودسازی</th><th>پین</th><th>مدیریت</th><th>اعمال</th></tr></thead>
+			<tbody></tbody>
+		</table>
+	</div>
+
+	<div id="owner" class="card" style="display:none">
+		<h3>کنترل مالک ربات</h3>
+		<div class="grid">
+			<label>وضعیت ربات
+				<select id="botDisabled">
+					<option value="0">روشن</option>
+					<option value="1">خاموش</option>
+				</select>
+			</label>
+			<label>Force Join Channel ID <input id="forceChannelId" placeholder="@channel یا -100..."/></label>
+		</div>
+		<div class="flex" style="margin-top:8px">
+			<button id="saveOwner">ذخیره تنظیمات مالک</button>
+		</div>
+		<div style="margin-top:16px">
+			<h4>ارسال تبلیغات</h4>
+			<div class="flex"><input id="broadcastText" placeholder="متن تبلیغ"/><button id="sendBroadcast">ارسال</button></div>
 		</div>
 	</div>
 
 	<div id="sanctions" class="card" style="display:none">
 		<h3>لاگ اقدامات</h3>
-		<table style="width:100%;border-collapse:collapse">
+		<table>
 			<thead><tr><th>کاربر</th><th>اقدام</th><th>دلیل</th><th>تاریخ</th></tr></thead>
 			<tbody></tbody>
 		</table>
@@ -52,45 +90,44 @@
 	<script>
 	const q = (s, r=document) => r.querySelector(s);
 	const qa = (s, r=document) => Array.from(r.querySelectorAll(s));
-	let chatId = null;
+	let auth = null;
 	qa('.toggle').forEach(t=>t.addEventListener('click', ()=>t.classList.toggle('on')));
 
-	function renderSettings(s){
-		qa('.toggle').forEach(t=>{ const k=t.dataset.key; if (s[k]) t.classList.add('on'); else t.classList.remove('on'); });
-		q('#max_warns').value = s.max_warns;
-	}
-	function collect(){ const r={ max_warns: Number(q('#max_warns').value), chat_id: chatId }; qa('.toggle').forEach(t=>r[t.dataset.key]=t.classList.contains('on')?1:0); return r; }
+	function fillFromURL(){ const u=new URL(location.href); ['chatId','userId','timestamp','hash'].forEach(id=>{ const k=id==='chatId'?'chat_id':(id==='userId'?'user_id':id); const v=u.searchParams.get(k); if(v) q('#'+id).value=v; }); }
+	fillFromURL();
 
-	q('#load').addEventListener('click', async ()=>{
-		chatId = Number(q('#chatId').value);
-		if(!chatId) return alert('Chat ID نامعتبر');
-		const r = await fetch(`/api/settings?chat_id=${chatId}`);
-		const j = await r.json();
-		if(!j.ok) return alert('خطا');
-		renderSettings(j.settings);
-		q('#settings').style.display='block';
-		loadSanctions();
+	q('#auth').addEventListener('click', async ()=>{
+		auth = { chat_id:Number(q('#chatId').value), user_id:Number(q('#userId').value), timestamp:Number(q('#timestamp').value), hash:q('#hash').value };
+		if(!auth.chat_id||!auth.user_id||!auth.timestamp||!auth.hash) return alert('ورودی نامعتبر');
+		const r = await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(auth)});
+		const j = await r.json(); if(!j.ok) return alert('احراز هویت ناموفق');
+		await loadSettings(); await loadAdmins(); await loadSanctions(); await loadOwner();
+		q('#settings').style.display='block'; q('#admins').style.display='block'; q('#sanctions').style.display='block';
 	});
 
-	async function loadSanctions(){
-		const r = await fetch(`/api/sanctions?chat_id=${chatId}`);
-		const j = await r.json();
-		if(!j.ok) return;
-		const tb = q('#sanctions tbody'); tb.innerHTML='';
-		j.sanctions.forEach(s=>{
-			const tr = document.createElement('tr');
-			tr.innerHTML = `<td>${s.user_id}</td><td>${s.action}</td><td>${s.reason||''}</td><td>${new Date(s.created_at).toLocaleString()}</td>`;
-			tb.appendChild(tr);
+	function renderSettings(s){ qa('.toggle').forEach(t=>{ const k=t.dataset.key; s[k]?t.classList.add('on'):t.classList.remove('on'); }); q('#max_warns').value=s.max_warns; q('#welcome_banner_url').value=s.welcome_banner_url||''; q('#welcome_text').value=s.welcome_text||''; }
+	function collectSettings(){ const r={ chat_id:auth.chat_id, max_warns:Number(q('#max_warns').value), welcome_banner_url:q('#welcome_banner_url').value, welcome_text:q('#welcome_text').value }; qa('.toggle').forEach(t=>r[t.dataset.key]=t.classList.contains('on')?1:0); return r; }
+
+	async function loadSettings(){ const url = `/api/settings?chat_id=${auth.chat_id}&user_id=${auth.user_id}&timestamp=${auth.timestamp}&hash=${encodeURIComponent(auth.hash)}`; const j=await (await fetch(url)).json(); if(j.ok) renderSettings(j.settings); }
+	q('#save').addEventListener('click', async ()=>{ const url = `/api/settings?chat_id=${auth.chat_id}&user_id=${auth.user_id}&timestamp=${auth.timestamp}&hash=${encodeURIComponent(auth.hash)}`; const j=await (await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(collectSettings())})).json(); if(j.ok) alert('ذخیره شد'); });
+
+	async function loadAdmins(){ const url=`/api/admins?chat_id=${auth.chat_id}&user_id=${auth.user_id}&timestamp=${auth.timestamp}&hash=${encodeURIComponent(auth.hash)}`; const j=await (await fetch(url)).json(); const tb=q('#admins tbody'); tb.innerHTML=''; (j.admins||[]).forEach(a=>{ const u=a.user; const tr=document.createElement('tr'); tr.innerHTML=`<td>${u.first_name||''} ${u.last_name||''} (@${u.username||''})</td>
+		<td><input type="checkbox" data-flag="can_delete_messages" ${a.can_delete_messages?'checked':''}></td>
+		<td><input type="checkbox" data-flag="can_restrict_members" ${a.can_restrict_members?'checked':''}></td>
+		<td><input type="checkbox" data-flag="can_pin_messages" ${a.can_pin_messages?'checked':''}></td>
+		<td><input type="checkbox" data-flag="can_manage_chat" ${a.can_manage_chat?'checked':''}></td>
+		<td><button data-action="save">اعمال</button></td>`; tb.appendChild(tr);
+		tr.querySelector('button[data-action="save"]').addEventListener('click', async ()=>{
+			const rights={}; tr.querySelectorAll('input[type="checkbox"]').forEach(ch=>rights[ch.dataset.flag]=ch.checked);
+			const url='/api/admins/set?chat_id='+auth.chat_id+'&user_id='+auth.user_id+'&timestamp='+auth.timestamp+'&hash='+encodeURIComponent(auth.hash);
+			await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:u.id, rights})}); alert('ثبت شد');
 		});
-		q('#sanctions').style.display='block';
-	}
+		}); }
 
-	q('#save').addEventListener('click', async ()=>{
-		const body = collect();
-		const r = await fetch(`/api/settings`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-		const j = await r.json();
-		if(j.ok) alert('ذخیره شد'); else alert('خطا');
-	});
+	async function loadOwner(){ const url=`/api/owner/state?chat_id=${auth.chat_id}&user_id=${auth.user_id}&timestamp=${auth.timestamp}&hash=${encodeURIComponent(auth.hash)}`; const r=await fetch(url); if(r.status===200){ const j=await r.json(); q('#owner').style.display='block'; q('#botDisabled').value = String(j.state.disabled||0); q('#forceChannelId').value = String(j.state.force_channel_id||''); } }
+	q('#saveOwner').addEventListener('click', async ()=>{ const url=`/api/owner/state?chat_id=${auth.chat_id}&user_id=${auth.user_id}&timestamp=${auth.timestamp}&hash=${encodeURIComponent(auth.hash)}`; const body={ disabled:Number(q('#botDisabled').value), force_channel_id:q('#forceChannelId').value }; const j=await (await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json(); if(j.ok) alert('ذخیره شد'); });
+
+	async function loadSanctions(){ const url=`/api/sanctions?chat_id=${auth.chat_id}&user_id=${auth.user_id}&timestamp=${auth.timestamp}&hash=${encodeURIComponent(auth.hash)}`; const j=await (await fetch(url)).json(); const tb=q('#sanctions tbody'); tb.innerHTML=''; (j.sanctions||[]).forEach(s=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${s.user_id}</td><td>${s.action}</td><td>${s.reason||''}</td><td>${new Date(s.created_at).toLocaleString()}</td>`; tb.appendChild(tr); }); }
 	</script>
 </body>
 </html>
