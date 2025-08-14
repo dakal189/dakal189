@@ -2951,9 +2951,12 @@ function processCallback(array $callback): void {
             if (!$items) { editMessageText($chatId,$messageId,'سبد خرید شما خالی است.', ['inline_keyboard'=>[[['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop']], [['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]] ); return; }
             $lines=['سبد خرید:']; $kb=[]; foreach($items as $it){ $lines[]='- '.e($it['name']).' | تعداد: '.$it['quantity'].' | قیمت: '.formatPrice((int)$it['unit_price']*$it['quantity']); $kb[]=[ ['text'=>'+','callback_data'=>'user_shop:inc|id='.$it['item_id']], ['text'=>'-','callback_data'=>'user_shop:dec|id='.$it['item_id']] ]; }
             $total = getCartTotalForUser($uid);
+            // recalc discount view if any
+            $ds = getSetting('cart_disc_'.$uid); $discTxt=''; if($ds){ $disc=(int)$ds; $discAmt=(int)floor($total*$disc/100); $pay=max(0,$total-$discAmt); $discTxt = "\nجمع کل (بدون تخفیف): ".formatPrice($total)."\nتخفیف (".$disc."%): -".formatPrice($discAmt)."\nمبلغ قابل پرداخت: ".formatPrice($pay); }
+            $kb[]=[ ['text'=>'استفاده از کد تخفیف','callback_data'=>'user_shop:disc_apply'] ];
             $kb[]=[ ['text'=>'خرید','callback_data'=>'user_shop:checkout'] ];
             $kb[]=[ ['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop'], ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
-            editMessageText($chatId,$messageId,implode("\n",$lines)."\n\nجمع کل: ".formatPrice($total), ['inline_keyboard'=>$kb]);
+            editMessageText($chatId,$messageId,implode("\n",$lines).($ds?"\n\n":"\n\nجمع کل: ").($ds?"":formatPrice($total)).$discTxt, ['inline_keyboard'=>$kb]);
             return;
         }
         if ($route === 'checkout') {
