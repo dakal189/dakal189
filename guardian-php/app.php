@@ -82,6 +82,61 @@ CREATE TABLE IF NOT EXISTS bot_state (
 ) ENGINE=InnoDB;
 SQL;
 		$this->pdo->exec($sql);
+		// Ensure new lock columns exist
+		$locks = [
+			'lock_hashtag' => 'TINYINT DEFAULT 0',
+			'lock_username' => 'TINYINT DEFAULT 0',
+			'lock_link' => 'TINYINT DEFAULT 0',
+			'lock_text' => 'TINYINT DEFAULT 0',
+			'lock_persian' => 'TINYINT DEFAULT 0',
+			'lock_english' => 'TINYINT DEFAULT 0',
+			'lock_games' => 'TINYINT DEFAULT 0',
+			'lock_profanity' => 'TINYINT DEFAULT 0',
+			'lock_service' => 'TINYINT DEFAULT 0',
+			'lock_inline_button' => 'TINYINT DEFAULT 0',
+			'lock_bots' => 'TINYINT DEFAULT 0',
+			'lock_edit' => 'TINYINT DEFAULT 0',
+			'lock_emoji' => 'TINYINT DEFAULT 0',
+			'lock_forward' => 'TINYINT DEFAULT 0',
+			'lock_gif' => 'TINYINT DEFAULT 0',
+			'lock_sticker' => 'TINYINT DEFAULT 0',
+			'lock_photo' => 'TINYINT DEFAULT 0',
+			'lock_file' => 'TINYINT DEFAULT 0',
+			'lock_contact' => 'TINYINT DEFAULT 0',
+			'lock_location' => 'TINYINT DEFAULT 0',
+			'lock_spoiler' => 'TINYINT DEFAULT 0',
+			'lock_command' => 'TINYINT DEFAULT 0',
+			'lock_pin' => 'TINYINT DEFAULT 0',
+			'lock_video' => 'TINYINT DEFAULT 0',
+			'lock_video_note' => 'TINYINT DEFAULT 0',
+			'lock_audio' => 'TINYINT DEFAULT 0',
+			'lock_voice' => 'TINYINT DEFAULT 0',
+		];
+		foreach ($locks as $col => $def) {
+			$this->addColumnIfMissing('settings', $col, $def);
+		}
+	}
+
+	private function addColumnIfMissing(string $table, string $column, string $definition): void {
+		$st = $this->pdo->prepare("SELECT COUNT(*) AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?");
+		$st->execute([$table, $column]);
+		$row = $st->fetch();
+		if (((int)($row['c'] ?? 0)) === 0) {
+			$this->pdo->exec("ALTER TABLE {$table} ADD COLUMN {$column} {$definition}");
+		}
+	}
+
+	private function hasEntityType(array $m, array $types): bool {
+		$entities = array_merge($m['entities'] ?? [], $m['caption_entities'] ?? []);
+		foreach ($entities as $e) {
+			if (in_array(($e['type'] ?? ''), $types, true)) return true;
+		}
+		return false;
+	}
+
+	private function containsEmoji(?string $text): bool {
+		if (!$text) return false;
+		return (bool)preg_match('/[\x{1F300}-\x{1F5FF}\x{1F600}-\x{1F64F}\x{1F680}-\x{1F6FF}\x{2600}-\x{26FF}\x{2700}-\x{27BF}\x{1F900}-\x{1F9FF}\x{1FA70}-\x{1FAFF}]/u', $text);
 	}
 
 	// DB helpers
@@ -161,6 +216,16 @@ SQL;
 	private function handleUpdate(array $u): void {
 		if (!empty($u['message'])) $this->handleMessage($u['message']);
 		elseif (!empty($u['callback_query'])) $this->handleCallback($u['callback_query']);
+		elseif (!empty($u['edited_message'])) {
+			$m = $u['edited_message'];
+			$chatId = (int)($m['chat']['id'] ?? 0); $userId = (int)($m['from']['id'] ?? 0);
+			if ($chatId && $userId) {
+				$settings = $this->getSettings($chatId);
+				if ((int)($settings['lock_edit'] ?? 0) === 1 && !$this->isAdmin($chatId, $userId)) {
+					$this->deleteMessage($chatId, (int)$m['message_id']);
+				}
+			}
+		}
 	}
 	private function handleCallback(array $cq): void {
 		$data=$cq['data']??''; $chatId=$cq['message']['chat']['id']??null; $userId=$cq['from']['id']??null; if(!$chatId||!$userId) return;
@@ -171,7 +236,7 @@ SQL;
 		$this->upsertGroup($chatId,$type,$title);
 		$ownerId=(int)($_ENV['BOT_OWNER_ID']??0);
 
-		if ($type==='private' && isset($m['text']) && $m['text']==='/start') { $this->sendMessage($chatId,'سلام! من ربات مدیریت گروه گاردین هستم. من را به گروه/کانال خود اضافه کنید.'); return; }
+		if ($type==='private' && isset($m['text']) && $m['text']==='/start') { $this->sendMessage($chatId,'سلام! من ربات مدیریت گروه Dakal Guardian هستم. من را به گروه/کانال خود اضافه کنید.'); return; }
 
 		$state=$this->getBotState(); if ((int)$state['disabled']===1 && $userId!==$ownerId) return;
 
@@ -183,31 +248,74 @@ SQL;
 				$cnt = $this->incrAdminRemoval($chatId,$userId);
 				if ($cnt > 10) { $this->demoteAdmin($chatId,$userId); $this->sendMessage($chatId, "ادمین {$userId} بیش از حد حذف انجام داده و دسترسی او گرفته شد."); $this->logSanction($chatId,$userId,'demote','mass removals'); }
 			}
+			if ((int)($settings['lock_service'] ?? 0) === 1) { $this->deleteMessage($chatId, (int)$m['message_id']); }
 			return;
 		}
 
-		// New members welcome with banner
+		// New members
 		if (!empty($m['new_chat_members'])) {
+			// Bots lock: ban bots and warn adder
+			if ((int)($settings['lock_bots'] ?? 0) === 1) {
+				foreach ($m['new_chat_members'] as $mem) {
+					if (!empty($mem['is_bot'])) {
+						$this->call('banChatMember', ['chat_id'=>$chatId,'user_id'=>(int)$mem['id']]);
+						$this->logSanction($chatId, (int)$mem['id'], 'ban', 'bot blocked');
+					}
+				}
+			}
 			if ((int)($settings['captcha_required']??1)===1) {
 				foreach($m['new_chat_members'] as $mem){ $this->restrict($chatId,(int)$mem['id'],['can_send_messages'=>false]); $this->sendMessage($chatId,$mem['first_name'].' خوش آمدی! برای تایید روی دکمه بزنید.', ['reply_markup'=>['inline_keyboard'=>[[['text'=>'من ربات نیستم 🤖❌','callback_data'=>'captcha:'.$mem['id']]]]]]); }
 			}
 			$banner=$settings['welcome_banner_url']??''; $wtext=$settings['welcome_text']??''; if($banner){ $this->sendPhoto($chatId,$banner,['caption'=>$wtext?:'خوش آمدید']); } elseif($wtext){ $this->sendMessage($chatId,$wtext); }
+			if ((int)($settings['lock_service'] ?? 0) === 1) { $this->deleteMessage($chatId, (int)$m['message_id']); }
+			return;
+		}
+
+		// Pinned message lock
+		if (!empty($m['pinned_message']) && (int)($settings['lock_pin'] ?? 0) === 1) {
+			$this->call('unpinChatMessage', ['chat_id'=>$chatId]);
+			$this->deleteMessage($chatId, (int)$m['message_id']);
 			return;
 		}
 
 		// Forwarded
-		if (!empty($m['forward_date']) && (int)($settings['anti_forward']??1)===1) { $this->deleteMessage($chatId,(int)$m['message_id']); $this->sendMessage($chatId,'فوروارد پیام مجاز نیست.'); return; }
+		if (!empty($m['forward_date']) && (((int)($settings['lock_forward'] ?? 0) === 1) || ((int)($settings['anti_forward'] ?? 0) === 1))) { $this->deleteMessage($chatId,(int)$m['message_id']); $this->sendMessage($chatId,'فوروارد پیام مجاز نیست.'); return; }
 
 		// Commands
-		if (!empty($m['text']) && str_starts_with($m['text'], '/')) { $this->handleCommand($m,$settings); return; }
+		if (!empty($m['text']) && $this->hasEntityType($m, ['bot_command'])) {
+			if ((int)($settings['lock_command'] ?? 0) === 1 && !$this->isAdmin($chatId,$userId)) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+			$this->handleCommand($m,$settings); return;
+		}
 
-		// Ignore admins for content filters
+		// Ignore admins for content locks
 		if ($this->isAdmin($chatId,$userId)) return;
 
-		$text=$m['text']??$m['caption']??'';
+		// Lockdown
 		if ((int)($settings['lockdown']??0)===1) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
-		if ((int)($settings['anti_link']??1)===1 && self::containsLink($text)) { $this->warnAndMaybeMute($chatId,$userId,'ارسال لینک ممنوع است'); $this->deleteMessage($chatId,(int)$m['message_id']); return; }
-		if ((int)($settings['anti_badwords']??1)===1 && self::containsBadWord($text)) { $this->warnAndMaybeMute($chatId,$userId,'کلمات نامناسب ممنوع است'); $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+
+		// Content locks
+		$text=$m['text']??$m['caption']??'';
+		if (((int)($settings['lock_text']??0)===1) && isset($m['text'])) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if ((((int)($settings['lock_link']??0)===1) || ((int)($settings['anti_link']??0)===1)) && (self::containsLink($text) || $this->hasEntityType($m,['url','text_link']))) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_hashtag']??0)===1) && ($this->hasEntityType($m,['hashtag']) || preg_match('/(^|\s)#[\w\u0600-\u06FF]+/u',$text))) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_username']??0)===1) && ($this->hasEntityType($m,['mention']) || preg_match('/(^|\s)@\w{4,}/',$text))) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_persian']??0)===1) && preg_match('/[\x{0600}-\x{06FF}]/u',$text)) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_english']??0)===1) && preg_match('/[A-Za-z]/',$text)) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_games']??0)===1) && !empty($m['game'])) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if ((((int)($settings['lock_profanity']??0)===1) || ((int)($settings['anti_badwords']??0)===1)) && self::containsBadWord($text)) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_inline_button']??0)===1) && !empty($m['reply_markup']['inline_keyboard'])) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_emoji']??0)===1) && $this->containsEmoji($text)) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_gif']??0)===1) && !empty($m['animation'])) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_sticker']??0)===1) && !empty($m['sticker'])) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_photo']??0)===1) && !empty($m['photo'])) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_file']??0)===1) && !empty($m['document'])) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_contact']??0)===1) && !empty($m['contact'])) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_location']??0)===1) && !empty($m['location'])) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_spoiler']??0)===1) && $this->hasEntityType($m,['spoiler'])) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_video']??0)===1) && !empty($m['video'])) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_video_note']??0)===1) && !empty($m['video_note'])) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_audio']??0)===1) && !empty($m['audio'])) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
+		if (((int)($settings['lock_voice']??0)===1) && !empty($m['voice'])) { $this->deleteMessage($chatId,(int)$m['message_id']); return; }
 	}
 	private function handleCommand(array $m, array $settings): void {
 		$chatId=(int)$m['chat']['id']; $fromId=(int)$m['from']['id']; $text=trim($m['text']); $cmd=explode(' ',$text); $command=explode('@',ltrim($cmd[0],'/'))[0]; $ownerId=(int)($_ENV['BOT_OWNER_ID']??0);
