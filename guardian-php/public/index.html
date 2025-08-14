@@ -3,88 +3,135 @@
 <head>
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
-	<title>Guardian Admin (PHP)</title>
+	<title>Dakal Guardian • Admin</title>
 	<style>
-		body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;max-width:1000px;margin:2rem auto;padding:0 1rem;color:#111}
-		.card{border:1px solid #ddd;border-radius:12px;padding:16px;margin:12px 0}
-		.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
-		label{display:flex;justify-content:space-between;align-items:center;border:1px solid #eee;padding:10px;border-radius:10px}
-		.toggle{width:40px;height:24px;border-radius:999px;background:#ddd;position:relative;cursor:pointer}
-		.toggle.on{background:#16a34a}
-		.toggle>span{position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:999px;background:#fff;transition:all .15s}
-		.toggle.on>span{right:18px}
-		button{background:#111;color:#fff;border:none;border-radius:10px;padding:10px 14px;cursor:pointer}
-		input,textarea{border:1px solid #ddd;border-radius:8px;padding:8px;width:100%}
-		.small{color:#666}
+		:root{
+			--bg:#0f172a; /* slate-900 */
+			--panel:#111827cc; /* gray-900/80 */
+			--card:#0b1222cc; /* custom */
+			--text:#e5e7eb; /* gray-200 */
+			--muted:#9ca3af; /* gray-400 */
+			--brand:#6366f1; /* indigo-500 */
+			--brand2:#06b6d4; /* cyan-500 */
+			--success:#22c55e; /* green-500 */
+			--danger:#ef4444; /* red-500 */
+		}
+		html,body{height:100%}
+		body{font-family:IRANSans,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;background:
+			radial-gradient(1200px 800px at 100% -10%, #1e293b 0%, #0f172a 70%),
+			linear-gradient(160deg, rgba(99,102,241,.15), rgba(6,182,212,.08));
+			min-height:100%;margin:0;color:var(--text)}
+		.container{max-width:1100px;margin:0 auto;padding:32px}
+		.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+		.brand{display:flex;align-items:center;gap:12px}
+		.logo{width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,var(--brand),var(--brand2));box-shadow:0 10px 30px rgba(99,102,241,.35)}
+		.title{font-weight:800;letter-spacing:.3px}
+		.subtitle{color:var(--muted);font-size:.95rem;margin-top:4px}
+		.panel{border:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg, rgba(17,24,39,.8), rgba(11,18,34,.7));border-radius:18px;padding:18px}
+		.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+		.card{border:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg, rgba(11,18,34,.7), rgba(9,14,28,.65));border-radius:16px;padding:16px}
+		.card h3{margin:0 0 10px 0;font-size:1.05rem}
+		label{display:flex;justify-content:space-between;align-items:center;border:1px solid rgba(255,255,255,.06);padding:10px;border-radius:12px;background:rgba(255,255,255,.02)}
+		input,textarea,select{background:rgba(255,255,255,.06);color:var(--text);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:10px;width:100%}
+		.small{color:var(--muted)}
+		button{background:linear-gradient(135deg,var(--brand),var(--brand2));color:white;border:none;border-radius:12px;padding:10px 14px;cursor:pointer;box-shadow:0 10px 25px rgba(99,102,241,.35)}
+		button.secondary{background:transparent;border:1px solid rgba(255,255,255,.12)}
+		.toggle{width:48px;height:26px;border-radius:999px;background:rgba(255,255,255,.15);position:relative;cursor:pointer;border:1px solid rgba(255,255,255,.2)}
+		.toggle.on{background:linear-gradient(135deg,var(--success),#16a34a)}
+		.toggle>span{position:absolute;top:2px;right:2px;width:22px;height:22px;border-radius:999px;background:#fff;transition:all .2s}
+		.toggle.on>span{right:24px}
 		table{width:100%;border-collapse:collapse}
-		th,td{border-bottom:1px solid #eee;padding:8px;text-align:right}
-		.flex{display:flex;gap:8px;align-items:center}
+		th,td{border-bottom:1px solid rgba(255,255,255,.08);padding:10px;text-align:right}
+		hr{border:none;border-top:1px solid rgba(255,255,255,.08);margin:10px 0}
 	</style>
 </head>
 <body dir="rtl">
-	<h1>مدیریت گاردین (PHP)</h1>
-	<div class="card">
-		<div class="flex">
-			<input id="chatId" placeholder="Chat ID" style="max-width:220px"/>
-			<input id="userId" placeholder="User ID" style="max-width:220px"/>
-			<input id="timestamp" placeholder="Timestamp" style="max-width:180px"/>
-			<input id="hash" placeholder="Hash" style="max-width:380px"/>
-			<button id="auth">احراز هویت</button>
+	<div class="container">
+		<div class="header">
+			<div class="brand">
+				<div class="logo"></div>
+				<div>
+					<div class="title">Dakal • Guardian</div>
+					<div class="subtitle">مدیریت حرفه‌ای گروه و کانال با امنیت هوشمند</div>
+				</div>
+			</div>
+			<div class="small">مینی‌اپ مدیریت</div>
 		</div>
-		<p class="small">پارامترها را با لینک /settings پر کنید.</p>
-	</div>
 
-	<div id="settings" class="card" style="display:none">
-		<h3>تنظیمات گروه</h3>
-		<div class="grid">
-			<label>ضد لینک <div class="toggle" data-key="anti_link"><span></span></div></label>
-			<label>ضد فوروارد <div class="toggle" data-key="anti_forward"><span></span></div></label>
-			<label>فیلتر کلمات بد <div class="toggle" data-key="anti_badwords"><span></span></div></label>
-			<label>کپچا هنگام ورود <div class="toggle" data-key="captcha_required"><span></span></div></label>
-			<label>حداکثر اخطار <input id="max_warns" type="number" min="1" max="10"/></label>
-			<label>بنر خوش‌آمد (URL) <input id="welcome_banner_url" placeholder="https://..."/></label>
-			<label style="grid-column:1/-1">متن خوش‌آمد <textarea id="welcome_text" rows="3" placeholder="خوش آمدید..."></textarea></label>
-			<label>لاکدان گروه <div class="toggle" data-key="lockdown"><span></span></div></label>
+		<div class="panel" style="margin-bottom:14px">
+			<div class="grid">
+				<div class="card">
+					<h3>احراز هویت</h3>
+					<div class="grid">
+						<input id="chatId" placeholder="Chat ID"/>
+						<input id="userId" placeholder="User ID"/>
+						<input id="timestamp" placeholder="Timestamp"/>
+						<input id="hash" placeholder="Hash"/>
+					</div>
+					<div style="margin-top:10px;display:flex;gap:10px"><button id="auth">اتصال</button><button class="secondary" id="fill">پر کردن خودکار URL</button></div>
+					<div class="small" style="margin-top:6px">پارامترهای بالا با لینک /settings تامین می‌شود.</div>
+				</div>
+				<div class="card">
+					<h3>وضعیت</h3>
+					<div class="small">پس از اتصال، تنظیمات گروه، ادمین‌ها و لاگ‌ها قابل مشاهده و ویرایش است.</div>
+					<hr/>
+					<div class="small">برند: Dakal • Guardian</div>
+				</div>
+			</div>
 		</div>
-		<div class="flex" style="margin-top:12px">
-			<button id="save">ذخیره</button>
-		</div>
-	</div>
 
-	<div id="admins" class="card" style="display:none">
-		<h3>ادمین‌ها و دسترسی‌ها</h3>
-		<table>
-			<thead><tr><th>کاربر</th><th>دسترسی حذف</th><th>محدودسازی</th><th>پین</th><th>مدیریت</th><th>اعمال</th></tr></thead>
-			<tbody></tbody>
-		</table>
-	</div>
+		<div id="settings" class="panel" style="display:none">
+			<h3 style="margin:0 0 12px 0">تنظیمات گروه</h3>
+			<div class="grid">
+				<label>ضد لینک <div class="toggle" data-key="anti_link"><span></span></div></label>
+				<label>ضد فوروارد <div class="toggle" data-key="anti_forward"><span></span></div></label>
+				<label>فیلتر کلمات بد <div class="toggle" data-key="anti_badwords"><span></span></div></label>
+				<label>کپچا هنگام ورود <div class="toggle" data-key="captcha_required"><span></span></div></label>
+				<label>حداکثر اخطار <input id="max_warns" type="number" min="1" max="10"/></label>
+				<label>بنر خوش‌آمد (URL) <input id="welcome_banner_url" placeholder="https://..."/></label>
+				<label style="grid-column:1/-1">متن خوش‌آمد <textarea id="welcome_text" rows="3" placeholder="خوش آمدید به جامعه Dakal!"></textarea></label>
+				<label>لاکدان گروه <div class="toggle" data-key="lockdown"><span></span></div></label>
+			</div>
+			<div style="margin-top:12px"><button id="save">ذخیره تنظیمات</button></div>
+		</div>
 
-	<div id="owner" class="card" style="display:none">
-		<h3>کنترل مالک ربات</h3>
-		<div class="grid">
-			<label>وضعیت ربات
-				<select id="botDisabled">
-					<option value="0">روشن</option>
-					<option value="1">خاموش</option>
-				</select>
-			</label>
-			<label>Force Join Channel ID <input id="forceChannelId" placeholder="@channel یا -100..."/></label>
+		<div id="admins" class="panel" style="display:none;margin-top:14px">
+			<h3 style="margin:0 0 12px 0">ادمین‌ها و دسترسی‌ها</h3>
+			<div class="card" style="overflow:auto">
+				<table>
+					<thead><tr><th>کاربر</th><th>حذف</th><th>محدودسازی</th><th>پین</th><th>مدیریت</th><th>اعمال</th></tr></thead>
+					<tbody></tbody>
+				</table>
+			</div>
 		</div>
-		<div class="flex" style="margin-top:8px">
-			<button id="saveOwner">ذخیره تنظیمات مالک</button>
-		</div>
-		<div style="margin-top:16px">
-			<h4>ارسال تبلیغات</h4>
-			<div class="flex"><input id="broadcastText" placeholder="متن تبلیغ"/><button id="sendBroadcast">ارسال</button></div>
-		</div>
-	</div>
 
-	<div id="sanctions" class="card" style="display:none">
-		<h3>لاگ اقدامات</h3>
-		<table>
-			<thead><tr><th>کاربر</th><th>اقدام</th><th>دلیل</th><th>تاریخ</th></tr></thead>
-			<tbody></tbody>
-		</table>
+		<div id="owner" class="panel" style="display:none;margin-top:14px">
+			<h3 style="margin:0 0 12px 0">کنترل مالک Dakal</h3>
+			<div class="grid">
+				<label>وضعیت ربات
+					<select id="botDisabled">
+						<option value="0">روشن</option>
+						<option value="1">خاموش</option>
+					</select>
+				</label>
+				<label>Force Join Channel ID <input id="forceChannelId" placeholder="@channel یا -100..."/></label>
+			</div>
+			<div style="margin-top:8px;display:flex;gap:8px"><button id="saveOwner">ذخیره مالک</button></div>
+			<div style="margin-top:16px" class="card">
+				<h3 style="margin:0 0 10px 0">ارسال تبلیغات</h3>
+				<div style="display:flex;gap:8px"><input id="broadcastText" placeholder="متن تبلیغ"/><button id="sendBroadcast">ارسال</button></div>
+			</div>
+		</div>
+
+		<div id="sanctions" class="panel" style="display:none;margin-top:14px">
+			<h3 style="margin:0 0 12px 0">لاگ اقدامات</h3>
+			<div class="card" style="overflow:auto">
+				<table>
+					<thead><tr><th>کاربر</th><th>اقدام</th><th>دلیل</th><th>تاریخ</th></tr></thead>
+					<tbody></tbody>
+				</table>
+			</div>
+		</div>
 	</div>
 
 	<script>
@@ -93,8 +140,7 @@
 	let auth = null;
 	qa('.toggle').forEach(t=>t.addEventListener('click', ()=>t.classList.toggle('on')));
 
-	function fillFromURL(){ const u=new URL(location.href); ['chatId','userId','timestamp','hash'].forEach(id=>{ const k=id==='chatId'?'chat_id':(id==='userId'?'user_id':id); const v=u.searchParams.get(k); if(v) q('#'+id).value=v; }); }
-	fillFromURL();
+	q('#fill').addEventListener('click', ()=>{ const u=new URL(location.href); ['chatId','userId','timestamp','hash'].forEach(id=>{ const k=id==='chatId'?'chat_id':(id==='userId'?'user_id':id); const v=u.searchParams.get(k); if(v) q('#'+id).value=v; }); });
 
 	q('#auth').addEventListener('click', async ()=>{
 		auth = { chat_id:Number(q('#chatId').value), user_id:Number(q('#userId').value), timestamp:Number(q('#timestamp').value), hash:q('#hash').value };
