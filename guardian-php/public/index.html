@@ -160,6 +160,15 @@
 				</table>
 			</div>
 		</div>
+		<div class="panel" id="myChats" style="display:none;margin-bottom:14px">
+			<h3 style="margin:0 0 12px 0">گروه‌ها و کانال‌های من</h3>
+			<div class="card" style="overflow:auto">
+				<table>
+					<thead><tr><th>چت</th><th>شناسه</th><th>نوع</th><th>اقدام</th></tr></thead>
+					<tbody></tbody>
+				</table>
+			</div>
+		</div>
 	</div>
 
 	<script>
@@ -171,12 +180,12 @@
 	q('#fill').addEventListener('click', ()=>{ const u=new URL(location.href); ['chatId','userId','timestamp','hash'].forEach(id=>{ const k=id==='chatId'?'chat_id':(id==='userId'?'user_id':id); const v=u.searchParams.get(k); if(v) q('#'+id).value=v; }); });
 
 	q('#auth').addEventListener('click', async ()=>{
-		auth = { chat_id:Number(q('#chatId').value), user_id:Number(q('#userId').value), timestamp:Number(q('#timestamp').value), hash:q('#hash').value };
-		if(!auth.chat_id||!auth.user_id||!auth.timestamp||!auth.hash) return alert('ورودی نامعتبر');
+		auth = { chat_id:q('#chatId').value?Number(q('#chatId').value):0, user_id:Number(q('#userId').value), timestamp:Number(q('#timestamp').value), hash:q('#hash').value };
+		if(!auth.user_id||!auth.timestamp||!auth.hash) return alert('ورودی نامعتبر');
 		const r = await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(auth)});
 		const j = await r.json(); if(!j.ok) return alert('احراز هویت ناموفق');
-		await loadSettings(); await loadAdmins(); await loadSanctions(); await loadOwner();
-		q('#settings').style.display='block'; q('#admins').style.display='block'; q('#sanctions').style.display='block';
+		if(auth.chat_id){ await loadSettings(); await loadAdmins(); await loadSanctions(); await loadOwner(); q('#settings').style.display='block'; q('#admins').style.display='block'; q('#sanctions').style.display='block'; }
+		else { await loadMyChats(); q('#myChats').style.display='block'; }
 	});
 
 	function renderSettings(s){ qa('.toggle').forEach(t=>{ const k=t.dataset.key; s[k]?t.classList.add('on'):t.classList.remove('on'); }); q('#max_warns').value=s.max_warns; q('#welcome_banner_url').value=s.welcome_banner_url||''; q('#welcome_text').value=s.welcome_text||''; }
@@ -204,6 +213,23 @@
 	q('#saveOwner').addEventListener('click', async ()=>{ const url=`/api/owner/state?chat_id=${auth.chat_id}&user_id=${auth.user_id}&timestamp=${auth.timestamp}&hash=${encodeURIComponent(auth.hash)}`; const body={ disabled:Number(q('#botDisabled').value), force_channel_id:q('#forceChannelId').value }; const j=await (await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json(); if(j.ok) alert('ذخیره شد'); });
 
 	async function loadSanctions(){ const url=`/api/sanctions?chat_id=${auth.chat_id}&user_id=${auth.user_id}&timestamp=${auth.timestamp}&hash=${encodeURIComponent(auth.hash)}`; const j=await (await fetch(url)).json(); const tb=q('#sanctions tbody'); tb.innerHTML=''; (j.sanctions||[]).forEach(s=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${s.user_id}</td><td>${s.action}</td><td>${s.reason||''}</td><td>${new Date(s.created_at).toLocaleString()}</td>`; tb.appendChild(tr); }); }
+
+	async function loadMyChats(){
+		const params = new URLSearchParams({ user_id:String(auth.user_id), timestamp:String(auth.timestamp), hash:auth.hash });
+		const j = await (await fetch('/api/my_chats?'+params.toString())).json();
+		const tb = q('#myChats tbody'); tb.innerHTML='';
+		(j.chats||[]).forEach(c=>{
+			const tr=document.createElement('tr');
+			tr.innerHTML=`<td>${c.title||c.chat_id}</td><td>${c.chat_id}</td><td>${c.type}</td><td><button data-id="${c.chat_id}">مدیریت</button></td>`;
+			tr.querySelector('button').addEventListener('click', async ()=>{
+				auth.chat_id = c.chat_id;
+				await loadSettings(); await loadAdmins(); await loadSanctions(); await loadOwner();
+				q('#settings').style.display='block'; q('#admins').style.display='block'; q('#sanctions').style.display='block';
+				window.scrollTo({top:0,behavior:'smooth'});
+			});
+			tb.appendChild(tr);
+		});
+	}
 	</script>
 </body>
 </html>

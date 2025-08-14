@@ -12,6 +12,7 @@ class App {
 	public Client $http;
 	public string $token;
 	public string $apiBase;
+	private ?int $botId = null;
 	public function __construct() {
 		if (file_exists(__DIR__.'/.env')) Dotenv::createImmutable(__DIR__)->load();
 		$this->pdo = $this->createPdo();
@@ -184,10 +185,18 @@ SQL;
 			'can_manage_chat'=>false,'can_change_info'=>false,'can_post_messages'=>false,'can_edit_messages'=>false,'can_delete_messages'=>false,'can_invite_users'=>false,'can_restrict_members'=>false,'can_pin_messages'=>false,'can_promote_members'=>false,'can_manage_video_chats'=>false
 		]);
 	}
+	private function ensureBotId(): void { if ($this->botId===null){ $me=$this->call('getMe'); $this->botId = (int)($me['result']['id'] ?? 0); } }
+	private function isBotAdmin(int $chatId): bool { $this->ensureBotId(); try { $r=$this->call('getChatMember',['chat_id'=>$chatId,'user_id'=>$this->botId]); $s=$r['result']['status']??''; return in_array($s,['administrator','creator'],true);} catch(\Throwable $e){ return false; } }
 	public function isAdmin(int $chatId, int $userId): bool { try { $res=$this->call('getChatMember',['chat_id'=>$chatId,'user_id'=>$userId]); $s=$res['result']['status']??''; return in_array($s,['creator','administrator'],true);} catch(\Throwable $e){return false;} }
 	public function authOkForWeb(int $chatId, int $userId, int $ts, string $hash): bool { $secret=$_ENV['WEB_APP_SECRET']??'devsecret'; $calc=hash_hmac('sha256', $chatId.':'.$userId.':'.$ts, $secret); if (!hash_equals($calc, $hash)) return false; return true; }
+	public function authUserOk(int $userId, int $ts, string $hash): bool { $secret=$_ENV['WEB_APP_SECRET']??'devsecret'; $calc=hash_hmac('sha256', 'user:'.$userId.':'.$ts, $secret); return hash_equals($calc,$hash); }
 	public function checkForceJoin(int $userId): bool {
 		$state=$this->getBotState(); $ch=(int)($state['force_channel_id']??0); if($ch===0) return true; try { $r=$this->call('getChatMember',['chat_id'=>$ch,'user_id'=>$userId]); $st=$r['result']['status']??'left'; return !in_array($st, ['left','kicked'], true); } catch(\Throwable $e){ return false; }
+	}
+	public function listManageableChatsForUser(int $userId): array {
+		$this->ensureBotId();
+		$res=[]; foreach($this->listChats() as $c){ $chatId=(int)$c['chat_id']; if(!$this->isBotAdmin($chatId)) continue; if(!$this->isAdmin($chatId,$userId)) continue; $res[]=$c; }
+		return $res;
 	}
 
 	// Filters
@@ -321,8 +330,9 @@ SQL;
 		$chatId=(int)$m['chat']['id']; $fromId=(int)$m['from']['id']; $text=trim($m['text']); $cmd=explode(' ',$text); $command=explode('@',ltrim($cmd[0],'/'))[0]; $ownerId=(int)($_ENV['BOT_OWNER_ID']??0);
 		$forceOk=$this->checkForceJoin($fromId); if(!$forceOk && $command!=='help'){ $this->sendMessage($chatId,'برای استفاده ابتدا در کانال تعیین‌شده عضو شوید.'); return; }
 		switch($command){
-			case 'help': $this->sendMessage($chatId,"دستورات:\n/settings\n/warn\n/mute\n/ban\n/unban\n/lockdown on|off\nshutdown on|off (owner)\n/broadcast <متن> (owner)\n/fwd (owner, reply)"); break;
+			case 'help': $this->sendMessage($chatId,"دستورات:\n/settings (این چت)\n/settings_all (همه چت‌ها)\n/warn\n/mute\n/ban\n/unban\n/lockdown on|off\nshutdown on|off (owner)\n/broadcast <متن> (owner)\n/fwd (owner, reply)"); break;
 			case 'settings': $ts=time(); $hash=hash_hmac('sha256',$chatId.':'.$fromId.':'.$ts, $_ENV['WEB_APP_SECRET']??'devsecret'); $url=rtrim($_ENV['WEB_ORIGIN']??'http://localhost:8080','/')."/?chat_id={$chatId}&user_id={$fromId}&timestamp={$ts}&hash={$hash}"; $this->sendMessage($chatId,"پنل مدیریت: {$url}"); break;
+			case 'settings_all': $ts=time(); $uhash=hash_hmac('sha256','user:'.$fromId.':'.$ts, $_ENV['WEB_APP_SECRET']??'devsecret'); $url=rtrim($_ENV['WEB_ORIGIN']??'http://localhost:8080','/')."/?user_id={$fromId}&timestamp={$ts}&hash={$uhash}"; $this->sendMessage($chatId,"پنل همه چت‌ها: {$url}"); break;
 			case 'warn': if(!$this->isAdmin($chatId,$fromId)) return; $target=$this->extractTargetUserId($m); if($target){ $this->addWarn($chatId,$target); $this->logSanction($chatId,$target,'warn','manual'); $this->sendMessage($chatId,'اخطار ثبت شد'); } break;
 			case 'mute': if(!$this->isAdmin($chatId,$fromId)) return; $target=$this->extractTargetUserId($m); $duration=$this->parseDuration($cmd[2]??'10m'); if($target){ $this->restrict($chatId,$target,['can_send_messages'=>false], time()+$duration); $this->logSanction($chatId,$target,'mute','by admin', time()+$duration); $this->sendMessage($chatId,'کاربر میوت شد'); } break;
 			case 'ban': if(!$this->isAdmin($chatId,$fromId)) return; $target=$this->extractTargetUserId($m); if($target){ $this->call('banChatMember',['chat_id'=>$chatId,'user_id'=>$target]); $this->logSanction($chatId,$target,'ban','by admin'); $this->sendMessage($chatId,'کاربر بن شد'); } break;
@@ -343,10 +353,26 @@ SQL;
 		header('Cache-Control: no-store');
 		$path=parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH)?:'/'; $method=$_SERVER['REQUEST_METHOD']??'GET';
 		if ($path==='/' && $method==='GET'){ header('Content-Type: text/html; charset=utf-8'); readfile(__DIR__.'/public/index.html'); return; }
-		if ($path==='/api/auth' && $method==='POST'){ $in=json_decode(file_get_contents('php://input'), true)??[]; $ok=$this->authOkForWeb((int)($in['chat_id']??0),(int)($in['user_id']??0),(int)($in['timestamp']??0), (string)($in['hash']??'')); header('Content-Type: application/json'); echo json_encode(['ok'=>$ok]); return; }
-		// All below require auth params
+		if ($path==='/api/auth' && $method==='POST'){
+			$in=json_decode(file_get_contents('php://input'), true)??[];
+			$chatId=(int)($in['chat_id']??0); $userId=(int)($in['user_id']??0); $ts=(int)($in['timestamp']??0); $hash=(string)($in['hash']??'');
+			$ok = $chatId ? $this->authOkForWeb($chatId,$userId,$ts,$hash) : $this->authUserOk($userId,$ts,$hash);
+			header('Content-Type: application/json'); echo json_encode(['ok'=>$ok]); return;
+		}
+		if ($path==='/api/my_chats' && $method==='GET'){
+			$userId=(int)($_GET['user_id']??0); $ts=(int)($_GET['timestamp']??0); $hash=(string)($_GET['hash']??'');
+			if (!$this->authUserOk($userId,$ts,$hash)) { http_response_code(401); echo json_encode(['ok'=>false]); return; }
+			if (!$this->checkForceJoin($userId)) { http_response_code(403); echo json_encode(['ok'=>false,'error'=>'force_join_required']); return; }
+			header('Content-Type: application/json'); echo json_encode(['ok'=>true,'chats'=>$this->listManageableChatsForUser($userId)]); return;
+		}
+
+		// All below require auth (either chat-bound or user-bound)
 		$chatId=(int)($_GET['chat_id'] ?? ($_POST['chat_id'] ?? 0)); $userId=(int)($_GET['user_id'] ?? ($_POST['user_id'] ?? 0)); $ts=(int)($_GET['timestamp'] ?? ($_POST['timestamp'] ?? 0)); $hash=(string)($_GET['hash'] ?? ($_POST['hash'] ?? ''));
-		if (!$this->authOkForWeb($chatId,$userId,$ts,$hash)) { http_response_code(401); header('Content-Type: application/json'); echo json_encode(['ok'=>false,'error'=>'unauthorized']); return; }
+		$okChat = $chatId && $this->authOkForWeb($chatId,$userId,$ts,$hash);
+		$okUser = !$chatId && $this->authUserOk($userId,$ts,$hash);
+		if (!($okChat || $okUser)) { http_response_code(401); header('Content-Type: application/json'); echo json_encode(['ok'=>false,'error'=>'unauthorized']); return; }
+		// if user auth used and chat endpoints requested, verify user is admin and bot is admin
+		if ($okUser && $chatId){ if (!($this->isAdmin($chatId,$userId) && $this->isBotAdmin($chatId))) { http_response_code(403); echo json_encode(['ok'=>false]); return; } }
 		if (!$this->checkForceJoin($userId)) { http_response_code(403); header('Content-Type: application/json'); echo json_encode(['ok'=>false,'error'=>'force_join_required']); return; }
 
 		if ($path==='/api/settings' && $method==='GET'){ header('Content-Type: application/json'); echo json_encode(['ok'=>true,'settings'=>$this->getSettings($chatId)]); return; }
