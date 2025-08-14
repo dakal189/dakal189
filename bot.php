@@ -219,15 +219,31 @@ function bootstrapDatabase(PDO $pdo): void {
          used_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
          FOREIGN KEY (code_id) REFERENCES discount_codes(id) ON DELETE CASCADE
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-     $pdo->exec("CREATE TABLE IF NOT EXISTS discount_code_blocked_countries (
-         id INT AUTO_INCREMENT PRIMARY KEY,
-         code_id INT NOT NULL,
-         country VARCHAR(128) NOT NULL,
-         UNIQUE KEY uq_code_country (code_id, country),
-         FOREIGN KEY (code_id) REFERENCES discount_codes(id) ON DELETE CASCADE
-     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
- 
-     // Seed default buttons if not present
+           $pdo->exec("CREATE TABLE IF NOT EXISTS discount_code_blocked_countries (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          code_id INT NOT NULL,
+          country VARCHAR(128) NOT NULL,
+          UNIQUE KEY uq_code_country (code_id, country),
+          FOREIGN KEY (code_id) REFERENCES discount_codes(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+  
+      // AI Analysis jobs
+      $pdo->exec("CREATE TABLE IF NOT EXISTS ai_analysis_jobs (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          attacker_user_id INT NULL,
+          defender_user_id INT NULL,
+          kind VARCHAR(64) NOT NULL,
+          status ENUM('queued','running','done','failed') NOT NULL DEFAULT 'queued',
+          model VARCHAR(64) NULL,
+          payload_json LONGTEXT NULL,
+          result_json LONGTEXT NULL,
+          step_index INT NOT NULL DEFAULT 0,
+          next_step_at DATETIME NULL,
+          last_error TEXT NULL,
+          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+  
+      // Seed default buttons if not present
 $defaults = [
         ['army','لشکر کشی'],
         ['missile','حمله موشکی'],
