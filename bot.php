@@ -2252,7 +2252,8 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             $maxUses = (int)($lines[2] ?? 0); $perUser = max(1,(int)($lines[3] ?? 1)); $expRaw = trim($lines[4] ?? ''); $expiresAt = $expRaw!==''? $expRaw : null;
             db()->prepare("INSERT INTO discount_codes (code,percent,max_uses,per_user_limit,expires_at,created_by) VALUES (?,?,?,?,?,?)")
               ->execute([$code,$percent,$maxUses,$perUser,$expiresAt,$chatId]);
-            sendMessage($chatId,'کد ایجاد شد: '.$code);
+            $kb=[ [ ['text'=>'کپی کد','copy_text'=>['text'=>$code]] ] ];
+            sendMessage($chatId,'کد ایجاد شد: '.$code, ['inline_keyboard'=>$kb]);
             clearAdminState($chatId);
             handleAdminNav($chatId,$message['message_id'] ?? 0,'disc_list',[],['telegram_id'=>$chatId]);
             break;
@@ -2643,8 +2644,16 @@ function handleUserStateMessage(array $userRow, array $message, array $state): v
             if ($uc >= (int)$dc['per_user_limit']) { sendMessage($chatId,'سهمیه شما برای این کد تمام شده است.'); clearUserState($chatId); return; }
             setSetting('cart_disc_'.(int)$userId, (string)((int)$dc['percent']));
             setSetting('cart_disc_code_'.(int)$userId, (string)((int)$dc['id']));
-            sendMessage($chatId,'کد تخفیف اعمال شد: '.$dc['percent'].'%');
             clearUserState($chatId);
+            // refresh cart inline if possible
+            $rows = db()->prepare("SELECT uci.item_id, uci.quantity, si.name, si.unit_price FROM user_cart_items uci JOIN shop_items si ON si.id=uci.item_id WHERE uci.user_id=? ORDER BY si.name ASC");
+            $rows->execute([$userId]); $items=$rows->fetchAll();
+            if ($items) {
+                $lines=['سبد خرید:']; foreach($items as $it){ $lines[]='- '.e($it['name']).' | تعداد: '.$it['quantity'].' | قیمت: '.formatPrice((int)$it['unit_price']*$it['quantity']); }
+                $total = getCartTotalForUser($userId); $disc=(int)$dc['percent']; $discAmt=(int)floor($total*$disc/100); $pay=max(0,$total-$discAmt);
+                $txt = implode("\n",$lines)."\n\nجمع کل (بدون تخفیف): ".formatPrice($total)."\nتخفیف (".$disc."%): -".formatPrice($discAmt)."\nمبلغ قابل پرداخت: ".formatPrice($pay);
+                sendMessage($chatId,$txt);
+            } else { sendMessage($chatId,'کد تخفیف اعمال شد: '.$dc['percent'].'%'); }
             break;
         case 'await_support':
             if (!$text && !$photo) { sendMessage($chatId,'فقط متن یا عکس بفرستید.'); return; }
