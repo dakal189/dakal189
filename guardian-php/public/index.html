@@ -91,6 +91,34 @@
 				<label>بنر خوش‌آمد (URL) <input id="welcome_banner_url" placeholder="https://..."/></label>
 				<label style="grid-column:1/-1">متن خوش‌آمد <textarea id="welcome_text" rows="3" placeholder="خوش آمدید به جامعه Dakal!"></textarea></label>
 				<label>لاکدان گروه <div class="toggle" data-key="lockdown"><span></span></div></label>
+
+				<label>قفل هشتگ <div class="toggle" data-key="lock_hashtag"><span></span></div></label>
+				<label>قفل یوزرنیم <div class="toggle" data-key="lock_username"><span></span></div></label>
+				<label>قفل لینک <div class="toggle" data-key="lock_link"><span></span></div></label>
+				<label>قفل متن <div class="toggle" data-key="lock_text"><span></span></div></label>
+				<label>قفل فارسی <div class="toggle" data-key="lock_persian"><span></span></div></label>
+				<label>قفل انگلیسی <div class="toggle" data-key="lock_english"><span></span></div></label>
+				<label>قفل بازی <div class="toggle" data-key="lock_games"><span></span></div></label>
+				<label>قفل فحش <div class="toggle" data-key="lock_profanity"><span></span></div></label>
+				<label>قفل سرویس تلگرام <div class="toggle" data-key="lock_service"><span></span></div></label>
+				<label>قفل دکمه شیشه‌ای <div class="toggle" data-key="lock_inline_button"><span></span></div></label>
+				<label>قفل ربات‌ها <div class="toggle" data-key="lock_bots"><span></span></div></label>
+				<label>قفل ویرایش <div class="toggle" data-key="lock_edit"><span></span></div></label>
+				<label>قفل ایموجی <div class="toggle" data-key="lock_emoji"><span></span></div></label>
+				<label>قفل فوروارد <div class="toggle" data-key="lock_forward"><span></span></div></label>
+				<label>قفل گیف <div class="toggle" data-key="lock_gif"><span></span></div></label>
+				<label>قفل استیکر <div class="toggle" data-key="lock_sticker"><span></span></div></label>
+				<label>قفل عکس <div class="toggle" data-key="lock_photo"><span></span></div></label>
+				<label>قفل فایل <div class="toggle" data-key="lock_file"><span></span></div></label>
+				<label>قفل مخاطب <div class="toggle" data-key="lock_contact"><span></span></div></label>
+				<label>قفل مکان <div class="toggle" data-key="lock_location"><span></span></div></label>
+				<label>قفل اسپویلر <div class="toggle" data-key="lock_spoiler"><span></span></div></label>
+				<label>قفل کامند <div class="toggle" data-key="lock_command"><span></span></div></label>
+				<label>قفل سنجاق <div class="toggle" data-key="lock_pin"><span></span></div></label>
+				<label>قفل فیلم <div class="toggle" data-key="lock_video"><span></span></div></label>
+				<label>قفل فیلم سلفی <div class="toggle" data-key="lock_video_note"><span></span></div></label>
+				<label>قفل صدا <div class="toggle" data-key="lock_audio"><span></span></div></label>
+				<label>قفل ویس <div class="toggle" data-key="lock_voice"><span></span></div></label>
 			</div>
 			<div style="margin-top:12px"><button id="save">ذخیره تنظیمات</button></div>
 		</div>
@@ -152,7 +180,9 @@
 	});
 
 	function renderSettings(s){ qa('.toggle').forEach(t=>{ const k=t.dataset.key; s[k]?t.classList.add('on'):t.classList.remove('on'); }); q('#max_warns').value=s.max_warns; q('#welcome_banner_url').value=s.welcome_banner_url||''; q('#welcome_text').value=s.welcome_text||''; }
-	function collectSettings(){ const r={ chat_id:auth.chat_id, max_warns:Number(q('#max_warns').value), welcome_banner_url:q('#welcome_banner_url').value, welcome_text:q('#welcome_text').value }; qa('.toggle').forEach(t=>r[t.dataset.key]=t.classList.contains('on')?1:0); return r; }
+	function collectSettings(){ const r={ chat_id:auth.chat_id, max_warns:Number(q('#max_warns').value), welcome_banner_url:q('#welcome_banner_url').value, welcome_text:q('#welcome_text').value };
+		qa('.toggle').forEach(t=>{ const key=t.dataset.key; r[key]=t.classList.contains('on')?1:0; });
+		return r; }
 
 	async function loadSettings(){ const url = `/api/settings?chat_id=${auth.chat_id}&user_id=${auth.user_id}&timestamp=${auth.timestamp}&hash=${encodeURIComponent(auth.hash)}`; const j=await (await fetch(url)).json(); if(j.ok) renderSettings(j.settings); }
 	q('#save').addEventListener('click', async ()=>{ const url = `/api/settings?chat_id=${auth.chat_id}&user_id=${auth.user_id}&timestamp=${auth.timestamp}&hash=${encodeURIComponent(auth.hash)}`; const j=await (await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(collectSettings())})).json(); if(j.ok) alert('ذخیره شد'); });
