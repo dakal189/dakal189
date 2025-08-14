@@ -195,8 +195,32 @@ SQL;
 	}
 	public function listManageableChatsForUser(int $userId): array {
 		$this->ensureBotId();
-		$res=[]; foreach($this->listChats() as $c){ $chatId=(int)$c['chat_id']; if(!$this->isBotAdmin($chatId)) continue; if(!$this->isAdmin($chatId,$userId)) continue; $res[]=$c; }
+		$res=[]; foreach($this->listChats() as $c){ $chatId=(int)$c['chat_id'];
+			$u = $this->isAdmin($chatId,$userId);
+			$b = $this->isBotAdmin($chatId);
+			if(!($u && $b)) continue;
+			$rights=[]; if($b){ try{ $m=$this->call('getChatMember',['chat_id'=>$chatId,'user_id'=>$this->botId]); $rights=$m['result']??[]; }catch(\Throwable $e){} }
+			$res[] = [ 'chat_id'=>$chatId, 'type'=>$c['type'], 'title'=>$c['title'], 'user_admin'=>$u, 'bot_admin'=>$b, 'bot_rights'=>[
+				'can_delete_messages'=>!empty($rights['can_delete_messages']),
+				'can_restrict_members'=>!empty($rights['can_restrict_members']),
+				'can_promote_members'=>!empty($rights['can_promote_members']),
+				'can_pin_messages'=>!empty($rights['can_pin_messages']),
+				'can_manage_chat'=>!empty($rights['can_manage_chat']),
+			]];
+		}
 		return $res;
+	}
+
+	private function getStats(?int $chatId=null): array {
+		if ($chatId) {
+			$st1=$this->pdo->prepare('SELECT COUNT(*) c FROM sanctions WHERE chat_id=?'); $st1->execute([$chatId]); $sanctions=(int)($st1->fetch()['c']??0);
+			$st2=$this->pdo->prepare('SELECT COUNT(*) c FROM users WHERE chat_id=?'); $st2->execute([$chatId]); $users=(int)($st2->fetch()['c']??0);
+			return ['scope'=>'chat','chat_id'=>$chatId,'sanctions'=>$sanctions,'users'=>$users];
+		}
+		$groups=(int)($this->pdo->query('SELECT COUNT(*) c FROM groups')->fetch()['c']??0);
+		$users=(int)($this->pdo->query('SELECT COUNT(*) c FROM users')->fetch()['c']??0);
+		$sanctions=(int)($this->pdo->query('SELECT COUNT(*) c FROM sanctions')->fetch()['c']??0);
+		return ['scope'=>'global','chats'=>$groups,'users'=>$users,'sanctions'=>$sanctions];
 	}
 
 	// Filters
@@ -366,6 +390,14 @@ SQL;
 			header('Content-Type: application/json'); echo json_encode(['ok'=>true,'chats'=>$this->listManageableChatsForUser($userId)]); return;
 		}
 
+		if ($path==='/api/stats' && $method==='GET'){
+			$chatId=(int)($_GET['chat_id']??0); $userId=(int)($_GET['user_id']??0); $ts=(int)($_GET['timestamp']??0); $hash=(string)($_GET['hash']??'');
+			$okChat = $chatId && $this->authOkForWeb($chatId,$userId,$ts,$hash);
+			$okOwner = !$chatId && $this->authUserOk($userId,$ts,$hash) && $userId===(int)($_ENV['BOT_OWNER_ID']??0);
+			if (!($okChat || $okOwner)) { http_response_code(401); echo json_encode(['ok'=>false]); return; }
+			header('Content-Type: application/json'); echo json_encode(['ok'=>true,'stats'=>$this->getStats($chatId?:null)]); return;
+		}
+
 		// All below require auth (either chat-bound or user-bound)
 		$chatId=(int)($_GET['chat_id'] ?? ($_POST['chat_id'] ?? 0)); $userId=(int)($_GET['user_id'] ?? ($_POST['user_id'] ?? 0)); $ts=(int)($_GET['timestamp'] ?? ($_POST['timestamp'] ?? 0)); $hash=(string)($_GET['hash'] ?? ($_POST['hash'] ?? ''));
 		$okChat = $chatId && $this->authOkForWeb($chatId,$userId,$ts,$hash);
@@ -383,6 +415,7 @@ SQL;
 		if ($path==='/api/owner/state' && $method==='GET'){ if($userId!==(int)($_ENV['BOT_OWNER_ID']??0)){ http_response_code(403); echo json_encode(['ok'=>false]); return; } header('Content-Type: application/json'); echo json_encode(['ok'=>true,'state'=>$this->getBotState()]); return; }
 		if ($path==='/api/owner/state' && $method==='POST'){ if($userId!==(int)($_ENV['BOT_OWNER_ID']??0)){ http_response_code(403); echo json_encode(['ok'=>false]); return; } $in=json_decode(file_get_contents('php://input'), true)??[]; $this->setBotState($in); header('Content-Type: application/json'); echo json_encode(['ok'=>true,'state'=>$this->getBotState()]); return; }
 		if ($path==='/api/owner/broadcast' && $method==='POST'){ if($userId!==(int)($_ENV['BOT_OWNER_ID']??0)){ http_response_code(403); echo json_encode(['ok'=>false]); return; } $in=json_decode(file_get_contents('php://input'), true)??[]; $msg=trim((string)($in['text']??'')); foreach($this->listChats() as $c){ $this->sendMessage((int)$c['chat_id'],$msg); usleep(150000);} header('Content-Type: application/json'); echo json_encode(['ok'=>true]); return; }
+		if ($path==='/api/owner/forward' && $method==='POST'){ if($userId!==(int)($_ENV['BOT_OWNER_ID']??0)){ http_response_code(403); echo json_encode(['ok'=>false]); return; } $in=json_decode(file_get_contents('php://input'), true)??[]; $fromChat=(int)($in['from_chat_id']??0); $messageId=(int)($in['message_id']??0); foreach($this->listChats() as $c){ $this->call('forwardMessage',['chat_id'=>(int)$c['chat_id'],'from_chat_id'=>$fromChat,'message_id'=>$messageId]); usleep(150000);} header('Content-Type: application/json'); echo json_encode(['ok'=>true]); return; }
 
 		http_response_code(404); echo 'Not found';
 	}

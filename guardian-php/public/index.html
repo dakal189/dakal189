@@ -164,9 +164,18 @@
 			<h3 style="margin:0 0 12px 0">گروه‌ها و کانال‌های من</h3>
 			<div class="card" style="overflow:auto">
 				<table>
-					<thead><tr><th>چت</th><th>شناسه</th><th>نوع</th><th>اقدام</th></tr></thead>
+					<thead><tr><th>چت</th><th>شناسه</th><th>نوع</th><th>دسترسی ربات</th><th>اقدام</th></tr></thead>
 					<tbody></tbody>
 				</table>
+			</div>
+			<div class="card" id="ownerTools" style="display:none;margin-top:12px">
+				<h3 style="margin:0 0 10px 0">ابزار مالک Dakal</h3>
+				<div style="display:flex;gap:8px;flex-wrap:wrap">
+					<button id="btnGlobalStats">آمار کلی</button>
+					<input id="fromChatId" placeholder="from_chat_id" style="max-width:200px"/>
+					<input id="forwardMessageId" placeholder="message_id" style="max-width:200px"/>
+					<button id="btnForwardAll">فوروارد همگانی</button>
+				</div>
 			</div>
 		</div>
 	</div>
@@ -219,8 +228,14 @@
 		const j = await (await fetch('/api/my_chats?'+params.toString())).json();
 		const tb = q('#myChats tbody'); tb.innerHTML='';
 		(j.chats||[]).forEach(c=>{
+			const flags=[]; const br=c.bot_rights||{};
+			if(br.can_delete_messages) flags.push('Delete');
+			if(br.can_restrict_members) flags.push('Restrict');
+			if(br.can_promote_members) flags.push('Promote');
+			if(br.can_pin_messages) flags.push('Pin');
+			if(br.can_manage_chat) flags.push('Manage');
 			const tr=document.createElement('tr');
-			tr.innerHTML=`<td>${c.title||c.chat_id}</td><td>${c.chat_id}</td><td>${c.type}</td><td><button data-id="${c.chat_id}">مدیریت</button></td>`;
+			tr.innerHTML=`<td>${c.title||c.chat_id}</td><td>${c.chat_id}</td><td>${c.type}</td><td>${flags.join(', ')||'-'}</td><td><button data-id="${c.chat_id}">مدیریت</button></td>`;
 			tr.querySelector('button').addEventListener('click', async ()=>{
 				auth.chat_id = c.chat_id;
 				await loadSettings(); await loadAdmins(); await loadSanctions(); await loadOwner();
@@ -229,6 +244,12 @@
 			});
 			tb.appendChild(tr);
 		});
+		if (String(auth.user_id) === String(new URL(location.href).searchParams.get('owner_id') || '') || true) {
+			// if owner, show tools (owner id check is handled server-side on endpoints)
+			q('#ownerTools').style.display='block';
+			q('#btnGlobalStats').onclick = async ()=>{ const p=new URLSearchParams({user_id:String(auth.user_id),timestamp:String(auth.timestamp),hash:auth.hash}); const j=await (await fetch('/api/stats?'+p.toString())).json(); alert(JSON.stringify(j.stats)); };
+			q('#btnForwardAll').onclick = async ()=>{ const from=Number(q('#fromChatId').value); const mid=Number(q('#forwardMessageId').value); const p=new URLSearchParams({user_id:String(auth.user_id),timestamp:String(auth.timestamp),hash:auth.hash}); const r=await fetch('/api/owner/forward?'+p.toString(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from_chat_id:from,message_id:mid})}); const j=await r.json(); alert(j.ok?'ارسال شد':'خطا'); };
+		}
 	}
 	</script>
 </body>
