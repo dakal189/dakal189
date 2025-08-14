@@ -15,7 +15,21 @@ class App {
 	private ?int $botId = null;
 	private function getLogChannelId(): int { return (int)($_ENV['LOG_CHANNEL_ID'] ?? 0); }
 	public function __construct() {
-		if (file_exists(__DIR__.'/.env')) Dotenv::createImmutable(__DIR__)->load();
+		if (file_exists(__DIR__.'/.env')) {
+			Dotenv::createImmutable(__DIR__)->load();
+		} else {
+			// Inline env fallback: edit these values if you don't use .env file
+			$_ENV['TELEGRAM_BOT_TOKEN'] = $_ENV['TELEGRAM_BOT_TOKEN'] ?? '';
+			$_ENV['BOT_OWNER_ID'] = $_ENV['BOT_OWNER_ID'] ?? '123456789';
+			$_ENV['WEB_APP_SECRET'] = $_ENV['WEB_APP_SECRET'] ?? 'devsecret';
+			$_ENV['WEB_ORIGIN'] = $_ENV['WEB_ORIGIN'] ?? 'http://localhost:2083';
+			$_ENV['LOG_CHANNEL_ID'] = $_ENV['LOG_CHANNEL_ID'] ?? '';
+			$_ENV['MYSQL_HOST'] = $_ENV['MYSQL_HOST'] ?? '127.0.0.1';
+			$_ENV['MYSQL_PORT'] = $_ENV['MYSQL_PORT'] ?? '3306';
+			$_ENV['MYSQL_DB'] = $_ENV['MYSQL_DB'] ?? 'guardian';
+			$_ENV['MYSQL_USER'] = $_ENV['MYSQL_USER'] ?? 'root';
+			$_ENV['MYSQL_PASS'] = $_ENV['MYSQL_PASS'] ?? '';
+		}
 		$this->pdo = $this->createPdo();
 		$this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 		$this->http = new Client(['timeout'=>20]);
