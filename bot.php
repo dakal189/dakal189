@@ -1891,7 +1891,9 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
         case 'disc_del':
             $id=(int)($params['id']??0); db()->prepare("DELETE FROM discount_codes WHERE id=?")->execute([$id]); answerCallback($_POST['callback_query']['id']??'','حذف شد'); handleAdminNav($chatId,$messageId,'disc_list',[],$userRow); break;
         case 'disc_edit':
-            $id=(int)($params['id']??0); setAdminState($chatId,'await_disc_edit',['id'=>$id]); sendMessage($chatId,'ویرایش (اختیاری هر خط): درصد|max_uses|per_user|YYYY-MM-DD HH:MM یا empty'); break;
+            $id=(int)($params['id']??0); setAdminState($chatId,'await_disc_edit',['id'=>$id]);
+            sendMessage($chatId,"ویرایش اختیاری در 4 خط (هر خط یکی از این موارد است؛ اگر نمی‌خواهید تغییر کند خالی بگذارید):\n1) درصد تخفیف (1 تا 100)\n2) سقف کل استفاده (0 = نامحدود)\n3) سقف هر کاربر (>=1)\n4) تاریخ انقضا (YYYY-MM-DD HH:MM) یا خالی");
+            break;
         case 'info_users':
             if (!hasPerm($chatId,'user_info') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
             $page=(int)($params['page']??1); $perPage=10; [$offset,$limit]=paginate($page,$perPage);
