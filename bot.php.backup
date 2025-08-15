@@ -245,11 +245,7 @@ $defaults = [
         ['shop','فروشگاه'],
         ['admin_panel','پنل مدیریت'],
     ];
-    foreach ($defaults as [$key,$title]) {
-        $stmt = $pdo->prepare("INSERT IGNORE INTO button_settings (`key`, title, enabled) VALUES (?, ?, 1)");
-        $stmt->execute([$key, $title]);
-    }
-    // Set default positions if empty
+    // Seed with default positions if not set
     $posMap = [
         'army' => [1,'left'],
         'missile' => [1,'center'],
@@ -263,7 +259,14 @@ $defaults = [
         'alliance' => [5,'left'],
         'admin_panel' => [99,'center']
     ];
-    foreach ($posMap as $k=>$v) { $pdo->prepare("UPDATE button_settings SET row_index=COALESCE(row_index,?), position=COALESCE(position,?) WHERE `key`=?")->execute([$v[0],$v[1],$k]); }
+    foreach ($defaults as [$key,$title]) {
+        $stmt = $pdo->prepare("INSERT IGNORE INTO button_settings (`key`, title, enabled) VALUES (?, ?, 1)");
+        $stmt->execute([$key, $title]);
+        if (isset($posMap[$key])) {
+            $p = $posMap[$key];
+            $pdo->prepare("UPDATE button_settings SET row_index=?, position=? WHERE `key`=? AND (row_index IS NULL OR position IS NULL)")->execute([$p[0], $p[1], $key]);
+        }
+    }
 
     // Wheel settings (single row)
     $pdo->exec("CREATE TABLE IF NOT EXISTS wheel_settings (
@@ -343,7 +346,6 @@ $defaults = [
         CONSTRAINT fk_ui_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
         CONSTRAINT fk_ui_item FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
     // Track packs purchased per user per item to enforce per_user_limit
     $pdo->exec("CREATE TABLE IF NOT EXISTS user_item_purchases (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -396,6 +398,7 @@ $defaults = [
         CONSTRAINT fk_ufg_uf FOREIGN KEY (user_factory_id) REFERENCES user_factories(id) ON DELETE CASCADE,
         CONSTRAINT fk_ufg_item FOREIGN KEY (chosen_item_id) REFERENCES shop_items(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
     $pdo->exec("CREATE TABLE IF NOT EXISTS alliance_invites (
         id INT AUTO_INCREMENT PRIMARY KEY,
         alliance_id INT NOT NULL,
@@ -692,7 +695,6 @@ function hasPerm(int $telegramId, string $perm): bool {
     if (in_array('all', $perms, true)) return true;
     return in_array($perm, $perms, true);
 }
-
 function userByTelegramId(int $telegramId): ?array {
     $stmt = db()->prepare("SELECT * FROM users WHERE telegram_id = ?");
     $stmt->execute([$telegramId]);
@@ -757,42 +759,69 @@ function isButtonEnabled(string $key): bool {
     return true;
 }
 
-function mainMenuKeyboard(bool $isRegistered, bool $isAdmin): array {
-    $btn = function($key, $cb) {
-        return ['text' => getInlineButtonTitle($key), 'callback_data' => $cb];
-    };
+function buildLayoutKeyboard(array $items, bool $threePerRow = true): array {
+    // items: each item = ['key'=>..., 'cb'=>..., 'row_index'=>int, 'position'=>'left|center|right']
+    // group by row_index and fill positions
     $rows = [];
+    foreach ($items as $it) {
+        $row = (int)($it['row_index'] ?? 0);
+        if (!isset($rows[$row])) $rows[$row] = ['left'=>null,'center'=>null,'right'=>null];
+        $pos = in_array($it['position'] ?? 'left', ['left','center','right'], true) ? $it['position'] : 'left';
+        if ($threePerRow) {
+            if ($rows[$row][$pos] === null) $rows[$row][$pos] = $it;
+            else {
+                // fallback put in first empty slot
+                foreach (['left','center','right'] as $p) { if ($rows[$row][$p]===null) { $rows[$row][$p]=$it; break; } }
+            }
+        } else {
+            if ($rows[$row]['left'] === null) $rows[$row]['left'] = $it; else $rows[$row][] = $it;
+        }
+    }
+    ksort($rows, SORT_NUMERIC);
+    $out = [];
+    foreach ($rows as $rowSlots) {
+        $line = [];
+        foreach (['left','center','right'] as $p) {
+            $it = $rowSlots[$p] ?? null; if (!$it) continue;
+            $line[] = ['text'=>getInlineButtonTitle($it['key']), 'callback_data'=>$it['cb']];
+        }
+        if ($line) $out[] = $line;
+    }
+    return ['inline_keyboard'=>$out];
+}
+function mainMenuKeyboard(bool $isRegistered, bool $isAdmin): array {
+    $items = [];
     if ($isRegistered) {
-        $line = [];
-        if (isButtonEnabled('army')) $line[] = $btn('army', 'nav:army');
-        if (isButtonEnabled('missile')) $line[] = $btn('missile', 'nav:missile');
-        if ($line) $rows[] = $line;
-        $line = [];
-        if (isButtonEnabled('defense')) $line[] = $btn('defense', 'nav:defense');
-        if (isButtonEnabled('roles')) $line[] = $btn('roles', 'nav:roles');
-        if ($line) $rows[] = $line;
-        $line = [];
-        if (isButtonEnabled('statement')) $line[] = $btn('statement', 'nav:statement');
-        if (isButtonEnabled('war')) $line[] = $btn('war', 'nav:war');
-        if ($line) $rows[] = $line;
-        $line = [];
-        if (isButtonEnabled('shop')) $line[] = $btn('shop', 'nav:shop');
-        if (isButtonEnabled('assets')) $line[] = $btn('assets', 'nav:assets');
-        if (isButtonEnabled('support')) $line[] = $btn('support', 'nav:support');
-        if ($line) $rows[] = $line;
-        $line = [];
-        if (isButtonEnabled('alliance')) $line[] = $btn('alliance', 'nav:alliance');
-        if ($line) $rows[] = $line;
+        $map = [
+            'army'=>'nav:army',
+            'missile'=>'nav:missile',
+            'defense'=>'nav:defense',
+            'roles'=>'nav:roles',
+            'statement'=>'nav:statement',
+            'war'=>'nav:war',
+            'shop'=>'nav:shop',
+            'assets'=>'nav:assets',
+            'support'=>'nav:support',
+            'alliance'=>'nav:alliance'
+        ];
+        $q = db()->query("SELECT `key`, row_index, position FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance','shop') AND enabled=1");
+        foreach ($q as $r) {
+            $k = $r['key']; if (!isset($map[$k])) continue; if (!isButtonEnabled($k)) continue;
+            $items[] = ['key'=>$k,'cb'=>$map[$k],'row_index'=>(int)($r['row_index']??0),'position'=>$r['position']??'left'];
+        }
     } else {
-        $line = [];
-        if (isButtonEnabled('support')) $line[] = $btn('support', 'nav:support');
-        $rows[] = $line;
+        if (isButtonEnabled('support')) {
+            $r = db()->query("SELECT row_index, position FROM button_settings WHERE `key`='support'")->fetch();
+            $items[] = ['key'=>'support','cb'=>'nav:support','row_index'=>(int)($r['row_index']??0),'position'=>$r['position']??'left'];
+        }
     }
     if ($isAdmin) {
-        $rows[] = [ ['text' => getInlineButtonTitle('admin_panel'), 'callback_data' => 'nav:admin'] ];
+        $r = db()->query("SELECT row_index, position FROM button_settings WHERE `key`='admin_panel'")->fetch();
+        $items[] = ['key'=>'admin_panel','cb'=>'nav:admin','row_index'=>(int)($r['row_index']??99),'position'=>$r['position']??'center'];
     }
-    return ['inline_keyboard' => $rows];
+    return buildLayoutKeyboard($items, true);
 }
+
 function backButton(string $to): array { return ['inline_keyboard' => [ [ ['text' => 'بازگشت', 'callback_data' => $to] ] ]]; }
 
 function usernameLink(?string $username, int $tgId): string {
@@ -959,7 +988,6 @@ function paginate(int $page, int $perPage): array {
     $offset = ($page - 1) * $perPage;
     return [$offset, $perPage];
 }
-
 function formatPrice(int $amount): string { return number_format($amount, 0, '.', ','); }
 
 function getCartTotalForUser(int $userId): int {
@@ -992,6 +1020,7 @@ function paginationKeyboard(string $baseCb, int $page, bool $hasMore, string $ba
     $buttons[] = [ ['text' => 'بازگشت', 'callback_data' => $backCb] ];
     return ['inline_keyboard' => $buttons];
 }
+
 function cbParse(string $data): array {
     // Format: action:route|k=v|k2=v2
     $parts = explode('|', $data);
@@ -1003,7 +1032,6 @@ function cbParse(string $data): array {
     }
     return [$action, $params];
 }
-
 // --------------------- CORE HANDLERS ---------------------
 
 function handleStart(array $userRow): void {
@@ -1017,7 +1045,6 @@ function handleStart(array $userRow): void {
     $text = $isRegistered ? 'به ربات خوش آمدید. از منو گزینه مورد نظر را انتخاب کنید.' : 'به ربات خوش آمدید. تا زمان ثبت شما توسط ادمین فقط می‌توانید با پشتیبانی در ارتباط باشید.';
     sendMessage($chatId, $text, mainMenuKeyboard($isRegistered, $isAdmin));
 }
-
 function handleNav(int $chatId, int $messageId, string $route, array $params, array $userRow): void {
     if ((int)$userRow['banned'] === 1) {
         editMessageText($chatId, $messageId, 'شما از ربات بن هستید.');
@@ -1120,27 +1147,54 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
             answerCallback($_POST['callback_query']['id'] ?? '', 'دستور ناشناخته', true);
     }
 }
-
 function renderAdminHome(int $chatId, int $messageId, array $userRow): void {
     $perms = getAdminPermissions($chatId);
-    $rows = [];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'support')) $rows[] = [ ['text' => 'پیام های پشتیبانی', 'callback_data' => 'admin:support|page=1'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'army') || hasPerm($chatId, 'missile') || hasPerm($chatId, 'defense')) $rows[] = [ ['text' => 'لشکر/موشکی/دفاع', 'callback_data' => 'admin:amd'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'statement') || hasPerm($chatId, 'war')) $rows[] = [ ['text' => 'اعلام جنگ / بیانیه', 'callback_data' => 'admin:sw'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'roles')) $rows[] = [ ['text' => 'رول ها', 'callback_data' => 'admin:roles|page=1'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'assets')) $rows[] = [ ['text' => 'دارایی ها', 'callback_data' => 'admin:assets'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'shop')) $rows[] = [ ['text' => 'فروشگاه', 'callback_data' => 'admin:shop'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'settings')) $rows[] = [ ['text' => 'تنظیمات دکمه ها', 'callback_data' => 'admin:buttons'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'users')) $rows[] = [ ['text' => 'کاربران ثبت شده', 'callback_data' => 'admin:users'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'bans')) $rows[] = [ ['text' => 'مدیریت بن', 'callback_data' => 'admin:bans'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'wheel')) $rows[] = [ ['text' => 'گردونه شانس', 'callback_data' => 'admin:wheel'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'alliances')) $rows[] = [ ['text' => 'مدیریت اتحادها', 'callback_data' => 'admin:alliances|page=1'] ];
-    if (isOwner($chatId)) $rows[] = [ ['text' => 'مدیریت ادمین ها', 'callback_data' => 'admin:admins'] ];
-    $rows[] = [ ['text' => 'بازگشت', 'callback_data' => 'nav:home'] ];
-    editMessageText($chatId, $messageId, 'پنل مدیریت', ['inline_keyboard' => $rows]);
+    $items = [];
+    // Map admin sections to keys for layout persistence; store in button_settings as admin_* keys
+    $map = [
+        'admin_support' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'support');}, 'title'=>'پیام های پشتیبانی', 'cb'=>'admin:support|page=1'],
+        'admin_amd' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'army')||hasPerm($chatId,'missile')||hasPerm($chatId,'defense');}, 'title'=>'لشکر/موشکی/دفاع', 'cb'=>'admin:amd'],
+        'admin_sw' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'statement')||hasPerm($chatId,'war');}, 'title'=>'اعلام جنگ / بیانیه', 'cb'=>'admin:sw'],
+        'admin_roles' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'roles');}, 'title'=>'رول ها', 'cb'=>'admin:roles|page=1'],
+        'admin_assets' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'assets');}, 'title'=>'دارایی ها', 'cb'=>'admin:assets'],
+        'admin_shop' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'shop');}, 'title'=>'فروشگاه', 'cb'=>'admin:shop'],
+        'admin_buttons' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'settings');}, 'title'=>'تنظیمات دکمه ها', 'cb'=>'admin:buttons'],
+        'admin_users' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'users');}, 'title'=>'کاربران ثبت شده', 'cb'=>'admin:users'],
+        'admin_bans' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'bans');}, 'title'=>'مدیریت بن', 'cb'=>'admin:bans'],
+        'admin_wheel' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'wheel');}, 'title'=>'گردونه شانس', 'cb'=>'admin:wheel'],
+        'admin_alliances' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'alliances');}, 'title'=>'مدیریت اتحادها', 'cb'=>'admin:alliances|page=1'],
+        'admin_admins' => ['perm'=>function() use($chatId){return isOwner($chatId);}, 'title'=>'مدیریت ادمین ها', 'cb'=>'admin:admins'],
+        'admin_back' => ['perm'=>function(){return true;}, 'title'=>'بازگشت', 'cb'=>'nav:home']
+    ];
+    // Ensure admin_* keys exist in button_settings with defaults
+    foreach ($map as $k=>$cfg){
+        db()->prepare("INSERT IGNORE INTO button_settings (`key`, title, enabled) VALUES (?, ?, 1)")->execute([$k, $cfg['title']]);
+    }
+    // Default positions for admin keys if empty
+    $adminPos = [
+        'admin_support'=>[1,'left'],
+        'admin_amd'=>[1,'center'],
+        'admin_sw'=>[1,'right'],
+        'admin_roles'=>[2,'left'],
+        'admin_assets'=>[2,'center'],
+        'admin_shop'=>[2,'right'],
+        'admin_buttons'=>[3,'left'],
+        'admin_users'=>[3,'center'],
+        'admin_bans'=>[3,'right'],
+        'admin_wheel'=>[4,'left'],
+        'admin_alliances'=>[4,'center'],
+        'admin_admins'=>[5,'left'],
+        'admin_back'=>[99,'center']
+    ];
+    foreach ($adminPos as $k=>$v){ db()->prepare("UPDATE button_settings SET row_index=COALESCE(row_index,?), position=COALESCE(position,?) WHERE `key`=?")->execute([$v[0],$v[1],$k]); }
+    $q = db()->query("SELECT `key`, row_index, position, enabled FROM button_settings WHERE `key` LIKE 'admin_%'");
+    foreach ($q as $r){ $k=$r['key']; if (!isset($map[$k])) continue; $perm = $map[$k]['perm']; if (!$perm()) continue; if ((int)$r['enabled']!==1) continue; $items[]=['key'=>$k,'cb'=>$map[$k]['cb'],'row_index'=>(int)($r['row_index']??0),'position'=>$r['position']??'left']; }
+    $kb = buildLayoutKeyboard($items, true);
+    editMessageText($chatId, $messageId, 'پنل مدیریت', $kb);
 }
 
 // --------------------- ADMIN SECTIONS ---------------------
+
 function handleAdminNav(int $chatId, int $messageId, string $route, array $params, array $userRow): void {
     // cancel ongoing admin state upon any admin navigation
     clearAdminState($chatId);
@@ -1200,59 +1254,22 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             answerCallback($_POST['callback_query']['id'] ?? '', '');
             break;
         case 'buttons':
-            $rows = db()->query("SELECT `key`, title, enabled FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance','shop','admin_panel') ORDER BY id ASC")->fetchAll();
-            $kb=[]; foreach($rows as $r){ $txt = ($r['enabled']? 'روشن':'خاموش').' - '.$r['title']; $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']], ['text'=>'زمان‌بندی','callback_data'=>'admin:btn_sched|key='.$r['key']], ['text'=>'تغییر جایگاه','callback_data'=>'admin:btn_posmenu|key='.$r['key'].'|back=buttons'], ['text'=>'اسم دکمه','copy_text'=>['text'=>$r['title']]] ]; }
+            $rows = db()->query("SELECT `key`, title, enabled, COALESCE(row_index,0) AS row_index, COALESCE(position,'left') AS position FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance','shop','admin_panel') ORDER BY id ASC")->fetchAll();
+            $kb=[]; foreach($rows as $r){ 
+                $txt = ($r['enabled']? 'روشن':'خاموش').' - '.$r['title'].' | ردیف: '.(int)$r['row_index'].' | جایگاه: '.($r['position']);
+                $kb[] = [
+                    ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']],
+                    ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']],
+                    ['text'=>'زمان‌بندی','callback_data'=>'admin:btn_sched|key='.$r['key']],
+                    ['text'=>'تغییر جایگاه','callback_data'=>'admin:btn_posmenu|key='.$r['key'].'|back=buttons'],
+                    ['text'=>'اسم دکمه','copy_text'=>['text'=>$r['title']]]
+                ];
+            }
             $kb[]=[ ['text'=>'دکمه‌های پنل مدیریت','callback_data'=>'admin:btn_admin'] ];
             $kb[]=[ ['text'=>'حالت نگهداری','callback_data'=>'admin:maint'] ];
             $kb[]=[ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ];
             editMessageText($chatId,$messageId,'تنظیمات دکمه ها',['inline_keyboard'=>$kb]);
-            sendGuide($chatId,'راهنما: تغییر نام، زمان‌بندی، تغییر جایگاه (ردیف/چپ-وسط-راست) و کپی اسم دکمه.');
-            break;
-        case 'btn_admin':
-            $rows = db()->query("SELECT `key`, title FROM button_settings WHERE `key` LIKE 'admin_%' ORDER BY id ASC")->fetchAll();
-            $kb=[]; foreach($rows as $r){ $txt = $r['title']; $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']], ['text'=>'تغییر جایگاه','callback_data'=>'admin:btn_posmenu|key='.$r['key'].'|back=btn_admin'], ['text'=>'اسم دکمه','copy_text'=>['text'=>$r['title']]] ]; }
-            $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:buttons'] ];
-            editMessageText($chatId,$messageId,'دکمه‌های پنل مدیریت',['inline_keyboard'=>$kb]);
-            break;
-        case 'btn_posmenu':
-            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
-            $back = $params['back'] ?? 'buttons';
-            $q = db()->prepare("SELECT title, COALESCE(row_index,0) AS row_index, COALESCE(position,'left') AS position FROM button_settings WHERE `key`=?");
-            $q->execute([$key]); $row=$q->fetch(); if(!$row){ answerCallback($_POST['callback_query']['id']??'','یافت نشد',true); return; }
-            $txt = 'تغییر جایگاه: '.($row['title'])."\n".'ردیف: '.(int)$row['row_index'].' | جایگاه: '.($row['position']);
-            $kb = [
-                [ ['text'=>'ردیف -','callback_data'=>'admin:btn_rowdec|key='.$key.'|back='.$back], ['text'=>'ردیف +','callback_data'=>'admin:btn_rowinc|key='.$key.'|back='.$back], ['text'=>'تنظیم ردیف','callback_data'=>'admin:btn_rowset|key='.$key.'|back='.$back] ],
-                [ ['text'=>'چپ','callback_data'=>'admin:btn_pos|key='.$key.'|pos=left|back='.$back], ['text'=>'وسط','callback_data'=>'admin:btn_pos|key='.$key.'|pos=center|back='.$back], ['text'=>'راست','callback_data'=>'admin:btn_pos|key='.$key.'|pos=right|back='.$back] ],
-                [ ['text'=>'بازگشت','callback_data'=>'admin:'.($back==='btn_admin'?'btn_admin':'buttons')] ]
-            ];
-            editMessageText($chatId,$messageId,$txt,['inline_keyboard'=>$kb]);
-            break;
-        case 'btn_rowinc':
-            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
-            $back = $params['back'] ?? '';
-            db()->prepare("UPDATE button_settings SET row_index = COALESCE(row_index,0) + 1 WHERE `key`=?")->execute([$key]);
-            if ($back) { handleAdminNav($chatId,$messageId,'btn_posmenu',['key'=>$key,'back'=>$back],$userRow); }
-            else { handleAdminNav($chatId,$messageId,'buttons',[],$userRow); }
-            break;
-        case 'btn_rowdec':
-            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
-            $back = $params['back'] ?? '';
-            db()->prepare("UPDATE button_settings SET row_index = GREATEST(COALESCE(row_index,0) - 1, 0) WHERE `key`=?")->execute([$key]);
-            if ($back) { handleAdminNav($chatId,$messageId,'btn_posmenu',['key'=>$key,'back'=>$back],$userRow); }
-            else { handleAdminNav($chatId,$messageId,'buttons',[],$userRow); }
-            break;
-        case 'btn_rowset':
-            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
-            setAdminState($chatId,'await_btn_row',['key'=>$key,'back'=>($params['back']??'')]);
-            answerCallback($_POST['callback_query']['id'] ?? '', 'ردیف جدید را ارسال کنید');
-            sendMessage($chatId,'ردیف جدید را ارسال کنید (عدد بین 1 تا 50)');
-            break;
-        case 'btn_pos':
-            $key=$params['key']??''; $pos=$params['pos']??''; if(!$key||!in_array($pos,['left','center','right'],true)){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
-            $back = $params['back'] ?? '';
-            db()->prepare("UPDATE button_settings SET position=? WHERE `key`=?")->execute([$pos,$key]);
-            if ($back) { handleAdminNav($chatId,$messageId,'btn_posmenu',['key'=>$key,'back'=>$back],$userRow); }
-            else { handleAdminNav($chatId,$messageId,'buttons',[],$userRow); }
+            sendGuide($chatId,'راهنما: می‌توانید روشن/خاموش کنید، نام را تغییر دهید، زمان‌بندی بگذارید، و ردیف و جایگاه (چپ/وسط/راست) هر دکمه را تنظیم کنید. هر ردیف حداکثر ۳ جایگاه دارد.');
             break;
         case 'maint':
             $on = isMaintenanceEnabled();
@@ -1475,7 +1492,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $u = db()->prepare("SELECT username, telegram_id, country, assets_text, money, daily_profit FROM users WHERE id=?"); $u->execute([$uid]); $ur=$u->fetch(); if(!$ur){ answerCallback($_POST['callback_query']['id']??'','کاربر یافت نشد',true); return; }
             $hdr = 'کاربر: '.($ur['username']?'@'.$ur['username']:$ur['telegram_id'])."\nکشور: ".($ur['country']?:'—')."\nپول: ".$ur['money']." | سود روزانه: ".$ur['daily_profit'];
             $text = $ur['assets_text'] ?: '—';
-            $kb=[ [ ['text'=>'تغییر دارایی متنی','callback_data'=>'admin:asset_user_edit|id='.$uid.'|page='.$page), ['text'=>'کپی دارایی','copy_text'=>['text'=>$text]] ], [ ['text'=>'بازگشت','callback_data'=>'admin:assets|page='.$page] ] ];
+            $kb=[ [ ['text'=>'تغییر دارایی متنی','callback_data'=>'admin:asset_user_edit|id='.$uid.'|page='.$page], ['text'=>'کپی دارایی','copy_text'=>['text'=>$text]] ], [ ['text'=>'بازگشت','callback_data'=>'admin:assets|page='.$page] ] ];
             if (!empty($messageId)) { @deleteMessage($chatId,$messageId); }
             $body = $hdr."\n\n".e($text);
             $resp = sendMessage($chatId, $body, ['inline_keyboard'=>$kb]);
@@ -1487,6 +1504,124 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             // Clean previous combined asset message so only prompt remains
             $mm = getSetting('asset_msg_'.$chatId); if ($mm) { @deleteMessage($chatId, (int)$mm); setSetting('asset_msg_'.$chatId,''); }
             sendMessage($chatId,'متن جدید دارایی کاربر را ارسال کنید.');
+            break;
+        case 'buttons':
+            $rows = db()->query("SELECT `key`, title, enabled, COALESCE(row_index,0) AS row_index, COALESCE(position,'left') AS position FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance','shop','admin_panel') ORDER BY id ASC")->fetchAll();
+            $kb=[]; foreach($rows as $r){ 
+                $txt = ($r['enabled']? 'روشن':'خاموش').' - '.$r['title'].' | ردیف: '.(int)$r['row_index'].' | جایگاه: '.($r['position']);
+                $kb[] = [
+                    ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']],
+                    ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']],
+                    ['text'=>'زمان‌بندی','callback_data'=>'admin:btn_sched|key='.$r['key']],
+                    ['text'=>'تغییر جایگاه','callback_data'=>'admin:btn_posmenu|key='.$r['key'].'|back=buttons'],
+                    ['text'=>'اسم دکمه','copy_text'=>['text'=>$r['title']]]
+                ];
+            }
+            $kb[]=[ ['text'=>'دکمه‌های پنل مدیریت','callback_data'=>'admin:btn_admin'] ];
+            $kb[]=[ ['text'=>'حالت نگهداری','callback_data'=>'admin:maint'] ];
+            $kb[]=[ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ];
+            editMessageText($chatId,$messageId,'تنظیمات دکمه ها',['inline_keyboard'=>$kb]);
+            break;
+        case 'btn_toggle':
+            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            db()->prepare("UPDATE button_settings SET enabled = 1 - enabled WHERE `key`=?")->execute([$key]);
+            handleAdminNav($chatId,$messageId,'buttons',[],$userRow);
+            break;
+        case 'btn_rowinc':
+            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            $back = $params['back'] ?? '';
+            db()->prepare("UPDATE button_settings SET row_index = COALESCE(row_index,0) + 1 WHERE `key`=?")->execute([$key]);
+            if ($back) { handleAdminNav($chatId,$messageId,'btn_posmenu',['key'=>$key,'back'=>$back],$userRow); }
+            else { handleAdminNav($chatId,$messageId,'buttons',[],$userRow); }
+            break;
+        case 'btn_rowdec':
+            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            $back = $params['back'] ?? '';
+            db()->prepare("UPDATE button_settings SET row_index = GREATEST(COALESCE(row_index,0) - 1, 0) WHERE `key`=?")->execute([$key]);
+            if ($back) { handleAdminNav($chatId,$messageId,'btn_posmenu',['key'=>$key,'back'=>$back],$userRow); }
+            else { handleAdminNav($chatId,$messageId,'buttons',[],$userRow); }
+            break;
+        case 'btn_rowset':
+            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            setAdminState($chatId,'await_btn_row',['key'=>$key,'back'=>($params['back']??'')]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'ردیف جدید را ارسال کنید');
+            sendMessage($chatId,'ردیف جدید را ارسال کنید (عدد بین 1 تا 50)');
+            break;
+        case 'btn_pos':
+            $key=$params['key']??''; $pos=$params['pos']??''; if(!$key||!in_array($pos,['left','center','right'],true)){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            $back = $params['back'] ?? '';
+            db()->prepare("UPDATE button_settings SET position=? WHERE `key`=?")->execute([$pos,$key]);
+            if ($back) { handleAdminNav($chatId,$messageId,'btn_posmenu',['key'=>$key,'back'=>$back],$userRow); }
+            else { handleAdminNav($chatId,$messageId,'buttons',[],$userRow); }
+            break;
+        case 'btn_admin':
+            // Allow editing layout for admin_* keys
+            $rows = db()->query("SELECT `key`, title, COALESCE(row_index,0) AS row_index, COALESCE(position,'left') AS position FROM button_settings WHERE `key` LIKE 'admin_%' ORDER BY id ASC")->fetchAll();
+            $kb=[]; foreach($rows as $r){ 
+                $txt = $r['title'].' | ردیف: '.(int)$r['row_index'].' | جایگاه: '.($r['position']);
+                $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']], ['text'=>'تغییر جایگاه','callback_data'=>'admin:btn_posmenu|key='.$r['key'].'|back=btn_admin'], ['text'=>'اسم دکمه','copy_text'=>['text'=>$r['title']]] ];
+            }
+            $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:buttons'] ];
+            editMessageText($chatId,$messageId,'دکمه‌های پنل مدیریت',['inline_keyboard'=>$kb]);
+            break;
+        case 'btn_posmenu':
+            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            $back = $params['back'] ?? 'buttons';
+            $q = db()->prepare("SELECT title, COALESCE(row_index,0) AS row_index, COALESCE(position,'left') AS position FROM button_settings WHERE `key`=?");
+            $q->execute([$key]); $row=$q->fetch(); if(!$row){ answerCallback($_POST['callback_query']['id']??'','یافت نشد',true); return; }
+            $txt = 'تغییر جایگاه: '.($row['title'])."\n".'ردیف: '.(int)$row['row_index'].' | جایگاه: '.($row['position']);
+            $kb = [
+                [ ['text'=>'ردیف -','callback_data'=>'admin:btn_rowdec|key='.$key.'|back='.$back], ['text'=>'ردیف +','callback_data'=>'admin:btn_rowinc|key='.$key.'|back='.$back], ['text'=>'تنظیم ردیف','callback_data'=>'admin:btn_rowset|key='.$key.'|back='.$back] ],
+                [ ['text'=>'چپ','callback_data'=>'admin:btn_pos|key='.$key.'|pos=left|back='.$back], ['text'=>'وسط','callback_data'=>'admin:btn_pos|key='.$key.'|pos=center|back='.$back], ['text'=>'راست','callback_data'=>'admin:btn_pos|key='.$key.'|pos=right|back='.$back] ],
+                [ ['text'=>'بازگشت','callback_data'=>'admin:'.($back==='btn_admin'?'btn_admin':'buttons')] ]
+            ];
+            editMessageText($chatId,$messageId,$txt,['inline_keyboard'=>$kb]);
+            break;
+        case 'btn_rename':
+            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            setAdminState($chatId,'await_btn_rename',['key'=>$key]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'نام جدید دکمه را ارسال کنید');
+            break;
+        case 'btn_sched':
+            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            // fetch current
+            $r = db()->prepare("SELECT days,time_start,time_end,COALESCE(row_index,0) AS row_index,COALESCE(position,'left') AS position FROM button_settings WHERE `key`=?"); $r->execute([$key]); $row=$r->fetch();
+            $days = $row && $row['days'] ? $row['days'] : 'all';
+            $t1 = $row && $row['time_start'] ? $row['time_start'] : '00:00';
+            $t2 = $row && $row['time_end'] ? $row['time_end'] : '00:00';
+            $txt = "زمان‌بندی دکمه: ".$key."\nروزها: ".$days."\nبازه ساعت: ".$t1." تا ".$t2."\nردیف: ".((int)($row['row_index']??0))." | جایگاه: ".($row['position']??'left')."\n\n- روزها: یکی از all یا ترکیب حروف: su,mo,tu,we,th,fr,sa (مثلاً mo,we,fr)\n- ساعت: فرم HH:MM. اگر 00:00 تا 00:00 باشد یعنی همیشه روشن";
+            $kb=[ [ ['text'=>'تنظیم روزها','callback_data'=>'admin:btn_sched_days|key='.$key], ['text'=>'تنظیم ساعت','callback_data'=>'admin:btn_sched_time|key='.$key] ], [ ['text'=>'ردیف -','callback_data'=>'admin:btn_rowdec|key='.$key], ['text'=>'ردیف +','callback_data'=>'admin:btn_rowinc|key='.$key] ], [ ['text'=>'چپ','callback_data'=>'admin:btn_pos|key='.$key.'|pos=left'], ['text'=>'وسط','callback_data'=>'admin:btn_pos|key='.$key.'|pos=center'], ['text'=>'راست','callback_data'=>'admin:btn_pos|key='.$key.'|pos=right'] ], [ ['text'=>'بازگشت','callback_data'=>'admin:buttons'] ] ];
+            editMessageText($chatId,$messageId,$txt,['inline_keyboard'=>$kb]);
+            break;
+        case 'btn_sched_days':
+            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            setAdminState($chatId,'await_btn_days',['key'=>$key]);
+            sendMessage($chatId,'روزها را ارسال کنید: all یا مثل: mo,tu,we (حروف کوچک، با کاما)');
+            break;
+        case 'btn_sched_time':
+            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            setAdminState($chatId,'await_btn_time',['key'=>$key]);
+            sendMessage($chatId,'بازه ساعت را ارسال کنید به فرم HH:MM-HH:MM (مثلاً 09:00-22:00). برای همیشه 00:00-00:00 بفرستید.');
+            break;
+        case 'users':
+            $kb=[ [ ['text'=>'ثبت کاربر','callback_data'=>'admin:user_register'] , ['text'=>'لیست کاربران','callback_data'=>'admin:user_list|page=1'] ], [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ] ];
+            editMessageText($chatId,$messageId,'مدیریت کاربران',['inline_keyboard'=>$kb]);
+            break;
+        case 'user_register':
+            setAdminState($chatId,'await_user_ident',[]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'آیدی عددی یا پیام فوروارد شده کاربر را ارسال کنید');
+            sendMessage($chatId,'آیدی عددی یا پیام فوروارد کاربر را ارسال کنید تا ثبت شود. سپس نام کشور را بفرستید.');
+            break;
+        case 'user_list':
+            $page=(int)($params['page']??1); $perPage=10; [$offset,$limit]=paginate($page,$perPage);
+            $total = db()->query("SELECT COUNT(*) c FROM users WHERE is_registered=1")->fetch()['c']??0;
+            $stmt = db()->prepare("SELECT id, telegram_id, username, country FROM users WHERE is_registered=1 ORDER BY country ASC, id ASC LIMIT ?,?");
+            $stmt->bindValue(1,$offset,PDO::PARAM_INT); $stmt->bindValue(2,$limit,PDO::PARAM_INT); $stmt->execute(); $rows=$stmt->fetchAll();
+            $kbRows=[]; foreach($rows as $r){ $label = e($r['country']).' | '.($r['username']?'@'.$r['username']:$r['telegram_id']); $kbRows[]=[ ['text'=>$label, 'callback_data'=>'admin:user_view|id='.$r['id'].'|page='.$page] ]; }
+            $hasMore = ($offset + count($rows)) < $total;
+            $kb = array_merge($kbRows, paginationKeyboard('admin:user_list', $page, $hasMore, 'admin:users')['inline_keyboard']);
+            $kb = widenKeyboard(['inline_keyboard'=>$kb]);
+            editMessageText($chatId,$messageId,'کاربران ثبت شده',['inline_keyboard'=>$kb['inline_keyboard']]);
             break;
         case 'bans':
             if (!hasPerm($chatId,'bans') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
@@ -1925,7 +2060,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 '',
                 'تعداد پیام‌ها:',
                 'پشتیبانی: ' . ((int)(db()->prepare("SELECT COUNT(*) c FROM support_messages WHERE user_id=?")->execute([$id]) || true) ? (int)(db()->query("SELECT COUNT(*) c FROM support_messages WHERE user_id={$id}")->fetch()['c']??0) : 0),
-                'رول    : '.($map['role']??0), 'حمله موشکی: '.($map['missile']??0), 'دفاع: '.($map['defense']??0), 'بیانیه: '.($map['statement']??0), 'اعلام جنگ: '.($map['war']??0), 'لشکرکشی: '.($map['army']??0)
+                'رول: '.($map['role']??0), 'حمله موشکی: '.($map['missile']??0), 'دفاع: '.($map['defense']??0), 'بیانیه: '.($map['statement']??0), 'اعلام جنگ: '.($map['war']??0), 'لشکرکشی: '.($map['army']??0)
             ];
             $kb = [
                 [ ['text'=>'پیام‌های پشتیبانی','callback_data'=>'admin:info_user_msgs|id='.$id.'|cat=support|page=1'] ],
@@ -1995,7 +2130,6 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             sendMessage($chatId,'حالت ناشناخته'); clearAdminState($chatId);
     }
 }
-
 function renderAdminPermsEditor(int $chatId, int $messageId, int $adminTid): void {
     $row = db()->prepare("SELECT is_owner, permissions FROM admin_users WHERE admin_telegram_id=?");
     $row->execute([$adminTid]); $r=$row->fetch(); if(!$r){ editMessageText($chatId,$messageId,'ادمین پیدا نشد', backButton('admin:admins')); return; }
@@ -2072,6 +2206,7 @@ function renderAllianceView(int $chatId, int $messageId, int $allianceId, bool $
         editMessageText($chatId,$messageId,$text,$kb);
     }
 }
+
 function handleAllianceNav(int $chatId, int $messageId, string $route, array $params, array $userRow): void {
     clearHeaderPhoto($chatId, $messageId);
     switch ($route) {
@@ -2153,7 +2288,6 @@ function leaveAlliance(int $tgId, int $allianceId, int $messageId): void {
     db()->prepare("DELETE FROM alliance_members WHERE alliance_id=? AND user_id=?")->execute([$allianceId, (int)$u['id']]);
     editMessageText($tgId,$messageId,'از اتحاد خارج شدید', backButton('nav:home'));
 }
-
 // --------------------- MESSAGE PROCESSING ---------------------
 
 function processUserMessage(array $message): void {
@@ -2209,7 +2343,6 @@ function processUserMessage(array $message): void {
     // Default: show menu
     handleStart($u);
 }
-
 function handleAdminStateMessage(array $userRow, array $message, array $state): void {
     $chatId = (int)$userRow['telegram_id'];
     $key = $state['key']; $data = $state['data'];
@@ -2367,7 +2500,7 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             db()->prepare("INSERT IGNORE INTO admin_users (admin_telegram_id, is_owner, permissions) VALUES (?, 0, ?)")->execute([$tgid, json_encode([])]);
             // Confirm info
             $u = ensureUser(['id'=>$tgid]);
-            $info = 'ادمین جدید ثبت شد:\n'
+            $info = 'ادمین جدید ثبت شد:'."\n"
                   . 'یوزرنیم: ' . ($u['username']?'@'.$u['username']:'—') . "\n"
                   . 'ID: ' . $u['telegram_id'] . "\n"
                   . 'نام: ' . trim(($u['first_name']?:'').' '.($u['last_name']?:'')) . "\n"
@@ -2547,60 +2680,6 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             setAdminState($chatId,'await_shop_item_fields',['cid'=>$cid,'name'=>$name]);
             sendMessage($chatId,'به ترتیب در خطوط جدا قیمت واحد، اندازه بسته، محدودیت هر کاربر (۰=بی‌نهایت)، سود روزانه هر بسته را ارسال کنید.');
             break;
-        case 'await_shop_item_fields':
-            $cid=(int)$data['cid']; $name=$data['name'];
-            $lines = preg_split('/\n+/', (string)$text);
-            if (count($lines) < 4) { sendMessage($chatId,'فرمت نامعتبر. ۴ خط لازم است.'); return; }
-            $price = (int)preg_replace('/\D+/','',$lines[0]);
-            $pack = max(1,(int)preg_replace('/\D+/','',$lines[1]));
-            $limit = (int)preg_replace('/\D+/','',$lines[2]);
-            $profit = (int)preg_replace('/\D+/','',$lines[3]);
-            db()->prepare("INSERT INTO shop_items (category_id,name,unit_price,pack_size,per_user_limit,daily_profit_per_pack) VALUES (?,?,?,?,?,?)")
-              ->execute([$cid,$name,$price,$pack,$limit,$profit]);
-            sendMessage($chatId,'آیتم اضافه شد.'); clearAdminState($chatId);
-            break;
-        case 'await_factory_name':
-            $name = trim((string)$text); if($name===''){ sendMessage($chatId,'نام نامعتبر'); return; }
-            setAdminState($chatId,'await_factory_prices',['name'=>$name]);
-            sendMessage($chatId,'قیمت لول ۱ و سپس لول ۲ را در دو خط بفرستید.');
-            break;
-        case 'await_factory_prices':
-            $name = (string)$data['name'];
-            $parts = preg_split('/\n+/', (string)$text);
-            if (count($parts) < 2) { sendMessage($chatId,'دو عدد در دو خط ارسال کنید.'); return; }
-            $p1 = (int)preg_replace('/\D+/','',$parts[0]);
-            $p2 = (int)preg_replace('/\D+/','',$parts[1]);
-            db()->prepare("INSERT INTO factories (name, price_l1, price_l2) VALUES (?,?,?)")->execute([$name,$p1,$p2]);
-            $fid = (int)db()->lastInsertId();
-            sendMessage($chatId,'کارخانه ثبت شد. حالا می‌توانید محصول اضافه کنید.');
-            clearAdminState($chatId);
-            // show view
-            $fakeMsgId = $message['message_id'] ?? 0;
-            handleAdminNav($chatId, $fakeMsgId, 'shop_factory_view', ['id'=>$fid], ['telegram_id'=>$chatId]);
-            break;
-        case 'await_factory_prod_qty':
-            $fid=(int)$data['fid']; $item=(int)$data['item'];
-            $parts = preg_split('/\n+/', (string)$text);
-            if (count($parts) < 2) { sendMessage($chatId,'دو عدد در دو خط ارسال کنید.'); return; }
-            $q1 = (int)preg_replace('/\D+/','',$parts[0]); $q2 = (int)preg_replace('/\D+/','',$parts[1]);
-            db()->prepare("INSERT INTO factory_products (factory_id,item_id,qty_l1,qty_l2) VALUES (?,?,?,?)")
-              ->execute([$fid,$item,$q1,$q2]);
-            sendMessage($chatId,'محصول اضافه شد.');
-            clearAdminState($chatId);
-            break;
-        case 'await_user_item_set':
-            $id=(int)$data['id']; $item=(int)$data['item']; $page=(int)($data['page']??1);
-            $valRaw = trim((string)($text ?: ($message['caption'] ?? '')));
-            if ($valRaw === '') { sendMessage($chatId,'یک عدد ارسال کنید.'); return; }
-            $val = (int)preg_replace('/\D+/', '', $valRaw);
-            // allow zero to clear
-            db()->prepare("INSERT INTO user_items (user_id,item_id,quantity) VALUES (?,?,0) ON DUPLICATE KEY UPDATE quantity=VALUES(quantity)")->execute([$id,$item]);
-            db()->prepare("UPDATE user_items SET quantity=? WHERE user_id=? AND item_id=?")->execute([$val,$id,$item]);
-            sendMessage($chatId,'مقدار آیتم تنظیم شد: '.$val);
-            clearAdminState($chatId);
-            // refresh list
-            handleAdminNav($chatId, $message['message_id'] ?? 0, 'user_items', ['id'=>$id,'page'=>$page], ['telegram_id'=>$chatId]);
-            break;
         case 'await_btn_row':
             $key = $data['key'] ?? '';
             $back = $data['back'] ?? '';
@@ -2610,139 +2689,6 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             clearAdminState($chatId);
             if ($back) { handleAdminNav($chatId, $message['message_id'] ?? 0, 'btn_posmenu', ['key'=>$key,'back'=>$back], ['telegram_id'=>$chatId]); }
             else { sendMessage($chatId,'ردیف تنظیم شد.'); }
-            break;
-        default:
-            sendMessage($chatId,'حالت ناشناخته'); clearAdminState($chatId);
-    }
-}
-
-function extractTelegramIdFromMessage(array $message): ?int {
-    if (!empty($message['text']) && preg_match('/\d{5,}/', $message['text'], $m)) {
-        return (int)$m[0];
-    }
-    if (!empty($message['forward_from']['id'])) {
-        return (int)$message['forward_from']['id'];
-    }
-    if (!empty($message['forward_sender_name'])) {
-        // cannot resolve id from hidden forwards
-        return null;
-    }
-    return null;
-}
-function handleUserStateMessage(array $userRow, array $message, array $state): void {
-    $chatId = (int)$userRow['telegram_id'];
-    $key = $state['key']; $data=$state['data'];
-    $text = $message['text'] ?? null;
-    $photo = null; $caption = $message['caption'] ?? null;
-    if (!empty($message['photo'])) {
-        $photos = $message['photo'];
-        $largest = end($photos);
-        $photo = $largest['file_id'] ?? null;
-    }
-
-    // cooldown helpers
-    $u = userByTelegramId($chatId);
-    $userId = (int)$u['id'];
-    $hasRecentSupport = function(int $uid): bool {
-        $stmt = db()->prepare("SELECT COUNT(*) c FROM support_messages WHERE user_id=? AND created_at >= (NOW() - INTERVAL 30 SECOND)"); $stmt->execute([$uid]);
-        return ((int)($stmt->fetch()['c']??0))>0;
-    };
-    $hasRecentSubmission = function(int $uid): bool {
-        $stmt = db()->prepare("SELECT COUNT(*) c FROM submissions WHERE user_id=? AND created_at >= (NOW() - INTERVAL 30 SECOND)"); $stmt->execute([$uid]);
-        return ((int)($stmt->fetch()['c']??0))>0;
-    };
-
-    switch ($key) {
-        case 'await_disc_code':
-            $code = trim((string)($text ?: ($caption ?? '')));
-            if ($code===''){ sendMessage($chatId,'کد را وارد کنید.'); return; }
-            $row = db()->prepare("SELECT * FROM discount_codes WHERE code=? AND disabled=0"); $row->execute([$code]); $dc=$row->fetch();
-            if (!$dc) { sendMessage($chatId,'کد نامعتبر است.'); clearUserState($chatId); return; }
-            if (!empty($dc['expires_at']) && (new DateTime($dc['expires_at'])) < new DateTime('now')) { sendMessage($chatId,'کد منقضی شده است.'); clearUserState($chatId); return; }
-            if ((int)$dc['max_uses']>0 && (int)$dc['used_count'] >= (int)$dc['max_uses']) { sendMessage($chatId,'سقف مصرف کد تکمیل است.'); clearUserState($chatId); return; }
-            $cnt = db()->prepare("SELECT COUNT(*) c FROM discount_usages WHERE code_id=? AND user_id=?"); $cnt->execute([(int)$dc['id'], (int)$userId]); $uc=(int)($cnt->fetch()['c']??0);
-            if ($uc >= (int)$dc['per_user_limit']) { sendMessage($chatId,'سهمیه شما برای این کد تمام شده است.'); clearUserState($chatId); return; }
-            setSetting('cart_disc_'.(int)$userId, (string)((int)$dc['percent']));
-            setSetting('cart_disc_code_'.(int)$userId, (string)((int)$dc['id']));
-            clearUserState($chatId);
-            // refresh cart inline if possible
-            $rows = db()->prepare("SELECT uci.item_id, uci.quantity, si.name, si.unit_price FROM user_cart_items uci JOIN shop_items si ON si.id=uci.item_id WHERE uci.user_id=? ORDER BY si.name ASC");
-            $rows->execute([$userId]); $items=$rows->fetchAll();
-            if ($items) {
-                $lines=['سبد خرید:']; $kb=[]; foreach($items as $it){ $lines[]='- '.e($it['name']).' | تعداد: '.$it['quantity'].' | قیمت: '.formatPrice((int)$it['unit_price']*$it['quantity']); $kb[]=[ ['text'=>'+','callback_data'=>'user_shop:inc|id='.$it['item_id']], ['text'=>'-','callback_data'=>'user_shop:dec|id='.$it['item_id']] ]; }
-                $total = getCartTotalForUser($userId); $disc=(int)$dc['percent']; $discAmt=(int)floor($total*$disc/100); $pay=max(0,$total-$discAmt);
-                $txt = implode("\n",$lines)."\n\nجمع کل (بدون تخفیف): ".formatPrice($total)."\nتخفیف (".$disc."%): -".formatPrice($discAmt)."\nمبلغ قابل پرداخت: ".formatPrice($pay);
-                $kb[]=[ ['text'=>'استفاده از کد تخفیف','callback_data'=>'user_shop:disc_apply'] ];
-                $kb[]=[ ['text'=>'خرید','callback_data'=>'user_shop:checkout'] ];
-                $kb[]=[ ['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop'], ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
-                // try edit last cart msg if we have its id
-                $mid = getSetting('cart_msg_'.(int)$userId); if ($mid){ @editMessageText($chatId,(int)$mid,$txt,['inline_keyboard'=>$kb]); } else { sendMessage($chatId,$txt,['inline_keyboard'=>$kb]); }
-            } else { sendMessage($chatId,'کد تخفیف اعمال شد: '.$dc['percent'].'%'); }
-            break;
-        case 'await_support':
-            if (!$text && !$photo) { sendMessage($chatId,'فقط متن یا عکس بفرستید.'); return; }
-            if ($hasRecentSupport($userId)) { sendMessage($chatId,'لطفاً کمی صبر کنید و سپس دوباره تلاش کنید.'); return; }
-            // Save
-            $u = userByTelegramId($chatId);
-            $pdo = db();
-            $stmt = $pdo->prepare("INSERT INTO support_messages (user_id, text, photo_file_id) VALUES (?, ?, ?)");
-            $stmt->execute([(int)$u['id'], $text ?: $caption, $photo]);
-            $supportId = (int)$pdo->lastInsertId();
-            sendMessage($chatId, 'پیام شما ثبت شد.');
-            // immediate detailed notify to admins
-            notifyNewSupportMessage($supportId);
-            clearUserState($chatId);
-            break;
-        case 'await_submission':
-            $type = $data['type'] ?? 'army';
-            if (!$text && !$photo && !$caption) { sendMessage($chatId,'متن یا عکس ارسال کنید.'); return; }
-            if ($hasRecentSubmission($userId)) { sendMessage($chatId,'لطفاً کمی صبر کنید و سپس دوباره تلاش کنید.'); return; }
-            $u = userByTelegramId($chatId);
-            db()->prepare("INSERT INTO submissions (user_id, type, text, photo_file_id) VALUES (?, ?, ?, ?)")->execute([(int)$u['id'], $type, $text ?: $caption, $photo]);
-            sendMessage($chatId,'ارسال شما ثبت شد.');
-            $sectionTitle = getInlineButtonTitle($type);
-            notifySectionAdmins($type, 'پیام جدید در بخش ' . $sectionTitle);
-            clearUserState($chatId);
-            break;
-        case 'await_war_format':
-            // Expect text with attacker/defender names; optionally photo
-            $content = $text ?: $caption;
-            if (!$content) { sendMessage($chatId,'ابتدا متن با فرمت موردنظر را ارسال کنید.'); return; }
-            if ($hasRecentSubmission($userId)) { sendMessage($chatId,'لطفاً کمی صبر کنید و سپس دوباره تلاش کنید.'); return; }
-            $att = null; $def = null;
-            if (preg_match('/نام\s*کشور\s*حمله\s*کننده\s*:\s*(.+)/u', $content, $m1)) { $att = trim($m1[1]); }
-            if (preg_match('/نام\s*کشور\s*دفاع\s*کننده\s*:\s*(.+)/u', $content, $m2)) { $def = trim($m2[1]); }
-            if (!$att || !$def) { sendMessage($chatId,'فرمت نامعتبر. هر دو نام کشور لازم است.'); return; }
-            $u = userByTelegramId($chatId);
-            db()->prepare("INSERT INTO submissions (user_id, type, text, photo_file_id, attacker_country, defender_country) VALUES (?, 'war', ?, ?, ?, ?)")->execute([(int)$u['id'], $content, $photo, $att, $def]);
-            sendMessage($chatId,'اعلام جنگ ثبت شد.');
-            notifySectionAdmins('war', 'پیام جدید در بخش ' . getInlineButtonTitle('war'));
-            clearUserState($chatId);
-            break;
-        case 'await_role_text':
-            if (!$text) { sendMessage($chatId,'فقط متن مجاز است.'); return; }
-            if ($hasRecentSubmission($userId)) { sendMessage($chatId,'لطفاً کمی صبر کنید و سپس دوباره تلاش کنید.'); return; }
-            $u = userByTelegramId($chatId);
-            db()->prepare("INSERT INTO submissions (user_id, type, text) VALUES (?, 'role', ?)")->execute([(int)$u['id'], $text]);
-            sendMessage($chatId,'رول شما ثبت شد و در انتظار بررسی است.');
-            notifySectionAdmins('roles', 'پیام جدید در بخش ' . getInlineButtonTitle('roles'));
-            clearUserState($chatId);
-            break;
-        case 'await_alliance_name':
-            $name = trim((string)$text);
-            if ($name===''){ sendMessage($chatId,'نام نامعتبر'); return; }
-            $u = userByTelegramId($chatId);
-            // Check not already in an alliance
-            $x = db()->prepare("SELECT 1 FROM alliance_members m JOIN users u ON u.id=m.user_id WHERE u.telegram_id=?"); $x->execute([$chatId]); if($x->fetch()){ sendMessage($chatId,'شما در اتحاد هستید.'); clearUserState($chatId); return; }
-            db()->beginTransaction();
-            try {
-                db()->prepare("INSERT INTO alliances (name, leader_user_id) VALUES (?, ?)")->execute([$name, (int)$u['id']]);
-                $aid = (int)db()->lastInsertId();
-                db()->prepare("INSERT INTO alliance_members (alliance_id, user_id, role) VALUES (?, ?, 'leader')")->execute([$aid, (int)$u['id']]);
-                db()->commit();
-                sendMessage($chatId,'اتحاد ایجاد شد.');
-            } catch (Exception $e) { db()->rollBack(); sendMessage($chatId,'خطا: '.$e->getMessage()); }
-            clearUserState($chatId);
             break;
         case 'await_invite_ident':
             $aid=(int)$data['alliance_id']; $tgid = extractTelegramIdFromMessage($message); if(!$tgid){ sendMessage($chatId,'آیدی نامعتبر'); return; }
@@ -2759,337 +2705,6 @@ function handleUserStateMessage(array $userRow, array $message, array $state): v
             sendMessage($chatId,'دعوت ارسال شد.');
             clearUserState($chatId);
             break;
-        case 'await_slogan':
-            $aid=(int)$data['alliance_id']; $slogan = trim((string)($text ?: ''));
-            db()->prepare("UPDATE alliances SET slogan=? WHERE id=?")->execute([$slogan, $aid]);
-            sendMessage($chatId,'شعار به‌روزرسانی شد.');
-            clearUserState($chatId);
-            break;
-        case 'await_alliance_rename':
-            $aid=(int)$data['alliance_id']; $name=trim((string)$text); if($name===''){ sendMessage($chatId,'نام نامعتبر'); return; }
-            db()->prepare("UPDATE alliances SET name=? WHERE id=?")->execute([$name,$aid]); sendMessage($chatId,'نام اتحاد به‌روزرسانی شد.'); clearUserState($chatId);
-            break;
-        case 'await_member_display':
-            $aid=(int)$data['alliance_id']; $uid=(int)$data['user_id']; $disp=trim((string)$text);
-            db()->prepare("UPDATE alliance_members SET display_name=? WHERE alliance_id=? AND user_id=?")->execute([$disp,$aid,$uid]);
-            sendMessage($chatId,'نام نمایشی عضو به‌روزرسانی شد.'); clearUserState($chatId);
-            break;
-        case 'await_alliance_banner':
-            $aid=(int)$data['alliance_id'];
-            $photo = null; if (!empty($message['photo'])) { $photos=$message['photo']; $largest=end($photos); $photo=$largest['file_id']??null; }
-            if (!$photo) { sendMessage($chatId,'عکس ارسال کنید.'); return; }
-            db()->prepare("UPDATE alliances SET banner_file_id=? WHERE id=?")->execute([$photo,$aid]);
-            sendMessage($chatId,'بنر اتحاد تنظیم شد.');
-            clearUserState($chatId);
-            break;
-        default:
-            sendMessage($chatId,'حالت ناشناخته'); clearUserState($chatId);
-    }
-}
-// --------------------- CALLBACK PROCESSING ---------------------
-
-function processCallback(array $callback): void {
-    $from = $callback['from']; $u = ensureUser($from); $chatId=(int)$u['telegram_id'];
-    $message = $callback['message'] ?? null; $messageId = $message['message_id'] ?? 0;
-    $data = $callback['data'] ?? '';
-    applyDailyProfitsIfDue();
-
-    // Maintenance block for non-admins
-    if (!getAdminPermissions($chatId) && isMaintenanceEnabled()) {
-        answerCallback($callback['id'], maintenanceMessage(), true);
-        return;
-    }
-
-    list($action, $params) = cbParse($data);
-
-    if (strpos($action, 'nav:') === 0) {
-        $route = substr($action, 4);
-        // Enforce schedule for user-facing sections
-        $routeToKey = [
-            'army'=>'army','missile'=>'missile','defense'=>'defense','roles'=>'roles',
-            'statement'=>'statement','war'=>'war','assets'=>'assets','support'=>'support',
-            'alliance'=>'alliance','shop'=>'shop'
-        ];
-        if (isset($routeToKey[$route]) && !isButtonEnabled($routeToKey[$route])) {
-            answerCallback($callback['id'], 'این دکمه در حال حاضر در دسترس نیست', true);
-            return;
-        }
-        handleNav($chatId, $messageId, $route, $params, $u);
-        return;
-    }
-    if (strpos($action, 'user_shop:') === 0) {
-        if (!isButtonEnabled('shop')) { answerCallback($callback['id'], 'این دکمه در حال حاضر در دسترس نیست', true); return; }
-        $route = substr($action, 10);
-        $urow = userByTelegramId($chatId); $uid = (int)$urow['id'];
-        if ($route === 'factories') {
-            $rows = db()->query("SELECT id,name,price_l1,price_l2 FROM factories ORDER BY id DESC")->fetchAll();
-            if (!$rows) { editMessageText($chatId,$messageId,'کارخانه‌ای موجود نیست.', ['inline_keyboard'=>[[['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop']], [['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]] ); return; }
-            $kb=[]; $lines=['کارخانه‌های نظامی:'];
-            foreach($rows as $r){
-                $lines[] = '- '.e($r['name']).' | L1: '.formatPrice((int)$r['price_l1']).' | L2: '.formatPrice((int)$r['price_l2']);
-                $kb[]=[ ['text'=>'خرید L1 - '.e($r['name']),'callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=1'], ['text'=>'خرید L2','callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=2'] ];
-            }
-            $kb[]=[ ['text'=>'کارخانه‌های من','callback_data'=>'user_shop:myfactories'] ];
-            $kb[]=[ ['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop'], ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
-            editMessageText($chatId,$messageId,implode("\n",$lines), ['inline_keyboard'=>$kb]);
-            return;
-        }
-        if ($route === 'myfactories') {
-            $rows = db()->prepare("SELECT uf.id ufid, f.id fid, f.name, uf.level FROM user_factories uf JOIN factories f ON f.id=uf.factory_id WHERE uf.user_id=? ORDER BY f.name ASC");
-            $rows->execute([$uid]); $fs=$rows->fetchAll();
-            if (!$fs) { editMessageText($chatId,$messageId,'شما کارخانه‌ای ندارید.', ['inline_keyboard'=>[[['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop']], [['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]] ); return; }
-            $kb=[]; $lines=['کارخانه‌های من:'];
-            foreach($fs as $f){ $lines[]='- '.e($f['name']).' | لول: '.$f['level']; $kb[]=[ ['text'=>'دریافت تولید امروز - '.e($f['name']), 'callback_data'=>'user_shop:factory_claim|fid='.$f['fid']] ]; }
-            $kb[]=[ ['text'=>'بازگشت','callback_data'=>'user_shop:factories'] ];
-            editMessageText($chatId,$messageId,implode("\n",$lines), ['inline_keyboard'=>$kb]);
-            return;
-        }
-        if (strpos($route,'factory_buy')===0) {
-            $fid=(int)($params['id']??0); $lvl=(int)($params['lvl']??1); if($lvl!==1 && $lvl!==2){ $lvl=1; }
-            $f = db()->prepare("SELECT id,name,price_l1,price_l2 FROM factories WHERE id=?"); $f->execute([$fid]); $fr=$f->fetch(); if(!$fr){ answerCallback($callback['id'],'ناموجود', true); return; }
-            $owned = db()->prepare("SELECT id, level FROM user_factories WHERE user_id=? AND factory_id=?"); $owned->execute([$uid,$fid]); $ow=$owned->fetch();
-            $price = $lvl===1 ? (int)$fr['price_l1'] : (int)$fr['price_l2'];
-            if ($ow) {
-                if ((int)$ow['level'] >= $lvl) { answerCallback($callback['id'],'قبلاً این سطح را دارید', true); return; }
-                // upgrade to level 2
-                if ((int)$urow['money'] < $price) { answerCallback($callback['id'],'موجودی کافی نیست', true); return; }
-                db()->beginTransaction();
-                try {
-                    db()->prepare("UPDATE users SET money = money - ? WHERE id=?")->execute([$price, $uid]);
-                    db()->prepare("UPDATE user_factories SET level=2 WHERE id=?")->execute([(int)$ow['id']]);
-                    db()->commit();
-                } catch (Exception $e) { db()->rollBack(); answerCallback($callback['id'],'خطا', true); return; }
-                answerCallback($callback['id'],'ارتقا خرید شد');
-            } else {
-                if ((int)$urow['money'] < $price) { answerCallback($callback['id'],'موجودی کافی نیست', true); return; }
-                db()->beginTransaction();
-                try {
-                    db()->prepare("UPDATE users SET money = money - ? WHERE id=?")->execute([$price, $uid]);
-                    db()->prepare("INSERT INTO user_factories (user_id,factory_id,level) VALUES (?,?,?)")->execute([$uid,$fid,$lvl]);
-                    db()->commit();
-                } catch (Exception $e) { db()->rollBack(); answerCallback($callback['id'],'خطا', true); return; }
-                answerCallback($callback['id'],'خرید شد');
-            }
-            // refresh factory list
-            $rows = db()->query("SELECT id,name,price_l1,price_l2 FROM factories ORDER BY id DESC")->fetchAll();
-            $kb=[]; $lines=['کارخانه‌های نظامی:']; foreach($rows as $r){ $lines[]='- '.e($r['name']).' | L1: '.formatPrice((int)$r['price_l1']).' | L2: '.formatPrice((int)$r['price_l2']); $kb[]=[ ['text'=>'خرید L1 - '.e($r['name']),'callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=1'], ['text'=>'خرید L2','callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=2'] ]; }
-            $kb[]=[ ['text'=>'کارخانه‌های من','callback_data'=>'user_shop:myfactories'] ];
-            $kb[]=[ ['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop'], ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
-            editMessageText($chatId,$messageId,implode("\n",$lines), ['inline_keyboard'=>$kb]);
-            return;
-        }
-        if (strpos($route,'factory_claim_pick')===0) {
-            $ufid=(int)($params['ufid']??0); $item=(int)($params['item']??0);
-            // check not already granted today
-            $today = (new DateTime('now', new DateTimeZone('Asia/Tehran')))->format('Y-m-d');
-            $chk = db()->prepare("SELECT granted FROM user_factory_grants WHERE user_factory_id=? AND for_date=?"); $chk->execute([$ufid,$today]); $exists=$chk->fetch(); if($exists && (int)$exists['granted']===1){ answerCallback($callback['id'],'دریافت شده است', true); return; }
-            // find level and qty
-            $uf = db()->prepare("SELECT uf.level, uf.factory_id FROM user_factories uf WHERE uf.id=? AND uf.user_id=?"); $uf->execute([$ufid,$uid]); $ufo=$uf->fetch(); if(!$ufo){ answerCallback($callback['id'],'یافت نشد', true); return; }
-            $lvl=(int)$ufo['level']; $fp = db()->prepare("SELECT qty_l1, qty_l2 FROM factory_products WHERE factory_id=? AND item_id=?"); $fp->execute([(int)$ufo['factory_id'],$item]); $pr=$fp->fetch(); if(!$pr){ answerCallback($callback['id'],'محصول یافت نشد', true); return; }
-            $units = $lvl===2 ? (int)$pr['qty_l2'] : (int)$pr['qty_l1']; if($units<=0){ answerCallback($callback['id'],'تولیدی تعریف نشده', true); return; }
-            addUnitsForUser($uid, $item, $units);
-            db()->prepare("INSERT INTO user_factory_grants (user_factory_id,for_date,granted,chosen_item_id) VALUES (?,?,1,?) ON DUPLICATE KEY UPDATE granted=VALUES(granted), chosen_item_id=VALUES(chosen_item_id)")->execute([$ufid,$today,$item]);
-            answerCallback($callback['id'],'اضافه شد');
-            editMessageText($chatId,$messageId,'محصول امروز اضافه شد.',['inline_keyboard'=>[[['text'=>'بازگشت','callback_data'=>'user_shop:myfactories']]]] );
-            return;
-        }
-        if (strpos($route,'factory_claim')===0) {
-            $fid=(int)($params['fid']??0);
-            $uf = db()->prepare("SELECT id, level FROM user_factories WHERE user_id=? AND factory_id=?"); $uf->execute([$uid,$fid]); $ufo=$uf->fetch(); if(!$ufo){ answerCallback($callback['id'],'ندارید', true); return; }
-            $ufid=(int)$ufo['id']; $lvl=(int)$ufo['level'];
-            $today = (new DateTime('now', new DateTimeZone('Asia/Tehran')))->format('Y-m-d');
-            $chk = db()->prepare("SELECT granted FROM user_factory_grants WHERE user_factory_id=? AND for_date=?"); $chk->execute([$ufid,$today]); $ex=$chk->fetch(); if($ex && (int)$ex['granted']===1){ answerCallback($callback['id'],'قبلاً دریافت شده', true); return; }
-            // list products
-            $ps = db()->prepare("SELECT fp.item_id, si.name, fp.qty_l1, fp.qty_l2 FROM factory_products fp JOIN shop_items si ON si.id=fp.item_id WHERE fp.factory_id=? ORDER BY si.name ASC"); $ps->execute([$fid]); $rows=$ps->fetchAll(); if(!$rows){ answerCallback($callback['id'],'محصولی ثبت نشده', true); return; }
-            if (count($rows)===1) {
-                $units = $lvl===2 ? (int)$rows[0]['qty_l2'] : (int)$rows[0]['qty_l1']; if($units<=0){ answerCallback($callback['id'],'تولیدی تعریف نشده', true); return; }
-                addUnitsForUser($uid, (int)$rows[0]['item_id'], $units);
-                db()->prepare("INSERT INTO user_factory_grants (user_factory_id,for_date,granted,chosen_item_id) VALUES (?,?,1,?) ON DUPLICATE KEY UPDATE granted=VALUES(granted), chosen_item_id=VALUES(chosen_item_id)")->execute([$ufid,$today,(int)$rows[0]['item_id']]);
-                answerCallback($callback['id'],'اضافه شد');
-                editMessageText($chatId,$messageId,'محصول امروز اضافه شد.',['inline_keyboard'=>[[['text'=>'بازگشت','callback_data'=>'user_shop:myfactories']]]] );
-                return;
-            }
-            // ask user to pick one product
-            $kb=[]; $lines=['یک محصول انتخاب کنید:']; foreach($rows as $r){ $units = $lvl===2 ? (int)$r['qty_l2'] : (int)$r['qty_l1']; $lines[]='- '.e($r['name']).' | مقدار: '.$units; $kb[]=[ ['text'=>e($r['name']), 'callback_data'=>'user_shop:factory_claim_pick|ufid='.$ufid.'|item='.$r['item_id']] ]; }
-            $kb[]=[ ['text'=>'بازگشت','callback_data'=>'user_shop:myfactories'] ];
-            editMessageText($chatId,$messageId,implode("\n",$lines), ['inline_keyboard'=>$kb]);
-            return;
-        }
-        if ($route === 'cart') {
-            $rows = db()->prepare("SELECT uci.item_id, uci.quantity, si.name, si.unit_price FROM user_cart_items uci JOIN shop_items si ON si.id=uci.item_id WHERE uci.user_id=? ORDER BY si.name ASC");
-            $rows->execute([$uid]); $items=$rows->fetchAll();
-            if (!$items) { editMessageText($chatId,$messageId,'سبد خرید شما خالی است.', ['inline_keyboard'=>[[['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop']], [['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]] ); return; }
-            $lines=['سبد خرید:']; $kb=[]; foreach($items as $it){ $lines[]='- '.e($it['name']).' | تعداد: '.$it['quantity'].' | قیمت: '.formatPrice((int)$it['unit_price']*$it['quantity']); $kb[]=[ ['text'=>'+','callback_data'=>'user_shop:inc|id='.$it['item_id']], ['text'=>'-','callback_data'=>'user_shop:dec|id='.$it['item_id']] ]; }
-            $total = getCartTotalForUser($uid);
-            // Show applied discount if any
-            $ds = getSetting('cart_disc_'.$uid); $discTxt=''; if($ds){ $disc = (int)$ds; $discAmt = (int)floor($total*$disc/100); $pay = max(0,$total-$discAmt); $discTxt = "\nجمع کل (بدون تخفیف): ".formatPrice($total)."\nتخفیف (".$disc."%): -".formatPrice($discAmt)."\nمبلغ قابل پرداخت: ".formatPrice($pay); }
-            $kb[]=[ ['text'=>'استفاده از کد تخفیف','callback_data'=>'user_shop:disc_apply'] ];
-            $kb[]=[ ['text'=>'خرید','callback_data'=>'user_shop:checkout'] ];
-            $kb[]=[ ['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop'], ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
-            editMessageText($chatId,$messageId,implode("\n",$lines).($ds?"\n\n":"\n\nجمع کل: ").($ds?"":formatPrice($total)).$discTxt, ['inline_keyboard'=>$kb]);
-            return;
-        }
-        if (strpos($route,'cat')===0) {
-            $cid=(int)($params['id']??0);
-            $st = db()->prepare("SELECT id,name,unit_price,pack_size,per_user_limit,daily_profit_per_pack FROM shop_items WHERE category_id=? AND enabled=1 ORDER BY name ASC"); $st->execute([$cid]); $rows=$st->fetchAll();
-            if (!$rows) { editMessageText($chatId,$messageId,'این دسته خالی است.', ['inline_keyboard'=>[[['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop']], [['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]] ); return; }
-            $kb=[]; $lines=['آیتم‌ها:']; foreach($rows as $r){ $line = e($r['name']).' | قیمت: '.formatPrice((int)$r['unit_price']).' | بسته: '.$r['pack_size']; if((int)$r['daily_profit_per_pack']>0){ $line.=' | سود روزانه/بسته: '.$r['daily_profit_per_pack']; } $lines[]=$line; $kb[]=[ ['text'=>'افزودن به سبد - '.$r['name'], 'callback_data'=>'user_shop:add|id='.$r['id']] ]; }
-            $kb[]=[ ['text'=>'مشاهده سبد خرید','callback_data'=>'user_shop:cart'] ];
-            $kb[]=[ ['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop'], ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
-            editMessageText($chatId,$messageId,implode("\n",$lines),['inline_keyboard'=>$kb]);
-            return;
-        }
-        if (strpos($route,'add')===0) {
-            $iid=(int)($params['id']??0);
-            $it = db()->prepare("SELECT per_user_limit FROM shop_items WHERE id=? AND enabled=1"); $it->execute([$iid]); $r=$it->fetch(); if(!$r){ answerCallback($callback['id'],'ناموجود', true); return; }
-            $limit=(int)$r['per_user_limit']; if($limit>0){
-                $p = db()->prepare("SELECT packs_bought FROM user_item_purchases WHERE user_id=? AND item_id=?"); $p->execute([$uid,$iid]); $pb=(int)($p->fetch()['packs_bought']??0);
-                $inCart = db()->prepare("SELECT quantity FROM user_cart_items WHERE user_id=? AND item_id=?"); $inCart->execute([$uid,$iid]); $q=(int)($inCart->fetch()['quantity']??0);
-                if ($pb + $q + 1 > $limit) { answerCallback($callback['id'],'به حد مجاز خرید رسیده‌اید', true); return; }
-            }
-            // clear any previous discount cache (cart changed)
-            setSetting('cart_disc_'.$uid, ''); setSetting('cart_disc_code_'.$uid, '');
-            db()->prepare("INSERT INTO user_cart_items (user_id,item_id,quantity) VALUES (?,?,1) ON DUPLICATE KEY UPDATE quantity=quantity+1")->execute([$uid,$iid]);
-            answerCallback($callback['id'],'به سبد اضافه شد');
-            return;
-        }
-        if ($route==='disc_apply') {
-            setUserState($chatId,'await_disc_code',[]);
-            sendMessage($chatId,'کد تخفیف را وارد کنید.');
-            return;
-        }
-        if (strpos($route,'inc')===0 || strpos($route,'dec')===0) {
-            $iid=(int)($params['id']??0);
-            if (strpos($route,'inc')===0) {
-                $it = db()->prepare("SELECT per_user_limit FROM shop_items WHERE id=? AND enabled=1"); $it->execute([$iid]); $r=$it->fetch(); if(!$r){ answerCallback($callback['id'],'ناموجود', true); return; }
-                $limit=(int)$r['per_user_limit']; if($limit>0){ $p = db()->prepare("SELECT packs_bought FROM user_item_purchases WHERE user_id=? AND item_id=?"); $p->execute([$uid,$iid]); $pb=(int)($p->fetch()['packs_bought']??0); $inCart = db()->prepare("SELECT quantity FROM user_cart_items WHERE user_id=? AND item_id=?"); $inCart->execute([$uid,$iid]); $q=(int)($inCart->fetch()['quantity']??0); if ($pb + $q + 1 > $limit) { answerCallback($callback['id'],'به حد مجاز خرید رسیده‌اید', true); return; } }
-                db()->prepare("UPDATE user_cart_items SET quantity = quantity + 1 WHERE user_id=? AND item_id=?")->execute([$uid,$iid]);
-            } else {
-                db()->prepare("UPDATE user_cart_items SET quantity = GREATEST(0, quantity - 1) WHERE user_id=? AND item_id=?")->execute([$uid,$iid]);
-                db()->prepare("DELETE FROM user_cart_items WHERE user_id=? AND item_id=? AND quantity=0")->execute([$uid,$iid]);
-            }
-            // refresh cart view inline
-            $rows = db()->prepare("SELECT uci.item_id, uci.quantity, si.name, si.unit_price FROM user_cart_items uci JOIN shop_items si ON si.id=uci.item_id WHERE uci.user_id=? ORDER BY si.name ASC");
-            $rows->execute([$uid]); $items=$rows->fetchAll();
-            if (!$items) { editMessageText($chatId,$messageId,'سبد خرید شما خالی است.', ['inline_keyboard'=>[[['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop']], [['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]] ); return; }
-            $lines=['سبد خرید:']; $kb=[]; foreach($items as $it){ $lines[]='- '.e($it['name']).' | تعداد: '.$it['quantity'].' | قیمت: '.formatPrice((int)$it['unit_price']*$it['quantity']); $kb[]=[ ['text'=>'+','callback_data'=>'user_shop:inc|id='.$it['item_id']], ['text'=>'-','callback_data'=>'user_shop:dec|id='.$it['item_id']] ]; }
-            $total = getCartTotalForUser($uid);
-            // recalc discount view if any
-            $ds = getSetting('cart_disc_'.$uid); $discTxt=''; if($ds){ $disc=(int)$ds; $discAmt=(int)floor($total*$disc/100); $pay=max(0,$total-$discAmt); $discTxt = "\nجمع کل (بدون تخفیف): ".formatPrice($total)."\nتخفیف (".$disc."%): -".formatPrice($discAmt)."\nمبلغ قابل پرداخت: ".formatPrice($pay); }
-            $kb[]=[ ['text'=>'استفاده از کد تخفیف','callback_data'=>'user_shop:disc_apply'] ];
-            $kb[]=[ ['text'=>'خرید','callback_data'=>'user_shop:checkout'] ];
-            $kb[]=[ ['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop'], ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
-            editMessageText($chatId,$messageId,implode("\n",$lines).($ds?"\n\n":"\n\nجمع کل: ").($ds?"":formatPrice($total)).$discTxt, ['inline_keyboard'=>$kb]);
-            return;
-        }
-        if ($route === 'checkout') {
-            $items = db()->prepare("SELECT uci.item_id, uci.quantity, si.unit_price, si.pack_size, si.daily_profit_per_pack FROM user_cart_items uci JOIN shop_items si ON si.id=uci.item_id WHERE uci.user_id=?");
-            $items->execute([$uid]); $rows=$items->fetchAll(); if(!$rows){ answerCallback($callback['id'],'سبد خالی است', true); return; }
-            $total = getCartTotalForUser($uid);
-            // apply discount if set and valid
-            $ds = getSetting('cart_disc_'.$uid); $appliedDisc = 0; if($ds){ $appliedDisc=(int)$ds; $discAmt=(int)floor($total*$appliedDisc/100); $total=max(0,$total-$discAmt); }
-            if ((int)$urow['money'] < $total) { answerCallback($callback['id'],'موجودی کافی نیست', true); return; }
-            db()->beginTransaction();
-            try {
-                db()->prepare("UPDATE users SET money = money - ? WHERE id=?")->execute([$total, $uid]);
-                foreach($rows as $r){ addInventoryForUser($uid, (int)$r['item_id'], (int)$r['quantity'], (int)$r['pack_size']); $dp=(int)$r['daily_profit_per_pack']; if($dp>0) increaseUserDailyProfit($uid, $dp * (int)$r['quantity']); db()->prepare("INSERT INTO user_item_purchases (user_id,item_id,packs_bought) VALUES (?,?,0) ON DUPLICATE KEY UPDATE packs_bought=packs_bought")->execute([$uid,(int)$r['item_id']]); db()->prepare("UPDATE user_item_purchases SET packs_bought = packs_bought + ? WHERE user_id=? AND item_id=?")->execute([(int)$r['quantity'],$uid,(int)$r['item_id']]); }
-                // record discount usage if any
-                $dcId = getSetting('cart_disc_code_'.$uid); if ($dcId){ db()->prepare("INSERT INTO discount_usages (code_id,user_id) VALUES (?,?)")->execute([(int)$dcId,$uid]); db()->prepare("UPDATE discount_codes SET used_count = used_count + 1 WHERE id=?")->execute([(int)$dcId]); setSetting('cart_disc_'.$uid,''); setSetting('cart_disc_code_'.$uid,''); }
-                db()->prepare("DELETE FROM user_cart_items WHERE user_id=?")->execute([$uid]);
-                db()->commit();
-            } catch (Exception $e) { db()->rollBack(); if (DEBUG) { @sendMessage(MAIN_ADMIN_ID, 'Shop checkout error: ' . $e->getMessage()); } answerCallback($callback['id'],'خطا در خرید', true); return; }
-            editMessageText($chatId,$messageId,'خرید انجام شد.',['inline_keyboard'=>[[['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop']], [['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]]);
-            answerCallback($callback['id'],'خرید انجام شد');
-            return;
-        }
-        answerCallback($callback['id'],'دستور ناشناخته', true);
-        return;
-    }
-    if (strpos($action, 'alli:') === 0) {
-        if (!isButtonEnabled('alliance')) { answerCallback($callback['id'], 'این دکمه در حال حاضر در دسترس نیست', true); return; }
-        $route = substr($action, 5);
-        handleAllianceNav($chatId, $messageId, $route, $params, $u);
-        return;
-    }
-    if (strpos($action, 'admin:') === 0) {
-        $route = substr($action, 6);
-        if (!getAdminPermissions($chatId)) { answerCallback($callback['id'], 'دسترسی ندارید', true); return; }
-        if (strpos($route, 'adm_toggle') === 0) {
-            // toggle a permission
-            parse_str(str_replace('|','&',$data)); // $id $perm
-            $aid = (int)($params['id'] ?? 0); $perm = $params['perm'] ?? '';
-            $row = db()->prepare("SELECT permissions FROM admin_users WHERE admin_telegram_id=?"); $row->execute([$aid]); $r=$row->fetch(); if($r){ $cur = $r['permissions']? (json_decode($r['permissions'],true)?:[]):[]; if(in_array($perm,$cur,true)){ $cur=array_values(array_filter($cur,function($x)use($perm){return $x!==$perm;})); } else { $cur[]=$perm; } db()->prepare("UPDATE admin_users SET permissions=? WHERE admin_telegram_id=?")->execute([json_encode($cur,JSON_UNESCAPED_UNICODE),$aid]); }
-            answerCallback($callback['id'],'به‌روزرسانی شد');
-            renderAdminPermsEditor($chatId, $messageId, $aid);
-            return;
-        }
-        handleAdminNav($chatId, $messageId, $route, $params, $u);
-        return;
-    }
-    if (strpos($action, 'rolecost:') === 0) {
-        $route = substr($action, 9); $id=(int)($params['id']??0);
-        $stmt = db()->prepare("SELECT s.*, u.telegram_id, u.id AS uid FROM submissions s JOIN users u ON u.id=s.user_id WHERE s.id=?"); $stmt->execute([$id]); $r=$stmt->fetch(); if(!$r){ answerCallback($callback['id'],'یافت نشد',true); return; }
-        if ($route==='view') {
-            $body = $r['text'] ? e($r['text']) : '—';
-            if ($r['photo_file_id']) sendPhoto($chatId, $r['photo_file_id'], $body); else sendMessage($chatId,$body);
-            answerCallback($callback['id'],''); return;
-        }
-        if ($route==='accept') {
-            // if cost defined, check and deduct
-            if (!empty($r['cost_amount'])) {
-                $um = db()->prepare("SELECT money FROM users WHERE id=?"); $um->execute([(int)$r['uid']]); $ur=$um->fetch(); $money=(int)($ur['money']??0);
-                if ($money < (int)$r['cost_amount']) { sendMessage((int)$r['telegram_id'], 'موجودی کافی نیست.'); if (!empty($callback['message']['message_id'])) deleteMessage($chatId,(int)$callback['message']['message_id']); answerCallback($callback['id'],'پول کافی نیست', true); return; }
-                db()->prepare("UPDATE users SET money = money - ? WHERE id=?")->execute([(int)$r['cost_amount'], (int)$r['uid']]);
-            }
-            db()->prepare("UPDATE submissions SET status='user_confirmed' WHERE id=?")->execute([$id]);
-            // Insert into approved_roles upon user confirm
-            $usr = db()->prepare("SELECT username, country FROM users WHERE id=?"); $usr->execute([(int)$r['uid']]); $urx=$usr->fetch();
-            db()->prepare("INSERT INTO approved_roles (submission_id, user_id, text, cost_amount, username, telegram_id, country) VALUES (?,?,?,?,?,?,?)")
-              ->execute([$id, (int)$r['uid'], $r['text'], (int)($r['cost_amount']?:0), $urx['username']??null, $r['telegram_id'], $urx['country']??null]);
-            // notify admins with roles perm with details and view button
-            $uname = $urx['username'] ? '@'.$urx['username'] : '—';
-            $body = "کاربر هزینه رول را تایید کرد:\nیوزرنیم: ".$uname."\nID: ".$r['telegram_id']."\nکشور: ".($urx['country']?:'—')."\nهزینه: ".(int)($r['cost_amount']?:0);
-            $kb=[ [ ['text'=>'دیدن رول','callback_data'=>'admin:roles_approved|page=1'] ] ];
-            $q = db()->query("SELECT admin_telegram_id, is_owner, permissions FROM admin_users"); foreach($q as $row){ $adminId=(int)$row['admin_telegram_id']; $perms=(int)$row['is_owner']===1?['all']:((($row['permissions']?json_decode($row['permissions'],true):[])?:[])); if(in_array('all',$perms,true)||in_array('roles',$perms,true)){ sendMessage($adminId,$body,['inline_keyboard'=>$kb]); } }
-            if (!empty($callback['message']['message_id'])) deleteMessage($chatId,(int)$callback['message']['message_id']);
-            answerCallback($callback['id'],'تایید شد');
-        } else {
-            db()->prepare("UPDATE submissions SET status='user_declined' WHERE id=?")->execute([$id]);
-            // notify admins with details
-            $usr = db()->prepare("SELECT username, country FROM users WHERE id=?"); $usr->execute([(int)$r['uid']]); $urx=$usr->fetch(); $uname = $urx['username'] ? '@'.$urx['username'] : '—';
-            $body = "کاربر هزینه رول را رد کرد:\nیوزرنیم: ".$uname."\nID: ".$r['telegram_id']."\nکشور: ".($urx['country']?:'—');
-            $q = db()->query("SELECT admin_telegram_id, is_owner, permissions FROM admin_users"); foreach($q as $row){ $adminId=(int)$row['admin_telegram_id']; $perms=(int)$row['is_owner']===1?['all']:((($row['permissions']?json_decode($row['permissions'],true):[])?:[])); if(in_array('all',$perms,true)||in_array('roles',$perms,true)){ sendMessage($adminId,$body); } }
-            sendMessage((int)$r['telegram_id'],'رد ثبت شد.');
-            // remove from list per requirement
-            db()->prepare("DELETE FROM submissions WHERE id=?")->execute([$id]);
-            if (!empty($callback['message']['message_id'])) deleteMessage($chatId,(int)$callback['message']['message_id']);
-            answerCallback($callback['id'],'رد شد');
-        }
-        return;
-    }
-    if (strpos($action, 'alli_inv:') === 0) {
-        $route = substr($action, 9); $aid=(int)($params['aid']??0);
-        $invitee = userByTelegramId($chatId); if(!$invitee){ answerCallback($callback['id'],'خطا',true); return; }
-        $inv = db()->prepare("SELECT * FROM alliance_invites WHERE alliance_id=? AND invitee_user_id=? AND status='pending'"); $inv->execute([$aid,(int)$invitee['id']]); $row=$inv->fetch(); if(!$row){ answerCallback($callback['id'],'دعوتی یافت نشد',true); return; }
-        if ($route==='accept') {
-            // capacity check
-            $cnt = db()->prepare("SELECT COUNT(*) c FROM alliance_members WHERE alliance_id=?"); $cnt->execute([$aid]); $c=(int)($cnt->fetch()['c']??0);
-            if ($c >= 4) { answerCallback($callback['id'],'اتحاد تکمیل است', true); return; }
-            db()->beginTransaction();
-            try {
-                db()->prepare("INSERT IGNORE INTO alliance_members (alliance_id, user_id, role) VALUES (?, ?, 'member')")->execute([$aid, (int)$invitee['id']]);
-                db()->prepare("UPDATE alliance_invites SET status='accepted' WHERE id=?")->execute([$row['id']]);
-                db()->commit();
-                answerCallback($callback['id'],'به اتحاد پیوستید');
-            } catch (Exception $e) { db()->rollBack(); answerCallback($callback['id'],'خطا',true); }
-        } else {
-            db()->prepare("UPDATE alliance_invites SET status='declined' WHERE id=?")->execute([$row['id']]);
-            answerCallback($callback['id'],'رد شد');
-        }
-        // delete invite message after action
-        if (!empty($callback['message']['message_id'])) { deleteMessage($chatId, (int)$callback['message']['message_id']); }
-        return;
-    }
     if (strpos($action, 'sreply:') === 0) {
         $route = substr($action, 7);
         if ($route === 'view') {
@@ -3135,7 +2750,6 @@ if (isset($_GET['init']) && $_GET['init'] === '1') {
     echo 'OK';
     exit;
 }
-
 $input = file_get_contents('php://input');
 $update = json_decode($input, true);
 
