@@ -1261,7 +1261,8 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                     ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']],
                     ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']],
                     ['text'=>'زمان‌بندی','callback_data'=>'admin:btn_sched|key='.$r['key']],
-                    ['text'=>'تغییر جایگاه','callback_data'=>'admin:btn_posmenu|key='.$r['key'].'|back=buttons']
+                    ['text'=>'تغییر جایگاه','callback_data'=>'admin:btn_posmenu|key='.$r['key'].'|back=buttons'],
+                    ['text'=>'اسم دکمه','copy_text'=>['text'=>$r['title']]]
                 ];
             }
             $kb[]=[ ['text'=>'دکمه‌های پنل مدیریت','callback_data'=>'admin:btn_admin'] ];
@@ -1512,7 +1513,8 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                     ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']],
                     ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']],
                     ['text'=>'زمان‌بندی','callback_data'=>'admin:btn_sched|key='.$r['key']],
-                    ['text'=>'تغییر جایگاه','callback_data'=>'admin:btn_posmenu|key='.$r['key'].'|back=buttons']
+                    ['text'=>'تغییر جایگاه','callback_data'=>'admin:btn_posmenu|key='.$r['key'].'|back=buttons'],
+                    ['text'=>'اسم دکمه','copy_text'=>['text'=>$r['title']]]
                 ];
             }
             $kb[]=[ ['text'=>'دکمه‌های پنل مدیریت','callback_data'=>'admin:btn_admin'] ];
@@ -1557,7 +1559,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $rows = db()->query("SELECT `key`, title, COALESCE(row_index,0) AS row_index, COALESCE(position,'left') AS position FROM button_settings WHERE `key` LIKE 'admin_%' ORDER BY id ASC")->fetchAll();
             $kb=[]; foreach($rows as $r){ 
                 $txt = $r['title'].' | ردیف: '.(int)$r['row_index'].' | جایگاه: '.($r['position']);
-                $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']], ['text'=>'تغییر جایگاه','callback_data'=>'admin:btn_posmenu|key='.$r['key'].'|back=btn_admin'] ];
+                $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']], ['text'=>'تغییر جایگاه','callback_data'=>'admin:btn_posmenu|key='.$r['key'].'|back=btn_admin'], ['text'=>'اسم دکمه','copy_text'=>['text'=>$r['title']]] ];
             }
             $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:buttons'] ];
             editMessageText($chatId,$messageId,'دکمه‌های پنل مدیریت',['inline_keyboard'=>$kb]);
@@ -2058,7 +2060,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 '',
                 'تعداد پیام‌ها:',
                 'پشتیبانی: ' . ((int)(db()->prepare("SELECT COUNT(*) c FROM support_messages WHERE user_id=?")->execute([$id]) || true) ? (int)(db()->query("SELECT COUNT(*) c FROM support_messages WHERE user_id={$id}")->fetch()['c']??0) : 0),
-                'رول    : '.($map['role']??0), 'حمله موشکی: '.($map['missile']??0), 'دفاع: '.($map['defense']??0), 'بیانیه: '.($map['statement']??0), 'اعلام جنگ: '.($map['war']??0), 'لشکرکشی: '.($map['army']??0)
+                'رول: '.($map['role']??0), 'حمله موشکی: '.($map['missile']??0), 'دفاع: '.($map['defense']??0), 'بیانیه: '.($map['statement']??0), 'اعلام جنگ: '.($map['war']??0), 'لشکرکشی: '.($map['army']??0)
             ];
             $kb = [
                 [ ['text'=>'پیام‌های پشتیبانی','callback_data'=>'admin:info_user_msgs|id='.$id.'|cat=support|page=1'] ],
