@@ -192,12 +192,16 @@ function bootstrapDatabase(PDO $pdo): void {
         enabled TINYINT(1) NOT NULL DEFAULT 1,
         days VARCHAR(32) NULL,
         time_start CHAR(5) NULL,
-        time_end CHAR(5) NULL
+        time_end CHAR(5) NULL,
+        row_index INT NULL,
+        position ENUM('left','center','right') NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
     // Backfill columns for older deployments (ignore errors if already exists)
     try { $pdo->exec("ALTER TABLE button_settings ADD COLUMN days VARCHAR(32) NULL"); } catch (Exception $e) {}
     try { $pdo->exec("ALTER TABLE button_settings ADD COLUMN time_start CHAR(5) NULL"); } catch (Exception $e) {}
         try { $pdo->exec("ALTER TABLE button_settings ADD COLUMN time_end CHAR(5) NULL"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE button_settings ADD COLUMN row_index INT NULL"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE button_settings ADD COLUMN position ENUM('left','center','right') NULL"); } catch (Exception $e) {}
  
      // Discount codes
      $pdo->exec("CREATE TABLE IF NOT EXISTS discount_codes (
@@ -241,9 +245,27 @@ $defaults = [
         ['shop','فروشگاه'],
         ['admin_panel','پنل مدیریت'],
     ];
+    // Seed with default positions if not set
+    $posMap = [
+        'army' => [1,'left'],
+        'missile' => [1,'center'],
+        'defense' => [2,'left'],
+        'roles' => [2,'center'],
+        'statement' => [3,'left'],
+        'war' => [3,'center'],
+        'shop' => [4,'left'],
+        'assets' => [4,'center'],
+        'support' => [4,'right'],
+        'alliance' => [5,'left'],
+        'admin_panel' => [99,'center']
+    ];
     foreach ($defaults as [$key,$title]) {
         $stmt = $pdo->prepare("INSERT IGNORE INTO button_settings (`key`, title, enabled) VALUES (?, ?, 1)");
         $stmt->execute([$key, $title]);
+        if (isset($posMap[$key])) {
+            $p = $posMap[$key];
+            $pdo->prepare("UPDATE button_settings SET row_index=?, position=? WHERE `key`=? AND (row_index IS NULL OR position IS NULL)")->execute([$p[0], $p[1], $key]);
+        }
     }
 
     // Wheel settings (single row)
@@ -324,7 +346,6 @@ $defaults = [
         CONSTRAINT fk_ui_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
         CONSTRAINT fk_ui_item FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
     // Track packs purchased per user per item to enforce per_user_limit
     $pdo->exec("CREATE TABLE IF NOT EXISTS user_item_purchases (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -675,7 +696,6 @@ function hasPerm(int $telegramId, string $perm): bool {
     if (in_array('all', $perms, true)) return true;
     return in_array($perm, $perms, true);
 }
-
 function userByTelegramId(int $telegramId): ?array {
     $stmt = db()->prepare("SELECT * FROM users WHERE telegram_id = ?");
     $stmt->execute([$telegramId]);
@@ -740,41 +760,68 @@ function isButtonEnabled(string $key): bool {
     return true;
 }
 
-function mainMenuKeyboard(bool $isRegistered, bool $isAdmin): array {
-    $btn = function($key, $cb) {
-        return ['text' => getInlineButtonTitle($key), 'callback_data' => $cb];
-    };
+function buildLayoutKeyboard(array $items, bool $threePerRow = true): array {
+    // items: each item = ['key'=>..., 'cb'=>..., 'row_index'=>int, 'position'=>'left|center|right']
+    // group by row_index and fill positions
     $rows = [];
+    foreach ($items as $it) {
+        $row = (int)($it['row_index'] ?? 0);
+        if (!isset($rows[$row])) $rows[$row] = ['left'=>null,'center'=>null,'right'=>null];
+        $pos = in_array($it['position'] ?? 'left', ['left','center','right'], true) ? $it['position'] : 'left';
+        if ($threePerRow) {
+            if ($rows[$row][$pos] === null) $rows[$row][$pos] = $it;
+            else {
+                // fallback put in first empty slot
+                foreach (['left','center','right'] as $p) { if ($rows[$row][$p]===null) { $rows[$row][$p]=$it; break; } }
+            }
+        } else {
+            if ($rows[$row]['left'] === null) $rows[$row]['left'] = $it; else $rows[$row][] = $it;
+        }
+    }
+    ksort($rows, SORT_NUMERIC);
+    $out = [];
+    foreach ($rows as $rowSlots) {
+        $line = [];
+        foreach (['left','center','right'] as $p) {
+            $it = $rowSlots[$p] ?? null; if (!$it) continue;
+            $line[] = ['text'=>getInlineButtonTitle($it['key']), 'callback_data'=>$it['cb']];
+        }
+        if ($line) $out[] = $line;
+    }
+    return ['inline_keyboard'=>$out];
+}
+
+function mainMenuKeyboard(bool $isRegistered, bool $isAdmin): array {
+    $items = [];
     if ($isRegistered) {
-        $line = [];
-        if (isButtonEnabled('army')) $line[] = $btn('army', 'nav:army');
-        if (isButtonEnabled('missile')) $line[] = $btn('missile', 'nav:missile');
-        if ($line) $rows[] = $line;
-        $line = [];
-        if (isButtonEnabled('defense')) $line[] = $btn('defense', 'nav:defense');
-        if (isButtonEnabled('roles')) $line[] = $btn('roles', 'nav:roles');
-        if ($line) $rows[] = $line;
-        $line = [];
-        if (isButtonEnabled('statement')) $line[] = $btn('statement', 'nav:statement');
-        if (isButtonEnabled('war')) $line[] = $btn('war', 'nav:war');
-        if ($line) $rows[] = $line;
-        $line = [];
-        if (isButtonEnabled('shop')) $line[] = $btn('shop', 'nav:shop');
-        if (isButtonEnabled('assets')) $line[] = $btn('assets', 'nav:assets');
-        if (isButtonEnabled('support')) $line[] = $btn('support', 'nav:support');
-        if ($line) $rows[] = $line;
-        $line = [];
-        if (isButtonEnabled('alliance')) $line[] = $btn('alliance', 'nav:alliance');
-        if ($line) $rows[] = $line;
+        $map = [
+            'army'=>'nav:army',
+            'missile'=>'nav:missile',
+            'defense'=>'nav:defense',
+            'roles'=>'nav:roles',
+            'statement'=>'nav:statement',
+            'war'=>'nav:war',
+            'shop'=>'nav:shop',
+            'assets'=>'nav:assets',
+            'support'=>'nav:support',
+            'alliance'=>'nav:alliance'
+        ];
+        $q = db()->query("SELECT `key`, row_index, position FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance','shop') AND enabled=1");
+        foreach ($q as $r) {
+            $k = $r['key']; if (!isset($map[$k])) continue; if (!isButtonEnabled($k)) continue;
+            $items[] = ['key'=>$k,'cb'=>$map[$k],'row_index'=>(int)($r['row_index']??0),'position'=>$r['position']??'left'];
+        }
     } else {
-        $line = [];
-        if (isButtonEnabled('support')) $line[] = $btn('support', 'nav:support');
-        $rows[] = $line;
+        if (isButtonEnabled('support')) {
+            $r = db()->query("SELECT row_index, position FROM button_settings WHERE `key`='support'")->fetch();
+            $items[] = ['key'=>'support','cb'=>'nav:support','row_index'=>(int)($r['row_index']??0),'position'=>$r['position']??'left'];
+        }
     }
     if ($isAdmin) {
-        $rows[] = [ ['text' => getInlineButtonTitle('admin_panel'), 'callback_data' => 'nav:admin'] ];
+        $r = db()->query("SELECT row_index, position FROM button_settings WHERE `key`='admin_panel'")->fetch();
+        $items[] = ['key'=>'admin_panel','cb'=>'nav:admin','row_index'=>(int)($r['row_index']??99),'position'=>$r['position']??'center'];
     }
-    return ['inline_keyboard' => $rows];
+    return buildLayoutKeyboard($items, true);
 }
 
 function backButton(string $to): array { return ['inline_keyboard' => [ [ ['text' => 'بازگشت', 'callback_data' => $to] ] ]]; }
@@ -988,7 +1035,6 @@ function cbParse(string $data): array {
     }
     return [$action, $params];
 }
-
 // --------------------- CORE HANDLERS ---------------------
 
 function handleStart(array $userRow): void {
@@ -1108,21 +1154,48 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
 
 function renderAdminHome(int $chatId, int $messageId, array $userRow): void {
     $perms = getAdminPermissions($chatId);
-    $rows = [];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'support')) $rows[] = [ ['text' => 'پیام های پشتیبانی', 'callback_data' => 'admin:support|page=1'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'army') || hasPerm($chatId, 'missile') || hasPerm($chatId, 'defense')) $rows[] = [ ['text' => 'لشکر/موشکی/دفاع', 'callback_data' => 'admin:amd'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'statement') || hasPerm($chatId, 'war')) $rows[] = [ ['text' => 'اعلام جنگ / بیانیه', 'callback_data' => 'admin:sw'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'roles')) $rows[] = [ ['text' => 'رول ها', 'callback_data' => 'admin:roles|page=1'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'assets')) $rows[] = [ ['text' => 'دارایی ها', 'callback_data' => 'admin:assets'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'shop')) $rows[] = [ ['text' => 'فروشگاه', 'callback_data' => 'admin:shop'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'settings')) $rows[] = [ ['text' => 'تنظیمات دکمه ها', 'callback_data' => 'admin:buttons'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'users')) $rows[] = [ ['text' => 'کاربران ثبت شده', 'callback_data' => 'admin:users'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'bans')) $rows[] = [ ['text' => 'مدیریت بن', 'callback_data' => 'admin:bans'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'wheel')) $rows[] = [ ['text' => 'گردونه شانس', 'callback_data' => 'admin:wheel'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'alliances')) $rows[] = [ ['text' => 'مدیریت اتحادها', 'callback_data' => 'admin:alliances|page=1'] ];
-    if (isOwner($chatId)) $rows[] = [ ['text' => 'مدیریت ادمین ها', 'callback_data' => 'admin:admins'] ];
-    $rows[] = [ ['text' => 'بازگشت', 'callback_data' => 'nav:home'] ];
-    editMessageText($chatId, $messageId, 'پنل مدیریت', ['inline_keyboard' => $rows]);
+    $items = [];
+    // Map admin sections to keys for layout persistence; store in button_settings as admin_* keys
+    $map = [
+        'admin_support' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'support');}, 'title'=>'پیام های پشتیبانی', 'cb'=>'admin:support|page=1'],
+        'admin_amd' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'army')||hasPerm($chatId,'missile')||hasPerm($chatId,'defense');}, 'title'=>'لشکر/موشکی/دفاع', 'cb'=>'admin:amd'],
+        'admin_sw' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'statement')||hasPerm($chatId,'war');}, 'title'=>'اعلام جنگ / بیانیه', 'cb'=>'admin:sw'],
+        'admin_roles' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'roles');}, 'title'=>'رول ها', 'cb'=>'admin:roles|page=1'],
+        'admin_assets' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'assets');}, 'title'=>'دارایی ها', 'cb'=>'admin:assets'],
+        'admin_shop' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'shop');}, 'title'=>'فروشگاه', 'cb'=>'admin:shop'],
+        'admin_buttons' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'settings');}, 'title'=>'تنظیمات دکمه ها', 'cb'=>'admin:buttons'],
+        'admin_users' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'users');}, 'title'=>'کاربران ثبت شده', 'cb'=>'admin:users'],
+        'admin_bans' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'bans');}, 'title'=>'مدیریت بن', 'cb'=>'admin:bans'],
+        'admin_wheel' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'wheel');}, 'title'=>'گردونه شانس', 'cb'=>'admin:wheel'],
+        'admin_alliances' => ['perm'=>function() use($chatId,$perms){return in_array('all',$perms,true)||hasPerm($chatId,'alliances');}, 'title'=>'مدیریت اتحادها', 'cb'=>'admin:alliances|page=1'],
+        'admin_admins' => ['perm'=>function() use($chatId){return isOwner($chatId);}, 'title'=>'مدیریت ادمین ها', 'cb'=>'admin:admins'],
+        'admin_back' => ['perm'=>function(){return true;}, 'title'=>'بازگشت', 'cb'=>'nav:home']
+    ];
+    // Ensure admin_* keys exist in button_settings with defaults
+    foreach ($map as $k=>$cfg){
+        db()->prepare("INSERT IGNORE INTO button_settings (`key`, title, enabled) VALUES (?, ?, 1)")->execute([$k, $cfg['title']]);
+    }
+    // Default positions for admin keys if empty
+    $adminPos = [
+        'admin_support'=>[1,'left'],
+        'admin_amd'=>[1,'center'],
+        'admin_sw'=>[1,'right'],
+        'admin_roles'=>[2,'left'],
+        'admin_assets'=>[2,'center'],
+        'admin_shop'=>[2,'right'],
+        'admin_buttons'=>[3,'left'],
+        'admin_users'=>[3,'center'],
+        'admin_bans'=>[3,'right'],
+        'admin_wheel'=>[4,'left'],
+        'admin_alliances'=>[4,'center'],
+        'admin_admins'=>[5,'left'],
+        'admin_back'=>[99,'center']
+    ];
+    foreach ($adminPos as $k=>$v){ db()->prepare("UPDATE button_settings SET row_index=COALESCE(row_index,?), position=COALESCE(position,?) WHERE `key`=?")->execute([$v[0],$v[1],$k]); }
+    $q = db()->query("SELECT `key`, row_index, position, enabled FROM button_settings WHERE `key` LIKE 'admin_%'");
+    foreach ($q as $r){ $k=$r['key']; if (!isset($map[$k])) continue; $perm = $map[$k]['perm']; if (!$perm()) continue; if ((int)$r['enabled']!==1) continue; $items[]=['key'=>$k,'cb'=>$map[$k]['cb'],'row_index'=>(int)($r['row_index']??0),'position'=>$r['position']??'left']; }
+    $kb = buildLayoutKeyboard($items, true);
+    editMessageText($chatId, $messageId, 'پنل مدیریت', $kb);
 }
 
 // --------------------- ADMIN SECTIONS ---------------------
@@ -1186,12 +1259,30 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             answerCallback($_POST['callback_query']['id'] ?? '', '');
             break;
         case 'buttons':
-            $rows = db()->query("SELECT `key`, title, enabled FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance','shop') ORDER BY id ASC")->fetchAll();
-            $kb=[]; foreach($rows as $r){ $txt = ($r['enabled']? 'روشن':'خاموش').' - '.$r['title']; $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']], ['text'=>'زمان‌بندی','callback_data'=>'admin:btn_sched|key='.$r['key']] ]; }
+            $rows = db()->query("SELECT `key`, title, enabled, COALESCE(row_index,0) AS row_index, COALESCE(position,'left') AS position FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance','shop','admin_panel') ORDER BY id ASC")->fetchAll();
+            $kb=[]; foreach($rows as $r){ 
+                $txt = ($r['enabled']? 'روشن':'خاموش').' - '.$r['title'].' | ردیف: '.(int)$r['row_index'].' | جایگاه: '.($r['position']);
+                $kb[] = [
+                    ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']],
+                    ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']],
+                    ['text'=>'زمان‌بندی','callback_data'=>'admin:btn_sched|key='.$r['key']]
+                ];
+                $kb[] = [
+                    ['text'=>'ردیف -','callback_data'=>'admin:btn_rowdec|key='.$r['key']],
+                    ['text'=>'ردیف +','callback_data'=>'admin:btn_rowinc|key='.$r['key']],
+                    ['text'=>'تنظیم ردیف','callback_data'=>'admin:btn_rowset|key='.$r['key']]
+                ];
+                $kb[] = [
+                    ['text'=>'چپ','callback_data'=>'admin:btn_pos|key='.$r['key'].'|pos=left'],
+                    ['text'=>'وسط','callback_data'=>'admin:btn_pos|key='.$r['key'].'|pos=center'],
+                    ['text'=>'راست','callback_data'=>'admin:btn_pos|key='.$r['key'].'|pos=right']
+                ];
+            }
+            $kb[]=[ ['text'=>'دکمه‌های پنل مدیریت','callback_data'=>'admin:btn_admin'] ];
             $kb[]=[ ['text'=>'حالت نگهداری','callback_data'=>'admin:maint'] ];
             $kb[]=[ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ];
             editMessageText($chatId,$messageId,'تنظیمات دکمه ها',['inline_keyboard'=>$kb]);
-            sendGuide($chatId,'راهنما: برای تغییر نام یا روشن/خاموش کردن هر دکمه، روی گزینه‌ها کلیک کنید.');
+            sendGuide($chatId,'راهنما: می‌توانید روشن/خاموش کنید، نام را تغییر دهید، زمان‌بندی بگذارید، و ردیف و جایگاه (چپ/وسط/راست) هر دکمه را تنظیم کنید. هر ردیف حداکثر ۳ جایگاه دارد.');
             break;
         case 'maint':
             $on = isMaintenanceEnabled();
@@ -1428,8 +1519,26 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             sendMessage($chatId,'متن جدید دارایی کاربر را ارسال کنید.');
             break;
         case 'buttons':
-            $rows = db()->query("SELECT `key`, title, enabled FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance','shop') ORDER BY id ASC")->fetchAll();
-            $kb=[]; foreach($rows as $r){ $txt = ($r['enabled']? 'روشن':'خاموش').' - '.$r['title']; $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']], ['text'=>'زمان‌بندی','callback_data'=>'admin:btn_sched|key='.$r['key']] ]; }
+            $rows = db()->query("SELECT `key`, title, enabled, COALESCE(row_index,0) AS row_index, COALESCE(position,'left') AS position FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance','shop','admin_panel') ORDER BY id ASC")->fetchAll();
+            $kb=[]; foreach($rows as $r){ 
+                $txt = ($r['enabled']? 'روشن':'خاموش').' - '.$r['title'].' | ردیف: '.(int)$r['row_index'].' | جایگاه: '.($r['position']);
+                $kb[] = [
+                    ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']],
+                    ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']],
+                    ['text'=>'زمان‌بندی','callback_data'=>'admin:btn_sched|key='.$r['key']]
+                ];
+                $kb[] = [
+                    ['text'=>'ردیف -','callback_data'=>'admin:btn_rowdec|key='.$r['key']],
+                    ['text'=>'ردیف +','callback_data'=>'admin:btn_rowinc|key='.$r['key']],
+                    ['text'=>'تنظیم ردیف','callback_data'=>'admin:btn_rowset|key='.$r['key']]
+                ];
+                $kb[] = [
+                    ['text'=>'چپ','callback_data'=>'admin:btn_pos|key='.$r['key'].'|pos=left'],
+                    ['text'=>'وسط','callback_data'=>'admin:btn_pos|key='.$r['key'].'|pos=center'],
+                    ['text'=>'راست','callback_data'=>'admin:btn_pos|key='.$r['key'].'|pos=right']
+                ];
+            }
+            $kb[]=[ ['text'=>'دکمه‌های پنل مدیریت','callback_data'=>'admin:btn_admin'] ];
             $kb[]=[ ['text'=>'حالت نگهداری','callback_data'=>'admin:maint'] ];
             $kb[]=[ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ];
             editMessageText($chatId,$messageId,'تنظیمات دکمه ها',['inline_keyboard'=>$kb]);
@@ -1439,6 +1548,39 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             db()->prepare("UPDATE button_settings SET enabled = 1 - enabled WHERE `key`=?")->execute([$key]);
             handleAdminNav($chatId,$messageId,'buttons',[],$userRow);
             break;
+        case 'btn_rowinc':
+            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            db()->prepare("UPDATE button_settings SET row_index = COALESCE(row_index,0) + 1 WHERE `key`=?")->execute([$key]);
+            handleAdminNav($chatId,$messageId,'buttons',[],$userRow);
+            break;
+        case 'btn_rowdec':
+            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            db()->prepare("UPDATE button_settings SET row_index = GREATEST(COALESCE(row_index,0) - 1, 0) WHERE `key`=?")->execute([$key]);
+            handleAdminNav($chatId,$messageId,'buttons',[],$userRow);
+            break;
+        case 'btn_rowset':
+            $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            setAdminState($chatId,'await_btn_row',['key'=>$key]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'ردیف جدید را ارسال کنید');
+            sendMessage($chatId,'ردیف جدید را ارسال کنید (عدد بین 1 تا 10)');
+            break;
+        case 'btn_pos':
+            $key=$params['key']??''; $pos=$params['pos']??''; if(!$key||!in_array($pos,['left','center','right'],true)){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
+            db()->prepare("UPDATE button_settings SET position=? WHERE `key`=?")->execute([$pos,$key]);
+            handleAdminNav($chatId,$messageId,'buttons',[],$userRow);
+            break;
+        case 'btn_admin':
+            // Allow editing layout for admin_* keys
+            $rows = db()->query("SELECT `key`, title, enabled, COALESCE(row_index,0) AS row_index, COALESCE(position,'left') AS position FROM button_settings WHERE `key` LIKE 'admin_%' ORDER BY id ASC")->fetchAll();
+            $kb=[]; foreach($rows as $r){ 
+                $txt = ($r['enabled']? 'روشن':'خاموش').' - '.$r['title'].' | ردیف: '.(int)$r['row_index'].' | جایگاه: '.($r['position']);
+                $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']], ['text'=>'زمان‌بندی','callback_data'=>'admin:btn_sched|key='.$r['key']] ];
+                $kb[] = [ ['text'=>'ردیف -','callback_data'=>'admin:btn_rowdec|key='.$r['key']] , ['text'=>'ردیف +','callback_data'=>'admin:btn_rowinc|key='.$r['key']], ['text'=>'تنظیم ردیف','callback_data'=>'admin:btn_rowset|key='.$r['key']] ];
+                $kb[] = [ ['text'=>'چپ','callback_data'=>'admin:btn_pos|key='.$r['key'].'|pos=left'] , ['text'=>'وسط','callback_data'=>'admin:btn_pos|key='.$r['key'].'|pos=center'] , ['text'=>'راست','callback_data'=>'admin:btn_pos|key='.$r['key'].'|pos=right'] ];
+            }
+            $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:buttons'] ];
+            editMessageText($chatId,$messageId,'دکمه‌های پنل مدیریت',['inline_keyboard'=>$kb]);
+            break;
         case 'btn_rename':
             $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
             setAdminState($chatId,'await_btn_rename',['key'=>$key]);
@@ -1447,12 +1589,12 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
         case 'btn_sched':
             $key=$params['key']??''; if(!$key){ answerCallback($_POST['callback_query']['id']??'','نامعتبر',true); return; }
             // fetch current
-            $r = db()->prepare("SELECT days,time_start,time_end FROM button_settings WHERE `key`=?"); $r->execute([$key]); $row=$r->fetch();
+            $r = db()->prepare("SELECT days,time_start,time_end,COALESCE(row_index,0) AS row_index,COALESCE(position,'left') AS position FROM button_settings WHERE `key`=?"); $r->execute([$key]); $row=$r->fetch();
             $days = $row && $row['days'] ? $row['days'] : 'all';
             $t1 = $row && $row['time_start'] ? $row['time_start'] : '00:00';
             $t2 = $row && $row['time_end'] ? $row['time_end'] : '00:00';
-            $txt = "زمان‌بندی دکمه: ".$key."\nروزها: ".$days."\nبازه ساعت: ".$t1." تا ".$t2."\n\n- روزها: یکی از all یا ترکیب حروف: su,mo,tu,we,th,fr,sa (مثلاً mo,we,fr)\n- ساعت: فرم HH:MM. اگر 00:00 تا 00:00 باشد یعنی همیشه روشن";
-            $kb=[ [ ['text'=>'تنظیم روزها','callback_data'=>'admin:btn_sched_days|key='.$key], ['text'=>'تنظیم ساعت','callback_data'=>'admin:btn_sched_time|key='.$key] ], [ ['text'=>'بازگشت','callback_data'=>'admin:buttons'] ] ];
+            $txt = "زمان‌بندی دکمه: ".$key."\nروزها: ".$days."\nبازه ساعت: ".$t1." تا ".$t2."\nردیف: ".((int)($row['row_index']??0))." | جایگاه: ".($row['position']??'left')."\n\n- روزها: یکی از all یا ترکیب حروف: su,mo,tu,we,th,fr,sa (مثلاً mo,we,fr)\n- ساعت: فرم HH:MM. اگر 00:00 تا 00:00 باشد یعنی همیشه روشن";
+            $kb=[ [ ['text'=>'تنظیم روزها','callback_data'=>'admin:btn_sched_days|key='.$key], ['text'=>'تنظیم ساعت','callback_data'=>'admin:btn_sched_time|key='.$key] ], [ ['text'=>'ردیف -','callback_data'=>'admin:btn_rowdec|key='.$key], ['text'=>'ردیف +','callback_data'=>'admin:btn_rowinc|key='.$key] ], [ ['text'=>'چپ','callback_data'=>'admin:btn_pos|key='.$key.'|pos=left'], ['text'=>'وسط','callback_data'=>'admin:btn_pos|key='.$key.'|pos=center'], ['text'=>'راست','callback_data'=>'admin:btn_pos|key='.$key.'|pos=right'] ], [ ['text'=>'بازگشت','callback_data'=>'admin:buttons'] ] ];
             editMessageText($chatId,$messageId,$txt,['inline_keyboard'=>$kb]);
             break;
         case 'btn_sched_days':
@@ -2599,6 +2741,14 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             // refresh list
             handleAdminNav($chatId, $message['message_id'] ?? 0, 'user_items', ['id'=>$id,'page'=>$page], ['telegram_id'=>$chatId]);
             break;
+        case 'await_btn_row':
+            $key = $data['key'] ?? '';
+            $val = (int)preg_replace('/\D+/', '', (string)$text);
+            if ($val < 1 || $val > 10) { sendMessage($chatId,'عدد باید بین 1 تا 10 باشد.'); return; }
+            db()->prepare("UPDATE button_settings SET row_index=? WHERE `key`=?")->execute([$val, $key]);
+            sendMessage($chatId,'ردیف تنظیم شد.');
+            clearAdminState($chatId);
+            break;
         default:
             sendMessage($chatId,'حالت ناشناخته'); clearAdminState($chatId);
     }
@@ -2617,7 +2767,6 @@ function extractTelegramIdFromMessage(array $message): ?int {
     }
     return null;
 }
-
 function handleUserStateMessage(array $userRow, array $message, array $state): void {
     $chatId = (int)$userRow['telegram_id'];
     $key = $state['key']; $data=$state['data'];
