@@ -1131,7 +1131,7 @@ function renderAdminHome(int $chatId, int $messageId, array $userRow): void {
     if (in_array('all', $perms, true) || hasPerm($chatId, 'assets')) $rows[] = [ ['text' => 'دارایی ها', 'callback_data' => 'admin:assets'] ];
     if (in_array('all', $perms, true) || hasPerm($chatId, 'shop')) $rows[] = [ ['text' => 'فروشگاه', 'callback_data' => 'admin:shop'] ];
     if (in_array('all', $perms, true) || hasPerm($chatId, 'settings')) $rows[] = [ ['text' => 'تنظیمات دکمه ها', 'callback_data' => 'admin:buttons'] ];
-    if (in_array('all', $perms, true) || hasPerm($chatId, 'users')) $rows[] = [ ['text' => 'کاربران ثبت شده', 'callback_data' => 'admin:users'] ];
+    if (in_array('all', $perms, true) || hasPerm($chatId, 'users') || hasPerm($chatId, 'user_info')) $rows[] = [ ['text' => 'کاربران ثبت شده', 'callback_data' => 'admin:info_users|page=1'] ];
     if (in_array('all', $perms, true) || hasPerm($chatId, 'bans')) $rows[] = [ ['text' => 'مدیریت بن', 'callback_data' => 'admin:bans'] ];
     if (in_array('all', $perms, true) || hasPerm($chatId, 'wheel')) $rows[] = [ ['text' => 'گردونه شانس', 'callback_data' => 'admin:wheel'] ];
     if (in_array('all', $perms, true) || hasPerm($chatId, 'alliances')) $rows[] = [ ['text' => 'مدیریت اتحادها', 'callback_data' => 'admin:alliances|page=1'] ];
@@ -1201,7 +1201,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             break;
         case 'buttons':
             $rows = db()->query("SELECT `key`, title, enabled FROM button_settings WHERE `key` IN ('army','missile','defense','roles','statement','war','assets','support','alliance','shop','admin_panel') ORDER BY id ASC")->fetchAll();
-            $kb=[]; foreach($rows as $r){ $txt = ($r['enabled']? 'روشن':'خاموش').' - '.$r['title']; $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']], ['text'=>'زمان‌بندی','callback_data'=>'admin:btn_sched|key='.$r['key']], ['text'=>'تغییر جایگاه','callback_data'=>'admin:btn_posmenu|key='.$r['key'].'|back=buttons'], ['text'=>'اسم دکمه','copy_text'=>['text'=>$r['title']]] ]; }
+            $kb=[]; foreach($rows as $r){ $txt = ($r['enabled']? 'روشن':'خاموش').' - '.$r['title']; $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']], ['text'=>'زمان‌بندی','callback_data'=>'admin:btn_sched|key='.$r['key']], ['text'=>'تغییر جایگاه','callback_data'=>'admin:btn_posmenu|key='.$r['key'].'|back=buttons'] ]; }
             $kb[]=[ ['text'=>'دکمه‌های پنل مدیریت','callback_data'=>'admin:btn_admin'] ];
             $kb[]=[ ['text'=>'حالت نگهداری','callback_data'=>'admin:maint'] ];
             $kb[]=[ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ];
@@ -1210,7 +1210,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             break;
         case 'btn_admin':
             $rows = db()->query("SELECT `key`, title FROM button_settings WHERE `key` LIKE 'admin_%' ORDER BY id ASC")->fetchAll();
-            $kb=[]; foreach($rows as $r){ $txt = $r['title']; $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']], ['text'=>'تغییر جایگاه','callback_data'=>'admin:btn_posmenu|key='.$r['key'].'|back=btn_admin'], ['text'=>'اسم دکمه','copy_text'=>['text'=>$r['title']]] ]; }
+            $kb=[]; foreach($rows as $r){ $txt = $r['title']; $kb[] = [ ['text'=>$txt, 'callback_data'=>'admin:btn_toggle|key='.$r['key']] , ['text'=>'تغییر نام','callback_data'=>'admin:btn_rename|key='.$r['key']], ['text'=>'تغییر جایگاه','callback_data'=>'admin:btn_posmenu|key='.$r['key'].'|back=btn_admin'] ]; }
             $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:buttons'] ];
             editMessageText($chatId,$messageId,'دکمه‌های پنل مدیریت',['inline_keyboard'=>$kb]);
             break;
