@@ -376,9 +376,69 @@ $defaults = [
         UNIQUE KEY uq_ufd (user_factory_id, for_date),
         CONSTRAINT fk_ufg_uf FOREIGN KEY (user_factory_id) REFERENCES user_factories(id) ON DELETE CASCADE,
         CONSTRAINT fk_ufg_item FOREIGN KEY (chosen_item_id) REFERENCES shop_items(id) ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
-    $pdo->exec("CREATE TABLE IF NOT EXISTS alliance_invites (
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+ 
+     // Crafting recipes
+     $pdo->exec("CREATE TABLE IF NOT EXISTS craft_recipes (
+         id INT AUTO_INCREMENT PRIMARY KEY,
+         name VARCHAR(128) NOT NULL,
+         output_item_id INT NOT NULL,
+         output_qty INT NOT NULL DEFAULT 1,
+         duration_sec INT NOT NULL DEFAULT 0,
+         enabled TINYINT(1) NOT NULL DEFAULT 1,
+         UNIQUE KEY uq_craft_name (name),
+         CONSTRAINT fk_craft_out_item FOREIGN KEY (output_item_id) REFERENCES shop_items(id) ON DELETE CASCADE
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+ 
+     $pdo->exec("CREATE TABLE IF NOT EXISTS craft_recipe_inputs (
+         id INT AUTO_INCREMENT PRIMARY KEY,
+         recipe_id INT NOT NULL,
+         item_id INT NOT NULL,
+         qty INT NOT NULL,
+         CONSTRAINT fk_craft_in_recipe FOREIGN KEY (recipe_id) REFERENCES craft_recipes(id) ON DELETE CASCADE,
+         CONSTRAINT fk_craft_in_item FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+ 
+     $pdo->exec("CREATE TABLE IF NOT EXISTS user_craft_jobs (
+         id INT AUTO_INCREMENT PRIMARY KEY,
+         user_id INT NOT NULL,
+         recipe_id INT NOT NULL,
+         started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         done_at DATETIME NULL,
+         status ENUM('running','done','canceled') NOT NULL DEFAULT 'running',
+         CONSTRAINT fk_ucj_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+         CONSTRAINT fk_ucj_recipe FOREIGN KEY (recipe_id) REFERENCES craft_recipes(id) ON DELETE CASCADE
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+ 
+     // Player market (P2P)
+     $pdo->exec("CREATE TABLE IF NOT EXISTS market_orders (
+         id INT AUTO_INCREMENT PRIMARY KEY,
+         user_id INT NOT NULL,
+         type ENUM('sell','buy') NOT NULL,
+         item_id INT NOT NULL,
+         unit_price BIGINT NOT NULL,
+         quantity BIGINT NOT NULL,
+         remaining BIGINT NOT NULL,
+         status ENUM('open','closed','canceled') NOT NULL DEFAULT 'open',
+         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         CONSTRAINT fk_mo_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+         CONSTRAINT fk_mo_item FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+ 
+     $pdo->exec("CREATE TABLE IF NOT EXISTS market_trades (
+         id INT AUTO_INCREMENT PRIMARY KEY,
+         buy_order_id INT NOT NULL,
+         sell_order_id INT NOT NULL,
+         item_id INT NOT NULL,
+         quantity BIGINT NOT NULL,
+         price BIGINT NOT NULL,
+         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         CONSTRAINT fk_mt_b FOREIGN KEY (buy_order_id) REFERENCES market_orders(id) ON DELETE CASCADE,
+         CONSTRAINT fk_mt_s FOREIGN KEY (sell_order_id) REFERENCES market_orders(id) ON DELETE CASCADE,
+         CONSTRAINT fk_mt_i FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+ 
+     $pdo->exec("CREATE TABLE IF NOT EXISTS alliance_invites (
         id INT AUTO_INCREMENT PRIMARY KEY,
         alliance_id INT NOT NULL,
         invitee_user_id INT NOT NULL,
