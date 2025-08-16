@@ -376,9 +376,69 @@ $defaults = [
         UNIQUE KEY uq_ufd (user_factory_id, for_date),
         CONSTRAINT fk_ufg_uf FOREIGN KEY (user_factory_id) REFERENCES user_factories(id) ON DELETE CASCADE,
         CONSTRAINT fk_ufg_item FOREIGN KEY (chosen_item_id) REFERENCES shop_items(id) ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
-    $pdo->exec("CREATE TABLE IF NOT EXISTS alliance_invites (
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+ 
+     // Crafting recipes
+     $pdo->exec("CREATE TABLE IF NOT EXISTS craft_recipes (
+         id INT AUTO_INCREMENT PRIMARY KEY,
+         name VARCHAR(128) NOT NULL,
+         output_item_id INT NOT NULL,
+         output_qty INT NOT NULL DEFAULT 1,
+         duration_sec INT NOT NULL DEFAULT 0,
+         enabled TINYINT(1) NOT NULL DEFAULT 1,
+         UNIQUE KEY uq_craft_name (name),
+         CONSTRAINT fk_craft_out_item FOREIGN KEY (output_item_id) REFERENCES shop_items(id) ON DELETE CASCADE
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+ 
+     $pdo->exec("CREATE TABLE IF NOT EXISTS craft_recipe_inputs (
+         id INT AUTO_INCREMENT PRIMARY KEY,
+         recipe_id INT NOT NULL,
+         item_id INT NOT NULL,
+         qty INT NOT NULL,
+         CONSTRAINT fk_craft_in_recipe FOREIGN KEY (recipe_id) REFERENCES craft_recipes(id) ON DELETE CASCADE,
+         CONSTRAINT fk_craft_in_item FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+ 
+     $pdo->exec("CREATE TABLE IF NOT EXISTS user_craft_jobs (
+         id INT AUTO_INCREMENT PRIMARY KEY,
+         user_id INT NOT NULL,
+         recipe_id INT NOT NULL,
+         started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         done_at DATETIME NULL,
+         status ENUM('running','done','canceled') NOT NULL DEFAULT 'running',
+         CONSTRAINT fk_ucj_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+         CONSTRAINT fk_ucj_recipe FOREIGN KEY (recipe_id) REFERENCES craft_recipes(id) ON DELETE CASCADE
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+ 
+     // Player market (P2P)
+     $pdo->exec("CREATE TABLE IF NOT EXISTS market_orders (
+         id INT AUTO_INCREMENT PRIMARY KEY,
+         user_id INT NOT NULL,
+         type ENUM('sell','buy') NOT NULL,
+         item_id INT NOT NULL,
+         unit_price BIGINT NOT NULL,
+         quantity BIGINT NOT NULL,
+         remaining BIGINT NOT NULL,
+         status ENUM('open','closed','canceled') NOT NULL DEFAULT 'open',
+         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         CONSTRAINT fk_mo_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+         CONSTRAINT fk_mo_item FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+ 
+     $pdo->exec("CREATE TABLE IF NOT EXISTS market_trades (
+         id INT AUTO_INCREMENT PRIMARY KEY,
+         buy_order_id INT NOT NULL,
+         sell_order_id INT NOT NULL,
+         item_id INT NOT NULL,
+         quantity BIGINT NOT NULL,
+         price BIGINT NOT NULL,
+         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         CONSTRAINT fk_mt_b FOREIGN KEY (buy_order_id) REFERENCES market_orders(id) ON DELETE CASCADE,
+         CONSTRAINT fk_mt_s FOREIGN KEY (sell_order_id) REFERENCES market_orders(id) ON DELETE CASCADE,
+         CONSTRAINT fk_mt_i FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+ 
+     $pdo->exec("CREATE TABLE IF NOT EXISTS alliance_invites (
         id INT AUTO_INCREMENT PRIMARY KEY,
         alliance_id INT NOT NULL,
         invitee_user_id INT NOT NULL,
@@ -989,6 +1049,68 @@ function cbParse(string $data): array {
     return [$action, $params];
 }
 
+function getOperationConfig(string $type): array {
+	$configs = [
+		'army' => [
+			'units' => [ 'Tank' => ['fuel'=>2,'ammo_land'=>1], 'Armored' => ['fuel'=>1,'ammo_land'=>1], 'Artillery' => ['fuel'=>1,'ammo_land'=>2] ],
+			'caps' => ['max_total'=>100],
+			'cost_keys' => ['fuel'=>'Fuel','ammo_land'=>'AmmoLand']
+		],
+		'missile' => [
+			'units' => [ 'Missile' => ['fuel'=>2,'ammo_missile'=>1] ],
+			'caps' => ['max_total'=>50],
+			'cost_keys' => ['fuel'=>'Fuel','ammo_missile'=>'AmmoMissile']
+		],
+		'defense' => [
+			'units' => [ 'Tank' => ['fuel'=>2,'ammo_land'=>1], 'Armored' => ['fuel'=>1,'ammo_land'=>1], 'Artillery' => ['fuel'=>1,'ammo_land'=>2] ],
+			'caps' => ['max_total'=>100],
+			'multiplier' => 0.8,
+			'cost_keys' => ['fuel'=>'Fuel','ammo_land'=>'AmmoLand']
+		],
+	];
+	return $configs[$type] ?? [];
+}
+
+function getUserInventoryMap(int $userId): array {
+	$rows = db()->prepare("SELECT si.name, ui.quantity FROM user_items ui JOIN shop_items si ON si.id=ui.item_id WHERE ui.user_id=?");
+	$rows->execute([$userId]);
+	$map = [];
+	foreach ($rows->fetchAll() as $r) { $map[$r['name']] = (int)$r['quantity']; }
+	return $map;
+}
+
+function calculateOperationCosts(array $picks, array $config): array {
+	$totals = ['fuel'=>0,'ammo_land'=>0,'ammo_missile'=>0];
+	$mult = isset($config['multiplier']) ? (float)$config['multiplier'] : 1.0;
+	foreach ($picks as $unitName => $count) {
+		if ($count <= 0) continue;
+		$unitCfg = $config['units'][$unitName] ?? null; if (!$unitCfg) continue;
+		foreach ($unitCfg as $k => $v) { if (!isset($totals[$k])) $totals[$k]=0; $totals[$k] += (int)ceil($v * $count * $mult); }
+	}
+	return $totals;
+}
+
+function tryConsumeOperationCosts(int $userId, array $costs, array $config): bool {
+	$names = $config['cost_keys'] ?? [];
+	$pdo = db();
+	try {
+		$pdo->beginTransaction();
+		foreach ($costs as $k => $qty) {
+			if ($qty <= 0) continue;
+			$itemName = $names[$k] ?? '';
+			if ($itemName === '') continue;
+			$st = $pdo->prepare("SELECT si.id FROM shop_items si WHERE si.name=? LIMIT 1");
+			$st->execute([$itemName]); $row=$st->fetch(); if(!$row){ $pdo->rollBack(); return false; }
+			$itemId = (int)$row['id'];
+			$upd = $pdo->prepare("UPDATE user_items SET quantity = quantity - ? WHERE user_id=? AND item_id=? AND quantity >= ?");
+			$upd->execute([(int)$qty, $userId, $itemId, (int)$qty]);
+			if ($upd->rowCount() === 0) { $pdo->rollBack(); return false; }
+		}
+		$pdo->commit();
+		return true;
+	} catch (Throwable $e) { try { $pdo->rollBack(); } catch (Throwable $e2) {} return false; }
+}
+
 // --------------------- CORE HANDLERS ---------------------
 
 function handleStart(array $userRow): void {
@@ -1031,8 +1153,8 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
         case 'missile':
         case 'defense':
             if (!$isRegistered) { answerCallback($_POST['callback_query']['id'] ?? '', 'برای استفاده باید ثبت شوید.', true); return; }
-            setUserState($chatId, 'await_submission', ['type' => $route]);
-            editMessageText($chatId, $messageId, 'متن یا عکس خود را ارسال کنید.', backButton('nav:home'));
+            answerCallback($_POST['callback_query']['id'] ?? '', '');
+            processCallback(['from'=>['id'=>$chatId],'message'=>['message_id'=>$messageId],'data'=>'op:select|type='.$route]);
             break;
         case 'statement':
             if (!$isRegistered) { answerCallback($_POST['callback_query']['id'] ?? '', 'برای استفاده باید ثبت شوید.', true); return; }
@@ -1122,7 +1244,10 @@ function renderAdminHome(int $chatId, int $messageId, array $userRow): void {
     if (in_array('all', $perms, true) || hasPerm($chatId, 'alliances')) $rows[] = [ ['text' => 'مدیریت اتحادها', 'callback_data' => 'admin:alliances|page=1'] ];
     if (isOwner($chatId)) $rows[] = [ ['text' => 'مدیریت ادمین ها', 'callback_data' => 'admin:admins'] ];
     $rows[] = [ ['text' => 'بازگشت', 'callback_data' => 'nav:home'] ];
-    editMessageText($chatId, $messageId, 'پنل مدیریت', ['inline_keyboard' => $rows]);
+    $backRow = array_pop($rows);
+    $kb = widenKeyboard(['inline_keyboard' => $rows]);
+    $kb['inline_keyboard'][] = $backRow;
+    editMessageText($chatId, $messageId, 'پنل مدیریت', $kb);
 }
 
 // --------------------- ADMIN SECTIONS ---------------------
@@ -1986,7 +2111,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             editMessageText($chatId,$messageId,'دارایی‌های کاربر (' . e($ur['country']) . "):\n\n" . e($content) . $wallet, backButton('admin:info_user_view|id='.$id));
             break;
         case 'close_panel':
-            if (!empty($_POST['callback_query']['message']['message_id'])) deleteMessage($chatId, (int)$_POST['callback_query']['message']['message_id']);
+            if (!empty($messageId)) deleteMessage($chatId, $messageId);
             break;
         default:
             sendMessage($chatId,'حالت ناشناخته'); clearAdminState($chatId);
@@ -2994,6 +3119,56 @@ function processCallback(array $callback): void {
         }
         answerCallback($callback['id'],'دستور ناشناخته', true);
         return;
+    }
+    if (strpos($action, 'op:') === 0) {
+        $route = substr($action, 3);
+        $type = $params['type'] ?? 'army';
+        $cfg = getOperationConfig($type);
+        if (!$cfg) { answerCallback($callback['id'], 'نامعتبر', true); return; }
+        $urow = userByTelegramId($chatId); $uid = (int)$urow['id'];
+        $state = getUserState($chatId);
+        $picks = ($state && $state['key']==='await_op_select' && ($state['data']['type']??'')===$type) ? ($state['data']['picks']??[]) : [];
+        $picks = is_array($picks) ? $picks : [];
+        $render = function() use($chatId,$messageId,$type,$cfg,$picks,$uid){
+            $lines = ['انتخاب نیرو برای عملیات:'];
+            $kb = [];
+            foreach ($cfg['units'] as $name => $_rules) {
+                $cnt = (int)($picks[$name] ?? 0);
+                $lines[] = '- ' . e($name) . ' | تعداد: ' . $cnt;
+                $kb[] = [ ['text'=>'+','callback_data'=>'op:inc|type='.$type.'|unit='.urlencode($name)], ['text'=>'-','callback_data'=>'op:dec|type='.$type.'|unit='.urlencode($name)] ];
+            }
+            $costs = calculateOperationCosts($picks, $cfg);
+            $inv = getUserInventoryMap($uid);
+            $needLines = [];
+            foreach ($costs as $k=>$v) { if ($v>0) { $itemName = $cfg['cost_keys'][$k] ?? $k; $have = (int)($inv[$itemName] ?? 0); $needLines[] = e($itemName).': '.$v.' (موجودی: '.$have.')'; } }
+            if ($needLines) { $lines[]=''; $lines[]='مصرف موردنیاز:'; foreach($needLines as $nl){ $lines[]=$nl; } }
+            $kb[] = [ ['text'=>'تایید عملیات','callback_data'=>'op:confirm|type='.$type], ['text'=>'بازگشت','callback_data'=>'nav:home'] ];
+            editMessageText($chatId,$messageId, implode("\n", $lines), ['inline_keyboard'=>$kb]);
+        };
+        if ($route === 'select') { setUserState($chatId,'await_op_select',['type'=>$type,'picks'=>[]]); $render(); return; }
+        if ($route === 'inc' || $route === 'dec') {
+            $unit = urldecode($params['unit'] ?? ''); if($unit===''){ answerCallback($callback['id'],'نامعتبر',true); return; }
+            if (!isset($cfg['units'][$unit])) { answerCallback($callback['id'],'نامعتبر', true); return; }
+            $cnt = (int)($picks[$unit] ?? 0);
+            if ($route==='inc') { $picks[$unit] = $cnt+1; } else { $picks[$unit] = max(0, $cnt-1); }
+            setUserState($chatId,'await_op_select',['type'=>$type,'picks'=>$picks]);
+            answerCallback($callback['id'],'');
+            $render();
+            return;
+        }
+        if ($route === 'confirm') {
+            $costs = calculateOperationCosts($picks, $cfg);
+            $inv = getUserInventoryMap($uid);
+            foreach ($costs as $k=>$v) { if ($v<=0) continue; $itemName = $cfg['cost_keys'][$k] ?? $k; $have=(int)($inv[$itemName] ?? 0); if ($have < $v) { answerCallback($callback['id'],'کمبود '.e($itemName), true); return; } }
+            if (!tryConsumeOperationCosts($uid, $costs, $cfg)) { answerCallback($callback['id'],'موجودی کافی نیست', true); return; }
+            $summaryParts=[]; foreach ($picks as $n=>$c){ if($c>0){ $summaryParts[] = e($n).': '.$c; } }
+            $summary = 'انتخاب نیرو: '.($summaryParts?implode(' | ',$summaryParts):'—');
+            $consParts=[]; foreach ($costs as $k=>$v){ if($v>0){ $name = $cfg['cost_keys'][$k] ?? $k; $consParts[] = e($name).': '.$v; } }
+            if ($consParts) { $summary .= "\nمصرف: ".implode(' | ',$consParts); }
+            db()->prepare("INSERT INTO submissions (user_id, type, text) VALUES (?, ?, ?)")->execute([(int)$u['id'], $type, $summary]);
+            clearUserState($chatId);
+            editMessageText($chatId,$messageId,'عملیات ثبت شد.',['inline_keyboard'=>[[['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]] );
+            return;
     }
     if (strpos($action, 'alli:') === 0) {
         if (!isButtonEnabled('alliance')) { answerCallback($callback['id'], 'این دکمه در حال حاضر در دسترس نیست', true); return; }
