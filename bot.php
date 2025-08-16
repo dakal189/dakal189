@@ -1122,7 +1122,10 @@ function renderAdminHome(int $chatId, int $messageId, array $userRow): void {
     if (in_array('all', $perms, true) || hasPerm($chatId, 'alliances')) $rows[] = [ ['text' => 'مدیریت اتحادها', 'callback_data' => 'admin:alliances|page=1'] ];
     if (isOwner($chatId)) $rows[] = [ ['text' => 'مدیریت ادمین ها', 'callback_data' => 'admin:admins'] ];
     $rows[] = [ ['text' => 'بازگشت', 'callback_data' => 'nav:home'] ];
-    editMessageText($chatId, $messageId, 'پنل مدیریت', ['inline_keyboard' => $rows]);
+    $backRow = array_pop($rows);
+    $kb = widenKeyboard(['inline_keyboard' => $rows]);
+    $kb['inline_keyboard'][] = $backRow;
+    editMessageText($chatId, $messageId, 'پنل مدیریت', $kb);
 }
 
 // --------------------- ADMIN SECTIONS ---------------------
@@ -1986,7 +1989,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             editMessageText($chatId,$messageId,'دارایی‌های کاربر (' . e($ur['country']) . "):\n\n" . e($content) . $wallet, backButton('admin:info_user_view|id='.$id));
             break;
         case 'close_panel':
-            if (!empty($_POST['callback_query']['message']['message_id'])) deleteMessage($chatId, (int)$_POST['callback_query']['message']['message_id']);
+            if (!empty($messageId)) deleteMessage($chatId, $messageId);
             break;
         default:
             sendMessage($chatId,'حالت ناشناخته'); clearAdminState($chatId);
