@@ -31,7 +31,7 @@ $BASE_URL        = getenv('BASE_URL') ?: 'https://dakalll.ir/samp.php';
 if (empty($BOT_TOKEN)) { http_response_code(500); echo 'BOT_TOKEN not set'; exit; }
 
 // Telegram HTTP
-function botApi(string $method, array $params = []): array {
+function botApi($method, $params = array()) {
 	global $BOT_TOKEN;
 	$url = "https://api.telegram.org/bot{$BOT_TOKEN}/{$method}";
 	$ch = curl_init();
@@ -50,16 +50,16 @@ function botApi(string $method, array $params = []): array {
 	return is_array($decoded) ? $decoded : ['ok' => false, 'description' => 'invalid json'];
 }
 
-function sendMessage(int $chatId, string $text, array $opts = []): array { return botApi('sendMessage', array_merge(['chat_id'=>$chatId,'text'=>$text,'parse_mode'=>'HTML','disable_web_page_preview'=>true], $opts)); }
-function editMessageText(int $chatId, int $messageId, string $text, array $opts = []): array { return botApi('editMessageText', array_merge(['chat_id'=>$chatId,'message_id'=>$messageId,'text'=>$text,'parse_mode'=>'HTML','disable_web_page_preview'=>true], $opts)); }
-function answerCallback(string $callbackId, string $text = '', bool $showAlert = false): array { return botApi('answerCallbackQuery',['callback_query_id'=>$callbackId,'text'=>$text,'show_alert'=>$showAlert]); }
-function sendPhoto(int $chatId, $photo, array $opts = []): array { return botApi('sendPhoto', array_merge(['chat_id'=>$chatId,'photo'=>$photo,'parse_mode'=>'HTML'], $opts)); }
-function sendMediaGroup(int $chatId, array $media, array $opts = []): array { return botApi('sendMediaGroup', array_merge(['chat_id'=>$chatId,'media'=>json_encode($media, JSON_UNESCAPED_UNICODE)], $opts)); }
-function getMeUsername(): string { global $BOT_USERNAME; if (!empty($BOT_USERNAME)) return ltrim($BOT_USERNAME, '@'); $me = botApi('getMe'); return (!empty($me['ok']) && !empty($me['result']['username'])) ? ltrim($me['result']['username'],'@') : ''; }
-function notifyOwner(string $text): void { global $OWNER_ID; if ($OWNER_ID) { @sendMessage((int)$OWNER_ID, $text); } }
+function sendMessage($chatId, $text, $opts = array()) { return botApi('sendMessage', array_merge(array('chat_id'=>$chatId,'text'=>$text,'parse_mode'=>'HTML','disable_web_page_preview'=>true), $opts)); }
+function editMessageText($chatId, $messageId, $text, $opts = array()) { return botApi('editMessageText', array_merge(array('chat_id'=>$chatId,'message_id'=>$messageId,'text'=>$text,'parse_mode'=>'HTML','disable_web_page_preview'=>true), $opts)); }
+function answerCallback($callbackId, $text = '', $showAlert = false) { return botApi('answerCallbackQuery',array('callback_query_id'=>$callbackId,'text'=>$text,'show_alert'=>$showAlert)); }
+function sendPhoto($chatId, $photo, $opts = array()) { return botApi('sendPhoto', array_merge(array('chat_id'=>$chatId,'photo'=>$photo,'parse_mode'=>'HTML'), $opts)); }
+function sendMediaGroup($chatId, $media, $opts = array()) { return botApi('sendMediaGroup', array_merge(array('chat_id'=>$chatId,'media'=>json_encode($media, JSON_UNESCAPED_UNICODE)), $opts)); }
+function getMeUsername() { global $BOT_USERNAME; if (!empty($BOT_USERNAME)) return ltrim($BOT_USERNAME, '@'); $me = botApi('getMe'); return (!empty($me['ok']) && !empty($me['result']['username'])) ? ltrim($me['result']['username'],'@') : ''; }
+function notifyOwner($text) { global $OWNER_ID; if ($OWNER_ID) { @sendMessage((int)$OWNER_ID, $text); } }
 
 // DB
-function db(): PDO {
+function db() {
 	static $pdo = null; global $DB_HOST,$DB_PORT,$DB_NAME,$DB_USER,$DB_PASS;
 	if ($pdo instanceof PDO) return $pdo;
 	$dsn = "mysql:host={$DB_HOST};port={$DB_PORT};dbname={$DB_NAME};charset=utf8mb4";
@@ -68,7 +68,7 @@ function db(): PDO {
 	return $pdo;
 }
 
-function ensureSchema(PDO $pdo): void {
+function ensureSchema($pdo) {
 	$pdo->exec('CREATE TABLE IF NOT EXISTS users (
 		user_id BIGINT PRIMARY KEY,
 		first_name VARCHAR(255) NULL,
@@ -353,27 +353,27 @@ function i18n(): array {
 	return $map;
 }
 
-function t(string $key, string $lang): string { $map = i18n(); if (isset($map[$lang][$key])) return $map[$lang][$key]; if (isset($map['en'][$key])) return $map['en'][$key]; return $key; }
+function t($key, $lang) { $map = i18n(); if (isset($map[$lang][$key])) return $map[$lang][$key]; if (isset($map['en'][$key])) return $map['en'][$key]; return $key; }
 
 // Users & sessions
-function upsertUser(int $userId, string $firstName = '', string $username = null): void { $pdo = db(); $pdo->prepare('INSERT INTO users (user_id, first_name, username) VALUES (?,?,?) ON DUPLICATE KEY UPDATE first_name=VALUES(first_name), username=VALUES(username)')->execute([$userId,$firstName,$username]); }
-function getUser(int $userId): ?array { $pdo=db(); $st=$pdo->prepare('SELECT * FROM users WHERE user_id=?'); $st->execute([$userId]); return $st->fetch() ?: null; }
-function getUserLang(int $userId): string { $u=getUser($userId); return ($u && in_array($u['language'], SUPPORTED_LANGS, true)) ? $u['language'] : 'fa'; }
-function setUserLang(int $userId, string $lang, bool $selected=true): void { if (!in_array($lang, SUPPORTED_LANGS,true)) return; $pdo=db(); $pdo->prepare('UPDATE users SET language=?, language_selected=? WHERE user_id=?')->execute([$lang, $selected?1:0, $userId]); }
-function isAdmin(int $userId): bool { $u=getUser($userId); return $u ? (bool)$u['is_admin'] : false; }
-function ensureOwnerAdmin(int $userId): void { global $OWNER_ID; if ((string)$userId===(string)$OWNER_ID) { db()->prepare('UPDATE users SET is_admin=1 WHERE user_id=?')->execute([$userId]); } }
-function setAdmin(int $userId, bool $flag): void { db()->prepare('UPDATE users SET is_admin=? WHERE user_id=?')->execute([$flag?1:0,$userId]); }
-function setSession(int $userId, string $state, array $payload=[]): void { db()->prepare('REPLACE INTO user_sessions (user_id,state,payload) VALUES (?,?,?)')->execute([$userId,$state,json_encode($payload,JSON_UNESCAPED_UNICODE)]); }
-function getSession(int $userId): ?array { $st=db()->prepare('SELECT state,payload FROM user_sessions WHERE user_id=?'); $st->execute([$userId]); $r=$st->fetch(); return $r?['state'=>$r['state'],'payload'=>$r['payload']?json_decode($r['payload'],true):[]]:null; }
-function clearSession(int $userId): void { db()->prepare('DELETE FROM user_sessions WHERE user_id=?')->execute([$userId]); }
+function upsertUser($userId, $firstName = '', $username = null) { $pdo = db(); $pdo->prepare('INSERT INTO users (user_id, first_name, username) VALUES (?,?,?) ON DUPLICATE KEY UPDATE first_name=VALUES(first_name), username=VALUES(username)')->execute(array($userId,$firstName,$username)); }
+function getUser($userId) { $pdo=db(); $st=$pdo->prepare('SELECT * FROM users WHERE user_id=?'); $st->execute(array($userId)); $r=$st->fetch(); return $r ? $r : null; }
+function getUserLang($userId) { $u=getUser($userId); return ($u && in_array($u['language'], SUPPORTED_LANGS, true)) ? $u['language'] : 'fa'; }
+function setUserLang($userId, $lang, $selected=true) { if (!in_array($lang, SUPPORTED_LANGS,true)) return; $pdo=db(); $pdo->prepare('UPDATE users SET language=?, language_selected=? WHERE user_id=?')->execute(array($lang, $selected?1:0, $userId)); }
+function isAdmin($userId) { $u=getUser($userId); return $u ? (bool)$u['is_admin'] : false; }
+function ensureOwnerAdmin($userId) { global $OWNER_ID; if ((string)$userId===(string)$OWNER_ID) { db()->prepare('UPDATE users SET is_admin=1 WHERE user_id=?')->execute(array($userId)); } }
+function setAdmin($userId, $flag) { db()->prepare('UPDATE users SET is_admin=? WHERE user_id=?')->execute(array($flag?1:0,$userId)); }
+function setSession($userId, $state, $payload=array()) { db()->prepare('REPLACE INTO user_sessions (user_id,state,payload) VALUES (?,?,?)')->execute(array($userId,$state,json_encode($payload,JSON_UNESCAPED_UNICODE))); }
+function getSession($userId) { $st=db()->prepare('SELECT state,payload FROM user_sessions WHERE user_id=?'); $st->execute(array($userId)); $r=$st->fetch(); return $r?array('state'=>$r['state'],'payload'=>$r['payload']?json_decode($r['payload'],true):array()):null; }
+function clearSession($userId) { db()->prepare('DELETE FROM user_sessions WHERE user_id=?')->execute(array($userId)); }
 
 // Forced join
-function listRequiredChannels(): array { return db()->query('SELECT chat_id, username, title FROM required_channels ORDER BY id ASC')->fetchAll() ?: []; }
-function isUserMemberAll(int $userId): bool { $chs=listRequiredChannels(); if (empty($chs)) return true; foreach($chs as $c){$res=botApi('getChatMember',['chat_id'=>$c['chat_id'],'user_id'=>$userId]); if (empty($res['ok'])) return false; $st=$res['result']['status']??'left'; if (in_array($st,['left','kicked'],true)) return false;} return true; }
-function membershipGuard(int $chatId, int $userId, string $lang): bool { $chs=listRequiredChannels(); if (empty($chs)) return true; if (isUserMemberAll($userId)) return true; $text=t('force_join',$lang)."\n\n"; $i=1; foreach($chs as $ch){$title=$ch['title']?:($ch['username']?'@'.$ch['username']:(string)$ch['chat_id']); $url=$ch['username']?('https://t.me/'.$ch['username']):''; $text.=$i++.'. '.($url?"<a href=\"$url\">$title</a>":$title)."\n";} $kb=['inline_keyboard'=>[[['text'=>t('check_join',$lang),'callback_data'=>'check_join']]]]; sendMessage($chatId,$text,['reply_markup'=>json_encode($kb)]); return false; }
+function listRequiredChannels() { return db()->query('SELECT chat_id, username, title FROM required_channels ORDER BY id ASC')->fetchAll() ?: array(); }
+function isUserMemberAll($userId) { $chs=listRequiredChannels(); if (empty($chs)) return true; foreach($chs as $c){$res=botApi('getChatMember',array('chat_id'=>$c['chat_id'],'user_id'=>$userId)); if (empty($res['ok'])) return false; $st=isset($res['result']['status'])?$res['result']['status']:'left'; if ($st==='left' || $st==='kicked') return false;} return true; }
+function membershipGuard($chatId, $userId, $lang) { $chs=listRequiredChannels(); if (empty($chs)) return true; if (isUserMemberAll($userId)) return true; $text=t('force_join',$lang)."\n\n"; $i=1; foreach($chs as $ch){$title=$ch['title']?:($ch['username']?'@'.$ch['username']:(string)$ch['chat_id']); $url=$ch['username']?('https://t.me/'.$ch['username']):''; $text.=$i++.'. '.($url?"<a href=\"$url\">$title</a>":$title)."\n";} $kb=array('inline_keyboard'=>array(array(array('text'=>t('check_join',$lang),'callback_data'=>'check_join')))); sendMessage($chatId,$text,array('reply_markup'=>json_encode($kb))); return false; }
 
 // Items helper
-function addItem(array $data, array $images, int $createdBy): int {
+function addItem($data, $images, $createdBy) {
 	$pdo=db(); $pdo->beginTransaction(); try {
 		$pdo->prepare('INSERT INTO items (type, ext_id, slug, attributes, created_by) VALUES (?,?,?,?,?)')->execute([
 			$data['type'],$data['ext_id']??null,$data['slug']??null, isset($data['attributes'])?json_encode($data['attributes'],JSON_UNESCAPED_UNICODE):null, $createdBy
@@ -383,19 +383,19 @@ function addItem(array $data, array $images, int $createdBy): int {
 		$pdo->commit(); return $id;
 	} catch (Throwable $e){ $pdo->rollBack(); throw $e; }
 }
-function findItem(string $type, string $query, string $lang): ?array { $pdo=db(); $query=trim($query); if($query==='') return null; if(ctype_digit($query)){ $st=$pdo->prepare('SELECT * FROM items WHERE type=? AND ext_id=? AND published=1 LIMIT 1'); $st->execute([$type,(int)$query]); $it=$st->fetch(); if($it) return $it; } $st=$pdo->prepare('SELECT i.* FROM items i JOIN item_translations t ON t.item_id=i.id WHERE i.type=? AND i.published=1 AND t.lang=? AND t.name LIKE ? LIMIT 1'); $st->execute([$type,$lang,'%'.$query.'%']); $it=$st->fetch(); if($it) return $it; $st=$pdo->prepare('SELECT i.* FROM items i JOIN item_translations t ON t.item_id=i.id WHERE i.type=? AND i.published=1 AND t.name LIKE ? LIMIT 1'); $st->execute([$type,'%'.$query.'%']); return $st->fetch()?:null; }
-function getItemTranslations(int $itemId): array { $st=db()->prepare('SELECT lang,name,description,biography FROM item_translations WHERE item_id=?'); $st->execute([$itemId]); $out=[]; foreach($st->fetchAll() as $r){$out[$r['lang']]=['name'=>$r['name'],'description'=>$r['description'],'biography'=>$r['biography']];} return $out; }
-function getItemImages(int $itemId): array { $st=db()->prepare('SELECT file_id,file_unique_id,url,position FROM item_images WHERE item_id=? ORDER BY position ASC,id ASC'); $st->execute([$itemId]); return $st->fetchAll()?:[]; }
-function getItemAttributes(int $itemId): array { $st=db()->prepare('SELECT attributes FROM items WHERE id=?'); $st->execute([$itemId]); $r=$st->fetch(); return $r && $r['attributes'] ? (json_decode($r['attributes'],true)?:[]) : []; }
-function getLikeCount(int $itemId): int { $st=db()->prepare('SELECT COUNT(*) c FROM likes WHERE item_id=?'); $st->execute([$itemId]); return (int)$st->fetchColumn(); }
-function hasFavorite(int $userId, int $itemId): bool { $st=db()->prepare('SELECT 1 FROM favorites WHERE user_id=? AND item_id=?'); $st->execute([$userId,$itemId]); return (bool)$st->fetchColumn(); }
-function toggleFavorite(int $userId, int $itemId): bool { if (hasFavorite($userId,$itemId)) { db()->prepare('DELETE FROM favorites WHERE user_id=? AND item_id=?')->execute([$userId,$itemId]); return false; } db()->prepare('INSERT IGNORE INTO favorites (item_id,user_id) VALUES (?,?)')->execute([$itemId,$userId]); return true; }
+function findItem($type, $query, $lang) { $pdo=db(); $query=trim($query); if($query==='') return null; if(ctype_digit($query)){ $st=$pdo->prepare('SELECT * FROM items WHERE type=? AND ext_id=? AND published=1 LIMIT 1'); $st->execute(array($type,(int)$query)); $it=$st->fetch(); if($it) return $it; } $st=$pdo->prepare('SELECT i.* FROM items i JOIN item_translations t ON t.item_id=i.id WHERE i.type=? AND i.published=1 AND t.lang=? AND t.name LIKE ? LIMIT 1'); $st->execute(array($type,$lang,'%'.$query.'%')); $it=$st->fetch(); if($it) return $it; $st=$pdo->prepare('SELECT i.* FROM items i JOIN item_translations t ON t.item_id=i.id WHERE i.type=? AND i.published=1 AND t.name LIKE ? LIMIT 1'); $st->execute(array($type,'%'.$query.'%')); $row=$st->fetch(); return $row?$row:null; }
+function getItemTranslations($itemId) { $st=db()->prepare('SELECT lang,name,description,biography FROM item_translations WHERE item_id=?'); $st->execute(array($itemId)); $out=array(); foreach($st->fetchAll() as $r){$out[$r['lang']]=array('name'=>$r['name'],'description'=>$r['description'],'biography'=>$r['biography']);} return $out; }
+function getItemImages($itemId) { $st=db()->prepare('SELECT file_id,file_unique_id,url,position FROM item_images WHERE item_id=? ORDER BY position ASC,id ASC'); $st->execute(array($itemId)); $rows=$st->fetchAll(); return $rows?$rows:array(); }
+function getItemAttributes($itemId) { $st=db()->prepare('SELECT attributes FROM items WHERE id=?'); $st->execute(array($itemId)); $r=$st->fetch(); if(!$r||!$r['attributes']) return array(); $a=json_decode($r['attributes'],true); return is_array($a)?$a:array(); }
+function getLikeCount($itemId) { $st=db()->prepare('SELECT COUNT(*) c FROM likes WHERE item_id=?'); $st->execute(array($itemId)); return (int)$st->fetchColumn(); }
+function hasFavorite($userId, $itemId) { $st=db()->prepare('SELECT 1 FROM favorites WHERE user_id=? AND item_id=?'); $st->execute(array($userId,$itemId)); return (bool)$st->fetchColumn(); }
+function toggleFavorite($userId, $itemId) { if (hasFavorite($userId,$itemId)) { db()->prepare('DELETE FROM favorites WHERE user_id=? AND item_id=?')->execute(array($userId,$itemId)); return false; } db()->prepare('INSERT IGNORE INTO favorites (item_id,user_id) VALUES (?,?)')->execute(array($itemId,$userId)); return true; }
 
 function listRequiredSponsors(): array { return db()->query('SELECT chat_id,label FROM sponsors ORDER BY ordering ASC,id ASC')->fetchAll()?:[]; }
 function sponsorsText(): string { $rows=listRequiredSponsors(); if(empty($rows)) return ''; $parts=[]; foreach($rows as $r){ $parts[] = $r['label'] ?: (string)$r['chat_id']; } return "\n\n".implode(' | ',$parts); }
-function deepLinkToItem(int $itemId): string { $u=getMeUsername(); return $u?('https://t.me/'.$u.'?start=item_'.$itemId):''; }
+function deepLinkToItem($itemId) { $u=getMeUsername(); return $u?('https://t.me/'.$u.'?start=item_'.$itemId):''; }
 
-function buildItemCaption(array $item, array $trans, string $lang): string {
+function buildItemCaption($item, $trans, $lang) {
 	$t = $trans[$lang] ?? ($trans['en'] ?? reset($trans) ?: ['name' => '', 'description' => null, 'biography' => null]);
 	$attrs = getItemAttributes((int)$item['id']);
 	$lines = [];
@@ -412,8 +412,8 @@ function buildItemCaption(array $item, array $trans, string $lang): string {
 	$st = sponsorsText(); if (!empty($st)) $lines[] = $st; return implode("\n", $lines);
 }
 
-function itemInlineKeyboard(int $itemId, string $lang, int $userId): array { $likeCount=getLikeCount($itemId); $fav=hasFavorite($userId,$itemId); $favText=$fav?'⭐':t('favorite',$lang); $likeText=t('like',$lang).' '.($likeCount>0?(string)$likeCount:''); $shareUrl=deepLinkToItem($itemId); return ['inline_keyboard'=>[[['text'=>$likeText,'callback_data'=>'like:'.$itemId],['text'=>$favText,'callback_data'=>'fav:'.$itemId],['text'=>t('share',$lang),'url'=>'https://t.me/share/url?url='.urlencode($shareUrl)]]]]; }
-function sendItemToChat(int $chatId, int $itemId, string $lang, int $userId): void { $st=db()->prepare('SELECT * FROM items WHERE id=? AND published=1'); $st->execute([$itemId]); $item=$st->fetch(); if(!$item) return; $trans=getItemTranslations($itemId); $caption=buildItemCaption($item,$trans,$lang); $imgs=getItemImages($itemId); $kb=itemInlineKeyboard($itemId,$lang,$userId); if(count($imgs)>1){ $media=[]; foreach($imgs as $i=>$img){ $m=['type'=>'photo','media'=>$img['file_id']?:$img['url']]; if($i===0){$m['caption']=$caption;$m['parse_mode']='HTML';} $media[]=$m; } sendMediaGroup($chatId,$media); sendMessage($chatId,'—',['reply_markup'=>json_encode($kb)]);} elseif(count($imgs)===1){ $img=$imgs[0]; sendPhoto($chatId,$img['file_id']?:$img['url'],['caption'=>$caption,'reply_markup'=>json_encode($kb)]);} else { sendMessage($chatId,$caption,['reply_markup'=>json_encode($kb)]);} }
+function itemInlineKeyboard($itemId, $lang, $userId) { $likeCount=getLikeCount($itemId); $fav=hasFavorite($userId,$itemId); $favText=$fav?'⭐':t('favorite',$lang); $likeText=t('like',$lang).' '.($likeCount>0?(string)$likeCount:''); $shareUrl=deepLinkToItem($itemId); return array('inline_keyboard'=>array(array(array('text'=>$likeText,'callback_data'=>'like:'.$itemId),array('text'=>$favText,'callback_data'=>'fav:'.$itemId),array('text'=>t('share',$lang),'url'=>'https://t.me/share/url?url='.urlencode($shareUrl))))); }
+function sendItemToChat($chatId, $itemId, $lang, $userId) { $st=db()->prepare('SELECT * FROM items WHERE id=? AND published=1'); $st->execute(array($itemId)); $item=$st->fetch(); if(!$item) return; $trans=getItemTranslations($itemId); $caption=buildItemCaption($item,$trans,$lang); $imgs=getItemImages($itemId); $kb=itemInlineKeyboard($itemId,$lang,$userId); if(count($imgs)>1){ $media=array(); foreach($imgs as $i=>$img){ $m=array('type'=>'photo','media'=>$img['file_id']?:$img['url']); if($i===0){$m['caption']=$caption;$m['parse_mode']='HTML';} $media[]=$m; } sendMediaGroup($chatId,$media); sendMessage($chatId,'—',array('reply_markup'=>json_encode($kb)));} elseif(count($imgs)===1){ $img=$imgs[0]; sendPhoto($chatId,$img['file_id']?:$img['url'],array('caption'=>$caption,'reply_markup'=>json_encode($kb)));} else { sendMessage($chatId,$caption,array('reply_markup'=>json_encode($kb)));} }
 
 // Color extraction (GD)
 function extractDominantColorsFromFile(string $filePath, int $count = 5): array { if(!extension_loaded('gd')) return []; $img=@imagecreatefromstring(file_get_contents($filePath)); if(!$img) return []; $w=imagesx($img); $h=imagesy($img); $sample=40; $tmp=imagecreatetruecolor($sample,$sample); imagecopyresampled($tmp,$img,0,0,0,0,$sample,$sample,$w,$h); $hist=[]; for($y=0;$y<$sample;$y++){for($x=0;$x<$sample;$x++){ $rgb=imagecolorat($tmp,$x,$y); $r=($rgb>>16)&0xFF; $g=($rgb>>8)&0xFF; $b=$rgb&0xFF; $rq=intdiv($r,16)*16; $gq=intdiv($g,16)*16; $bq=intdiv($b,16)*16; $key=sprintf('%02x%02x%02x',$rq,$gq,$bq); $hist[$key]=($hist[$key]??0)+1; }} arsort($hist); $top=array_slice(array_keys($hist),0,$count); imagedestroy($tmp); imagedestroy($img); return $top; }
@@ -421,8 +421,8 @@ function hexToRgb(string $hex): array { $hex=ltrim($hex,'#'); return [hexdec(sub
 function buildPaletteImage(array $hexColors): string { if(!extension_loaded('gd')||empty($hexColors)) return ''; $w=600;$h=120;$img=imagecreatetruecolor($w,$h); imagefilledrectangle($img,0,0,$w,$h,imagecolorallocate($img,255,255,255)); $n=count($hexColors); $pad=10; $boxW=intval(($w-($n+1)*$pad)/$n); $x=$pad; $i=1; $black=imagecolorallocate($img,0,0,0); foreach($hexColors as $hex){[$r,$g,$b]=hexToRgb($hex); $col=imagecolorallocate($img,$r,$g,$b); imagefilledrectangle($img,$x,$pad,$x+$boxW,$h-$pad-30,$col); $label='#'.strtoupper($hex); imagestring($img,5,$x+6,$h-26,"$i. $label",$black); $x+=$boxW+$pad; $i++;} $tmp=tempnam(sys_get_temp_dir(),'pal_'); $file=$tmp.'.png'; imagepng($img,$file); imagedestroy($img); return $file; }
 
 // Keyboards
-function languageKeyboard(): array { return ['inline_keyboard'=>[[['text'=>'فارسی','callback_data'=>'lang:fa'],['text'=>'English','callback_data'=>'lang:en'],['text'=>'Русский','callback_data'=>'lang:ru']]]]; }
-function mainMenuKeyboard(string $lang): array { return ['inline_keyboard'=>[[['text'=>t('skins',$lang),'callback_data'=>'module:skins'],['text'=>t('vehicles',$lang),'callback_data'=>'module:vehicles']],[['text'=>t('weapons',$lang),'callback_data'=>'module:weapons'],['text'=>t('objects',$lang),'callback_data'=>'module:objects']],[['text'=>t('mapping',$lang),'callback_data'=>'module:mapping'],['text'=>t('colors',$lang),'callback_data'=>'module:colors']],[['text'=>t('weather',$lang),'callback_data'=>'module:weather'],['text'=>t('rules',$lang),'callback_data'=>'rules:list']],[['text'=>t('language',$lang),'callback_data'=>'lang:open']]]]; }
+function languageKeyboard() { return array('inline_keyboard'=>array(array(array('text'=>'فارسی','callback_data'=>'lang:fa'),array('text'=>'English','callback_data'=>'lang:en'),array('text'=>'Русский','callback_data'=>'lang:ru')))); }
+function mainMenuKeyboard($lang) { return array('inline_keyboard'=>array(array(array('text'=>t('skins',$lang),'callback_data'=>'module:skins'),array('text'=>t('vehicles',$lang),'callback_data'=>'module:vehicles')),array(array('text'=>t('weapons',$lang),'callback_data'=>'module:weapons'),array('text'=>t('objects',$lang),'callback_data'=>'module:objects')),array(array('text'=>t('mapping',$lang),'callback_data'=>'module:mapping'),array('text'=>t('colors',$lang),'callback_data'=>'module:colors')),array(array('text'=>t('weather',$lang),'callback_data'=>'module:weather'),array('text'=>t('rules',$lang),'callback_data'=>'rules:list')),array(array('text'=>t('language',$lang),'callback_data'=>'lang:open')))); }
 function replyMainKeyboard(string $lang, bool $isAdmin): array {
     $rows = [[t('skins',$lang),t('vehicles',$lang)],[t('weapons',$lang),t('objects',$lang)],[t('mapping',$lang),t('colors',$lang)],[t('weather',$lang),t('rules',$lang)],[t('favorites',$lang),t('language',$lang)]];
     if ($isAdmin) { $rows[] = [ t('panel',$lang) ]; }
