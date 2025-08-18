@@ -596,17 +596,42 @@ if (!function_exists('str_ends_with')) {
     }
 }
 
+function columnExists(string $table, string $column): bool {
+    $pdo = db();
+    try {
+        $stmt = $pdo->prepare("SHOW COLUMNS FROM `{$table}` LIKE ?");
+        $stmt->execute([$column]);
+        return (bool)$stmt->fetch();
+    } catch (Exception $e) { return false; }
+}
+
+function usersIdColumn(): string {
+    static $col = null;
+    if ($col !== null) return $col;
+    if (columnExists('users', 'chat_id')) { $col = 'chat_id'; }
+    elseif (columnExists('users', 'telegram_id')) { $col = 'telegram_id'; }
+    else { $col = 'chat_id'; }
+    return $col;
+}
+
 function getOrCreateUser(array $from): array {
     $pdo = db();
     $chatId = (int)$from['id'];
     $first = $from['first_name'] ?? null;
     $username = $from['username'] ?? null;
-    $stmt = $pdo->prepare("SELECT * FROM users WHERE chat_id = ?");
+    $idCol = usersIdColumn();
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE {$idCol} = ?");
     $stmt->execute([$chatId]);
     $user = $stmt->fetch();
     if (!$user) {
-        $stmt = $pdo->prepare("INSERT INTO users (chat_id, first_name, username, language) VALUES (?, ?, ?, ?)");
-        $stmt->execute([$chatId, $first, $username, DEFAULT_LANGUAGE]);
+        $languageColExists = columnExists('users', 'language');
+        if ($languageColExists) {
+            $stmt = $pdo->prepare("INSERT INTO users ({$idCol}, first_name, username, language) VALUES (?, ?, ?, ?)");
+            $stmt->execute([$chatId, $first, $username, DEFAULT_LANGUAGE]);
+        } else {
+            $stmt = $pdo->prepare("INSERT INTO users ({$idCol}, first_name, username) VALUES (?, ?, ?)");
+            $stmt->execute([$chatId, $first, $username]);
+        }
         $user = [
             'id' => (int)$pdo->lastInsertId(),
             'chat_id' => $chatId,
@@ -616,8 +641,8 @@ function getOrCreateUser(array $from): array {
             'is_blocked' => 0,
         ];
     } else {
-        if ($user['first_name'] !== $first || $user['username'] !== $username) {
-            $stmt = $pdo->prepare("UPDATE users SET first_name = ?, username = ? WHERE chat_id = ?");
+        if (($user['first_name'] ?? null) !== $first || ($user['username'] ?? null) !== $username) {
+            $stmt = $pdo->prepare("UPDATE users SET first_name = ?, username = ? WHERE {$idCol} = ?");
             $stmt->execute([$first, $username, $chatId]);
         }
     }
@@ -626,16 +651,33 @@ function getOrCreateUser(array $from): array {
 
 function getUserLanguage(int $chatId): string {
     $pdo = db();
-    $stmt = $pdo->prepare("SELECT language FROM users WHERE chat_id = ?");
-    $stmt->execute([$chatId]);
-    $lang = $stmt->fetchColumn();
-    return $lang ?: DEFAULT_LANGUAGE;
+    if (columnExists('users', 'language')) {
+        $idCol = usersIdColumn();
+        $stmt = $pdo->prepare("SELECT language FROM users WHERE {$idCol} = ?");
+        $stmt->execute([$chatId]);
+        $lang = $stmt->fetchColumn();
+        if ($lang) return $lang;
+    } else {
+        $k = 'user_lang_' . $chatId;
+        $stmt = $pdo->prepare("SELECT v FROM settings WHERE k = ?");
+        $stmt->execute([$k]);
+        $lang = $stmt->fetchColumn();
+        if ($lang) return $lang;
+    }
+    return DEFAULT_LANGUAGE;
 }
 
 function setUserLanguage(int $chatId, string $lang): void {
     $pdo = db();
-    $stmt = $pdo->prepare("UPDATE users SET language = ? WHERE chat_id = ?");
-    $stmt->execute([$lang, $chatId]);
+    if (columnExists('users', 'language')) {
+        $idCol = usersIdColumn();
+        $stmt = $pdo->prepare("UPDATE users SET language = ? WHERE {$idCol} = ?");
+        $stmt->execute([$lang, $chatId]);
+    } else {
+        $k = 'user_lang_' . $chatId;
+        $stmt = $pdo->prepare("REPLACE INTO settings (k, v) VALUES (?, ?)");
+        $stmt->execute([$k, $lang]);
+    }
 }
 
 function getState(int $chatId): array {
