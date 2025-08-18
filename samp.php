@@ -580,6 +580,22 @@ function getBotUsername(): string {
 // User and State Management
 // ---------------------------
 
+// PHP 8 compatibility helpers for PHP 7
+if (!function_exists('str_starts_with')) {
+    function str_starts_with(string $haystack, string $needle): bool {
+        if ($needle === '') { return true; }
+        return strpos($haystack, $needle) === 0;
+    }
+}
+if (!function_exists('str_ends_with')) {
+    function str_ends_with(string $haystack, string $needle): bool {
+        if ($needle === '') { return true; }
+        $len = strlen($needle);
+        if ($len > strlen($haystack)) { return false; }
+        return substr($haystack, -$len) === $needle;
+    }
+}
+
 function getOrCreateUser(array $from): array {
     $pdo = db();
     $chatId = (int)$from['id'];
@@ -697,7 +713,13 @@ function mainMenuKeyboard(string $lang): array {
         [t('main_favorites', $lang), t('main_random', $lang)],
         [t('main_settings', $lang), t('settings_language', $lang)],
     ];
-    return ['keyboard' => array_map(fn($r) => array_map(fn($c) => ['text' => $c], $r), $rows), 'resize_keyboard' => true];
+    $keyboard = [];
+    foreach ($rows as $row) {
+        $line = [];
+        foreach ($row as $c) { $line[] = ['text' => $c]; }
+        $keyboard[] = $line;
+    }
+    return ['keyboard' => $keyboard, 'resize_keyboard' => true];
 }
 
 function favoritesMenuKeyboard(string $lang): array {
@@ -706,7 +728,9 @@ function favoritesMenuKeyboard(string $lang): array {
         [t('fav_cat_weapons', $lang), t('fav_cat_mappings', $lang)],
         [t('back', $lang)]
     ];
-    return ['keyboard' => array_map(fn($r) => array_map(fn($c) => ['text' => $c], $r), $rows), 'resize_keyboard' => true, 'one_time_keyboard' => false];
+    $keyboard = [];
+    foreach ($rows as $row) { $line = []; foreach ($row as $c) { $line[] = ['text' => $c]; } $keyboard[] = $line; }
+    return ['keyboard' => $keyboard, 'resize_keyboard' => true, 'one_time_keyboard' => false];
 }
 
 function adminPanelKeyboard(string $lang): array {
@@ -718,12 +742,16 @@ function adminPanelKeyboard(string $lang): array {
         [t('admin_sponsors', $lang), t('admin_admins', $lang)],
         [t('admin_settings', $lang), t('back', $lang)],
     ];
-    return ['keyboard' => array_map(fn($r) => array_map(fn($c) => ['text' => $c], $r), $rows), 'resize_keyboard' => true];
+    $keyboard = [];
+    foreach ($rows as $row) { $line = []; foreach ($row as $c) { $line[] = ['text' => $c]; } $keyboard[] = $line; }
+    return ['keyboard' => $keyboard, 'resize_keyboard' => true];
 }
 
 function adminCrudKeyboard(string $lang): array {
     $rows = [[t('add', $lang), t('edit', $lang), t('delete', $lang)], [t('stats', $lang)], [t('back', $lang)]];
-    return ['keyboard' => array_map(fn($r) => array_map(fn($c) => ['text' => $c], $r), $rows), 'resize_keyboard' => true];
+    $keyboard = [];
+    foreach ($rows as $row) { $line = []; foreach ($row as $c) { $line[] = ['text' => $c]; } $keyboard[] = $line; }
+    return ['keyboard' => $keyboard, 'resize_keyboard' => true];
 }
 
 // ---------------------------
@@ -1015,9 +1043,7 @@ function likeItem(int $userChatId, string $type, int $tableId): array {
         }
         return ['ok' => false, 'reason' => 'error'];
     }
-    $table = match ($type) {
-        'skin' => 'skins', 'vehicle' => 'vehicles', 'color' => 'colors', 'weather' => 'weather', 'object' => 'objects', 'weapon' => 'weapons', 'mapping' => 'mappings', default => null
-    };
+    $table = typeToTable($type);
     if ($table) {
         $pdo->prepare("UPDATE {$table} SET likes_count = likes_count + 1 WHERE id = ?")->execute([$tableId]);
         $likes = (int)$pdo->query("SELECT likes_count FROM {$table} WHERE id = " . (int)$tableId)->fetchColumn();
@@ -1521,7 +1547,7 @@ function handleCallback(array $cb): void {
         [$prefix, $action, $type, $tableIdStr] = explode(':', $data);
         $added = toggleFavorite($chatId, $type, (int)$tableIdStr);
         $pdo = db();
-        $table = match ($type) { 'skin' => 'skins', 'vehicle' => 'vehicles', 'color' => 'colors', 'weather' => 'weather', 'object' => 'objects', 'weapon' => 'weapons', 'mapping' => 'mappings' };
+        $table = typeToTable($type);
         $likes = (int)$pdo->query("SELECT likes_count FROM {$table} WHERE id = " . (int)$tableIdStr)->fetchColumn();
         $keyboard = buildLikeShareFavKeyboard($lang, $type, (int)$tableIdStr, $likes, $added, '');
         tgEditReplyMarkup($cb['message']['chat']['id'], $cb['message']['message_id'], $keyboard);
@@ -1612,7 +1638,7 @@ function sendRulesList(int $chatId, string $lang, ?int $editMessageId = null): v
     $rows = $pdo->query("SELECT id, title_fa, title_en, title_ru FROM rules ORDER BY id ASC")->fetchAll();
     $buttons = [];
     foreach ($rows as $r) {
-        $title = match ($lang) { 'fa' => $r['title_fa'], 'en' => $r['title_en'], 'ru' => $r['title_ru'], default => $r['title_en'] };
+        $title = ($lang === 'fa') ? $r['title_fa'] : (($lang === 'ru') ? $r['title_ru'] : ($r['title_en'] ?? $r['title_fa'] ?? $r['title_ru']));
         if (!$title) $title = 'Rule #' . $r['id'];
         $buttons[] = [['text' => $title, 'callback_data' => 'rule_view:' . $r['id']]];
     }
@@ -1631,8 +1657,8 @@ function sendRuleView(int $chatId, string $lang, int $id, ?int $editMessageId = 
     $stmt->execute([$id]);
     $r = $stmt->fetch();
     if (!$r) return;
-    $title = match ($lang) { 'fa' => $r['title_fa'], 'en' => $r['title_en'], 'ru' => $r['title_ru'] };
-    $text = match ($lang) { 'fa' => $r['text_fa'], 'en' => $r['text_en'], 'ru' => $r['text_ru'] };
+    $title = ($lang === 'fa') ? $r['title_fa'] : (($lang === 'ru') ? $r['title_ru'] : $r['title_en']);
+    $text  = ($lang === 'fa') ? $r['text_fa']  : (($lang === 'ru') ? $r['text_ru']  : $r['text_en']);
     $title = $title ?: ('Rule #' . $id);
     $text = $text ?: '';
     $full = '<b>' . htmlspecialchars($title) . "</b>\n\n" . $text;
@@ -1680,9 +1706,16 @@ function listFavorites(int $chatId, string $lang, string $type): void {
 }
 
 function typeToTable(string $type): string {
-    return match ($type) {
-        'skin' => 'skins', 'vehicle' => 'vehicles', 'color' => 'colors', 'weather' => 'weather', 'object' => 'objects', 'weapon' => 'weapons', 'mapping' => 'mappings', default => ''
-    };
+    switch ($type) {
+        case 'skin': return 'skins';
+        case 'vehicle': return 'vehicles';
+        case 'color': return 'colors';
+        case 'weather': return 'weather';
+        case 'object': return 'objects';
+        case 'weapon': return 'weapons';
+        case 'mapping': return 'mappings';
+        default: return '';
+    }
 }
 
 // ---------------------------
@@ -1919,8 +1952,10 @@ function sendLanguageChooser(int $chatId): void {
     $rows = [
         [t('lang_fa', $lang), t('lang_en', $lang), t('lang_ru', $lang)],
     ];
+    $keyboard = [];
+    foreach ($rows as $row) { $line = []; foreach ($row as $c) { $line[] = ['text' => $c]; } $keyboard[] = $line; }
     tgSendMessage($chatId, t('start_choose_language', $lang), [
-        'reply_markup' => json_encode(['keyboard' => array_map(fn($r) => array_map(fn($c) => ['text' => $c], $r), $rows), 'resize_keyboard' => true, 'one_time_keyboard' => true], JSON_UNESCAPED_UNICODE)
+        'reply_markup' => json_encode(['keyboard' => $keyboard, 'resize_keyboard' => true, 'one_time_keyboard' => true], JSON_UNESCAPED_UNICODE)
     ]);
 }
 
