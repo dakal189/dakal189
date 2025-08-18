@@ -22,19 +22,25 @@
  * - For production, protect this endpoint with HTTPS and set Telegram webhook.
  */
 
-// ---- Configuration (via environment variables) ----
+// ---- Polyfills & Configuration (via environment variables with baked defaults) ----
+if (!function_exists('str_starts_with')) {
+    function str_starts_with(string $haystack, string $needle): bool {
+        return $needle === '' || strncmp($haystack, $needle, strlen($needle)) === 0;
+    }
+}
+
 const SUPPORTED_LANGS = ['fa', 'en', 'ru'];
 
-$BOT_TOKEN       = getenv('BOT_TOKEN') ?: '';
-$BOT_USERNAME    = getenv('BOT_USERNAME') ?: '';
-$OWNER_ID        = getenv('OWNER_ID') ?: '';// numeric Telegram user id of the owner (optional)
-$DB_HOST         = getenv('DB_HOST') ?: '127.0.0.1';
+$BOT_TOKEN       = getenv('BOT_TOKEN') ?: '7657246591:AAF9b-UEuyypu5tIhQ-KrMvqnxn56vIxIXQ';
+$BOT_USERNAME    = getenv('BOT_USERNAME') ?: '@Samp_Info_Bot';
+$OWNER_ID        = getenv('OWNER_ID') ?: '5641303137'; // numeric Telegram user id of the owner (optional)
+$DB_HOST         = getenv('DB_HOST') ?: 'localhost';
 $DB_PORT         = getenv('DB_PORT') ?: '3306';
-$DB_NAME         = getenv('DB_NAME') ?: 'samp_info_bot';
-$DB_USER         = getenv('DB_USER') ?: 'root';
-$DB_PASS         = getenv('DB_PASS') ?: '';
-$OPENAI_API_KEY  = getenv('OPENAI_API_KEY') ?: '';// optional for color naming (not used by default)
-$BASE_URL        = getenv('BASE_URL') ?: '';// public base url to this script, e.g., https://example.com/samp_info_bot.php
+$DB_NAME         = getenv('DB_NAME') ?: 'dakallli_Test2';
+$DB_USER         = getenv('DB_USER') ?: 'dakallli_Test2';
+$DB_PASS         = getenv('DB_PASS') ?: 'hosyarww123';
+$OPENAI_API_KEY  = getenv('OPENAI_API_KEY') ?: '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'; // optional for color naming
+$BASE_URL        = getenv('BASE_URL') ?: 'https://dakalll.ir/samp.php'; // public base url to this script
 
 if (empty($BOT_TOKEN)) {
     http_response_code(500);
@@ -118,10 +124,10 @@ function sendMediaGroup(int $chatId, array $media, array $opts = []): array {
 
 function getMeUsername(): string {
     global $BOT_USERNAME;
-    if (!empty($BOT_USERNAME)) return $BOT_USERNAME;
+    if (!empty($BOT_USERNAME)) return ltrim($BOT_USERNAME, '@');
     $me = botApi('getMe');
     if (!empty($me['ok']) && !empty($me['result']['username'])) {
-        return $me['result']['username'];
+        return ltrim($me['result']['username'], '@');
     }
     return '';
 }
