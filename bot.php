@@ -235,8 +235,9 @@ function initializeSchema(PDO $pdo): void {
     }
 
     // Ensure primary admin exists
-    $stmt = $pdo->prepare("INSERT IGNORE INTO admins (chat_id, permissions, daily_limit, added_by) VALUES (?, '{""all"": true}', 1000, ?) ");
-    $stmt->execute([ADMIN_PRIMARY_CHAT_ID, ADMIN_PRIMARY_CHAT_ID]);
+    $permissionsJson = json_encode(['all' => true]);
+    $stmt = $pdo->prepare("INSERT IGNORE INTO admins (chat_id, permissions, daily_limit, added_by) VALUES (?, ?, 1000, ?)");
+    $stmt->execute([ADMIN_PRIMARY_CHAT_ID, $permissionsJson, ADMIN_PRIMARY_CHAT_ID]);
 }
 
 // ---------------------------
@@ -1873,7 +1874,12 @@ function handleAdminText(int $chatId, string $lang, string $text): bool {
 
         case 'admin_admins':
             if (preg_match('/^add\s+(\d{5,})$/', $text, $m)) {
-                $pdo = db(); $pdo->prepare("INSERT IGNORE INTO admins (chat_id, permissions, daily_limit, added_by) VALUES (?, '{""all"":true}', 100, ?)")->execute([(int)$m[1], $chatId]); tgSendMessage($chatId, t('saved', $lang)); return true;
+                $pdo = db();
+                $permissionsJson = json_encode(['all' => true]);
+                $stmt = $pdo->prepare("INSERT IGNORE INTO admins (chat_id, permissions, daily_limit, added_by) VALUES (?, ?, 100, ?)");
+                $stmt->execute([(int)$m[1], $permissionsJson, $chatId]);
+                tgSendMessage($chatId, t('saved', $lang));
+                return true;
             }
             if (preg_match('/^del\s+(\d{5,})$/', $text, $m)) {
                 $pdo = db(); $pdo->prepare("DELETE FROM admins WHERE chat_id = ?")->execute([(int)$m[1]]); tgSendMessage($chatId, t('deleted', $lang)); return true;
