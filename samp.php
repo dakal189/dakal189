@@ -925,7 +925,7 @@ function presentSkin(array $row, string $lang, int $chatId): void {
     $caption .= "Name: " . htmlspecialchars($row['name']) . "\n";
     if (!empty($row['group_name'])) $caption .= "Group: " . htmlspecialchars($row['group_name']) . "\n";
     if (!empty($row['model'])) $caption .= "Model: <code>" . htmlspecialchars($row['model']) . "</code>\n";
-    if (!empty($row['story'])) $caption .= "\n“" . htmlspecialchars($row['story']) . "”";
+    if (!empty($row['story'])) $caption .= "\n" . htmlspecialchars($row['story']);
     $isFav = isFavorited($chatId, 'skin', (int)$row['id']);
     $keyboard = buildLikeShareFavKeyboard($lang, 'skin', (int)$row['id'], (int)$row['likes_count'], $isFav, 'item_skin_' . $row['skin_id']);
     $footer = sponsorsFooter();
@@ -1977,7 +1977,8 @@ function handleAdminText(int $chatId, string $lang, string $text): bool {
 
 function sendLanguageIfUnsetOrShowMenu(int $chatId, string $lang): void {
     $pdo = db();
-    $stmt = $pdo->prepare("SELECT language FROM users WHERE chat_id = ?");
+    $idCol = usersIdColumn();
+    $stmt = $pdo->prepare("SELECT language FROM users WHERE {$idCol} = ?");
     $stmt->execute([$chatId]);
     $cur = $stmt->fetchColumn();
     if (!$cur) {
