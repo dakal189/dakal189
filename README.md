@@ -1,3 +1,65 @@
+### Samp Info Bot (PHP + MySQL)
+
+Bot skeleton implementing: multi-language (FA/EN/RU), force-join, main menu, skins search (ID/Name), inline like/share/favorite, admin panel basics for skins, and DB schema. Extend similarly for vehicles, colors, weathers, objects, weapons, maps.
+
+Requirements:
+- PHP 8.1+
+- MySQL 8+
+- Web server (Nginx/Apache) or PHP built-in server for local dev
+
+Quick start:
+1) Copy `.env.example` to `.env` and fill values.
+2) Create DB and import `migrations/001_init.sql`.
+3) Point your HTTPS webhook URL to `public/index.php` and set webhook:
+```
+curl -X POST "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook" \
+  -d "url=https://your.domain.com/index.php?secret=<WEBHOOK_SECRET>"
+```
+4) Add your Telegram numeric ID to `admins` table as super admin:
+```sql
+INSERT INTO admins (user_id, is_super) VALUES (<YOUR_TELEGRAM_ID>, 1)
+ON DUPLICATE KEY UPDATE is_super=1;
+```
+5) Optionally configure force-join channels:
+```sql
+INSERT INTO force_channels (chat_id, username, active) VALUES (-1001234567890, 'YourChannel', 1);
+```
+
+Local dev (no webhook): you can mimic webhook posts using curl:
+```
+php -S 0.0.0.0:8080 -t public
+# Then POST a sample update to http://localhost:8080/index.php?secret=<WEBHOOK_SECRET>
+```
+
+Env vars (`.env`):
+- `BOT_TOKEN`, `BOT_USERNAME`, `WEBHOOK_SECRET`
+- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASS`
+- `DEFAULT_LANG` (fa|en|ru)
+- `FORCE_JOIN_REQUIRED` (true|false)
+
+Notes:
+- The skeleton fully implements Skins module; others are scaffolded to extend.
+- Media is stored by Telegram `file_id` for efficiency.
+- Callback data includes a nonce to reduce replay.
+
+Structure:
+```
+public/          # webhook entry
+app/
+  Infra/         # DB, Env, Logger
+  Telegram/      # Client, handler, keyboards, middleware
+  Domain/        # Repos for users/skins/likes/favorites/admin
+  I18n/          # fa/en/ru
+  Bootstrap.php
+config/
+  config.php
+migrations/
+.env.example
+```
+
+Extend modules:
+- Duplicate Skin repository/handlers pattern for vehicles, colors, etc.
+
 # Telegram Bot Documentation
 
 ## Overview
