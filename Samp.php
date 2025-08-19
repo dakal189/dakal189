@@ -336,6 +336,16 @@ function buildTranslations(): array {
             'membership_verified' => 'عضویت شما تایید شد.',
             'panel_denied' => 'دسترسی به پنل مدیریت ندارید.',
             'lang_changed' => 'زبان شما تغییر کرد.',
+            'enter_id_to_edit' => 'لطفاً ID آیتم را برای ویرایش ارسال کنید.',
+            'skip' => '⏭️ Skip',
+            'send_mapping_photo' => 'لطفاً عکس مپ را ارسال کنید یا "Skip" را بزنید.',
+            'send_mapping_id' => 'ID مپ را ارسال کنید یا "Skip" برای خودکار.',
+            'send_mapping_name' => 'نام مپ را ارسال کنید یا "Skip" را بزنید.',
+            'send_mapping_coordinates' => 'مختصات مپ را ارسال کنید یا "Skip" را بزنید.',
+            'send_mapping_tags' => 'برچسب‌ها (با کاما) را ارسال کنید یا "Skip" را بزنید.',
+            'edited' => 'با موفقیت ویرایش شد.',
+            'stats_choose_item' => 'روی یکی از آیتم‌ها بزنید.',
+            'id_range_hint' => 'در این بخش می‌توانید بین ID {min} تا {max} جستجو کنید.',
         ],
         'en' => [
             'start_choose_language' => 'Please choose your language:',
@@ -404,6 +414,16 @@ function buildTranslations(): array {
             'admin_settings' => '⚙️ System Settings',
             'add' => '➕ Add',
             'edit' => '✏️ Edit',
+            'enter_id_to_edit' => 'Please send item ID to edit.',
+            'skip' => '⏭️ Skip',
+            'send_mapping_photo' => 'Please send mapping photo or tap "Skip".',
+            'send_mapping_id' => 'Send mapping ID or tap "Skip" for auto.',
+            'send_mapping_name' => 'Send mapping name or tap "Skip".',
+            'send_mapping_coordinates' => 'Send coordinates or tap "Skip".',
+            'send_mapping_tags' => 'Send tags (comma separated) or tap "Skip".',
+            'edited' => 'Edited successfully.',
+            'stats_choose_item' => 'Tap an item to view.',
+            'id_range_hint' => 'You can search by ID between {min} and {max} in this section.',
             'delete' => '❌ Delete',
             'stats' => '📊 Stats',
             'enter_value' => 'Please send the value.',
@@ -472,6 +492,16 @@ function buildTranslations(): array {
             'admin_skins' => '🧍 Скины (упр.)',
             'admin_vehicles' => '🚗 Транспорт (упр.)',
             'admin_colors' => '🎨 Цвета (упр.)',
+            'enter_id_to_edit' => 'Отправьте ID для редактирования.',
+            'skip' => '⏭️ Пропустить',
+            'send_mapping_photo' => 'Отправьте фото карты или нажмите "Пропустить".',
+            'send_mapping_id' => 'Отправьте ID карты или нажмите "Пропустить" для авто.',
+            'send_mapping_name' => 'Отправьте название карты или нажмите "Пропустить".',
+            'send_mapping_coordinates' => 'Отправьте координаты или нажмите "Пропустить".',
+            'send_mapping_tags' => 'Отправьте теги (через запятую) или нажмите "Пропустить".',
+            'edited' => 'Успешно отредактировано.',
+            'stats_choose_item' => 'Выберите элемент.',
+            'id_range_hint' => 'В этом разделе можно искать по ID от {min} до {max}.',
             'admin_weather' => '⛅ Погода (упр.)',
             'admin_objects' => '📦 Объекты (упр.)',
             'admin_weapons' => '🔫 Оружие (упр.)',
@@ -1454,7 +1484,9 @@ function handleMessage(array $message): void {
                 return;
             case t('main_mappings', $lang):
                 setState($chatId, 'mappings_wait_id');
-                tgSendMessage($chatId, t('mappings_prompt', $lang), [
+                $pdo = db(); $minmax = $pdo->query("SELECT COALESCE(MIN(mapping_id),0) AS mn, COALESCE(MAX(mapping_id),0) AS mx FROM mappings")->fetch(); $mn=(int)($minmax['mn']??0); $mx=(int)($minmax['mx']??0);
+                tgSendMessage($chatId, t('mappings_prompt', $lang) . "
+" . t('id_range_hint', $lang, ['min' => $mn, 'max' => $mx]), [
                     'reply_markup' => json_encode(['keyboard' => [[['text' => t('back', $lang)]]], 'resize_keyboard' => true], JSON_UNESCAPED_UNICODE)
                 ]);
                 return;
@@ -1650,6 +1682,23 @@ function handleMessage(array $message): void {
             'reply_markup' => json_encode(mainMenuKeyboard($lang), JSON_UNESCAPED_UNICODE)
         ]);
         return;
+    }
+
+    // Photo handling for admin mappings wizard
+    if (!empty($message['photo'])) {
+        $state = getState($chatId);
+        if (in_array($state['state'], ['admin_mappings_add_step','admin_mappings_edit_step'], true)) {
+            $meta = $state['meta'] ?? ['step' => 'photo', 'draft' => []];
+            if (($meta['step'] ?? 'photo') === 'photo') {
+                $photos = $message['photo']; usort($photos, fn($a, $b) => ($b['file_size'] ?? 0) <=> ($a['file_size'] ?? 0)); $fileId = $photos[0]['file_id'];
+                $draft = $meta['draft'] ?? [];
+                $draft['image_url'] = $fileId;
+                $meta['draft'] = $draft; $meta['step'] = 'id';
+                setState($chatId, $state['state'], $meta);
+                tgSendMessage($chatId, t('send_mapping_id', $lang), ['reply_markup' => json_encode(['keyboard' => [[['text' => t('skip', $lang)]], [['text' => t('back', $lang)]]], 'resize_keyboard' => true], JSON_UNESCAPED_UNICODE)]);
+                return;
+            }
+        }
     }
 
     // Photo handling for AI colors
@@ -2032,7 +2081,7 @@ function handleAdminText(int $chatId, string $lang, string $text): bool {
                 case 'admin_weather': tgSendMessage($chatId, "Send: weather_id,name,type,images(separate by space)"); setState($chatId, 'admin_weather_add'); return true;
                 case 'admin_objects': tgSendMessage($chatId, "Send: object_id,name,images(separate by space),related_ids(optional)"); setState($chatId, 'admin_objects_add'); return true;
                 case 'admin_weapons': tgSendMessage($chatId, "Send: weapon_id,name,description,image_url(optional)"); setState($chatId, 'admin_weapons_add'); return true;
-                case 'admin_mappings': tgSendMessage($chatId, "Send: mapping_id,name,coordinates,tags,image_url(optional)"); setState($chatId, 'admin_mappings_add'); return true;
+                case 'admin_mappings': setState($chatId, 'admin_mappings_add_step', ['step' => 'photo', 'mode' => 'add', 'draft' => []]); tgSendMessage($chatId, t('send_mapping_photo', $lang), ['reply_markup' => json_encode(['keyboard' => [[['text' => t('skip', $lang)]], [['text' => t('back', $lang)]]], 'resize_keyboard' => true], JSON_UNESCAPED_UNICODE)]); return true;
                 case 'admin_rules': tgSendMessage($chatId, "Send: title_fa|title_en|title_ru\nThen next line text_fa\nNext line text_en\nNext line text_ru"); setState($chatId, 'admin_rules_add'); return true;
                 case 'admin_sponsors': tgSendMessage($chatId, "Send: @channel_username (or multiple separated by space)"); setState($chatId, 'admin_sponsors_add'); return true;
             }
@@ -2048,6 +2097,28 @@ function handleAdminText(int $chatId, string $lang, string $text): bool {
                 case 'admin_rules': tgSendMessage($chatId, t('enter_id_to_delete', $lang)); setState($chatId, 'admin_rules_del'); return true;
                 case 'admin_sponsors': tgSendMessage($chatId, t('enter_value', $lang)); setState($chatId, 'admin_sponsors_del'); return true;
             }
+        }
+    }
+
+    // Extra admin mapping actions: edit and stats
+    $section = $state['state'] ?? '';
+    if ($section === 'admin_mappings') {
+        if ($text === t('edit', $lang)) {
+            setState($chatId, 'admin_mappings_edit_ask_id');
+            tgSendMessage($chatId, t('enter_id_to_edit', $lang), [
+                'reply_markup' => json_encode(['keyboard' => [[['text' => t('back', $lang)]]], 'resize_keyboard' => true], JSON_UNESCAPED_UNICODE)
+            ]);
+            return true;
+        }
+        if ($text === t('stats', $lang)) {
+            $pdo = db();
+            $rows = $pdo->query("SELECT mapping_id, name FROM mappings ORDER BY mapping_id ASC")->fetchAll();
+            $labelToId = []; $kb = [];
+            foreach ($rows as $r) { $label = 'ID ' . (int)$r['mapping_id'] . ' - ' . (string)$r['name']; $labelToId[$label] = (int)$r['mapping_id']; $kb[] = [[ 'text' => $label ]]; }
+            $kb[] = [[ 'text' => t('back', $lang) ]];
+            setState($chatId, 'admin_mappings_stats', ['label_to_mapping_id' => $labelToId]);
+            tgSendMessage($chatId, t('stats_choose_item', $lang), ['reply_markup' => json_encode(['keyboard' => $kb, 'resize_keyboard' => true], JSON_UNESCAPED_UNICODE)]);
+            return true;
         }
     }
 
