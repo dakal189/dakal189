@@ -1099,30 +1099,28 @@ function likeItem(int $userChatId, string $type, int $tableId): array {
 // ---------------------------
 
 function telegramFileToBase64(string $fileId): ?string {
+    // Returns a direct Telegram HTTPS file URL to reduce payload size for OpenAI
     $res = tg('getFile', ['file_id' => $fileId]);
     if (!(bool)($res['ok'] ?? false)) return null;
     $path = $res['result']['file_path'] ?? null;
     if (!$path) return null;
     $url = 'https://api.telegram.org/file/bot' . env('BOT_TOKEN', BOT_TOKEN) . '/' . $path;
-    $data = file_get_contents($url);
-    if ($data === false) return null;
-    $mime = 'image/jpeg';
-    if (str_ends_with(strtolower($path), '.png')) $mime = 'image/png';
-    $b64 = base64_encode($data);
-    return 'data:' . $mime . ';base64,' . $b64;
+    return $url;
 }
 
-function openaiExtractColorsFromImage(string $dataUrl): array {
+function openaiExtractColorsFromImage(string $imageUrl): array {
+    // Use OpenAI Chat Completions with vision-capable model; send image URL directly
     $payload = [
         'model' => env('OPENAI_MODEL', OPENAI_MODEL),
         'messages' => [[
             'role' => 'user',
             'content' => [
-                ['type' => 'input_text', 'text' => 'Extract up to 8 dominant colors from the image. Return ONLY strict JSON array with items: {"hex":"#RRGGBB","name":"Color name"}. No extra text.'],
-                ['type' => 'input_image', 'image_url' => $dataUrl]
-            ]
+                ['type' => 'text', 'text' => 'Extract up to 8 dominant colors from the image. Respond ONLY with a JSON array of objects {"hex":"#RRGGBB","name":"Color name"}. No prose.'],
+                ['type' => 'image_url', 'image_url' => ['url' => $imageUrl]],
+            ],
         ]],
         'temperature' => 0.2,
+        'max_tokens' => 400,
     ];
     $ch = curl_init('https://api.openai.com/v1/chat/completions');
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -1132,22 +1130,39 @@ function openaiExtractColorsFromImage(string $dataUrl): array {
     ]);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+    curl_setopt($ch, CURLOPT_TIMEOUT, 40);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
     $res = curl_exec($ch);
     if ($res === false) {
+        error_log('OpenAI request failed: ' . curl_error($ch));
         curl_close($ch);
         return [];
     }
+    $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
+    if ($httpCode < 200 || $httpCode >= 300) {
+        error_log('OpenAI HTTP ' . $httpCode . ': ' . substr($res, 0, 500));
+        return [];
+    }
     $data = json_decode($res, true);
     $content = $data['choices'][0]['message']['content'] ?? '';
-    $json = trim($content);
-    $colors = [];
-    if ($json !== '') {
-        $decoded = json_decode($json, true);
-        if (is_array($decoded)) $colors = $decoded;
+    $json = '';
+    if (is_string($content)) {
+        $json = trim($content);
+    }
+    // Try to extract JSON array if extra text exists
+    if ($json !== '' && $json[0] !== '[') {
+        if (preg_match('/\[[\s\S]*\]/', $json, $m)) {
+            $json = $m[0];
+        }
+    }
+    $decoded = json_decode($json, true);
+    if (!is_array($decoded)) {
+        error_log('OpenAI returned unparsable content: ' . substr($content, 0, 500));
+        return [];
     }
     $normalized = [];
-    foreach ($colors as $c) {
+    foreach ($decoded as $c) {
         $hex = strtoupper(trim((string)($c['hex'] ?? '')));
         if ($hex === '' || $hex[0] !== '#') continue;
         if (strlen($hex) === 4) {
@@ -1524,7 +1539,7 @@ function handleMessage(array $message): void {
         $state = getState($chatId);
         if ($state['state'] === 'ai_wait_photo') {
             $photos = $message['photo'];
-            usort($photos, fn($a, $b) => ($b['file_size'] ?? 0) <=> ($a['file_size'] ?? 0));
+            usort($photos, function ($a, $b) { $as = (int)($a['file_size'] ?? 0); $bs = (int)($b['file_size'] ?? 0); return $bs <=> $as; });
             $fileId = $photos[0]['file_id'];
             $dataUrl = telegramFileToBase64($fileId);
             if ($dataUrl) {
