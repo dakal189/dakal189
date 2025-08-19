@@ -308,8 +308,9 @@ function buildTranslations(): array {
             'fav_cat_mappings' => '🗺️ مپ‌ها',
             'no_favorites' => 'چیزی در این بخش ندارید.',
             'random_prompt' => 'یک مورد تصادفی انتخاب شد:',
-            'send_photo_for_ai' => 'لطفاً یک عکس ارسال کنید تا رنگ‌ها استخراج شوند.',
+            'send_photo_for_ai' => 'لطفاً یک عکس یا کد رنگ (مثل #1A2B3C) ارسال کنید تا رنگ‌ها استخراج شوند.',
             'ai_colors_result_title' => 'نتایج تشخیص رنگ:',
+            'ai_objects_result_title' => 'رنگ بخش‌ها:',
             'admin_panel' => 'پنل مدیریت',
             'admin_modules' => 'یک بخش را انتخاب کنید:',
             'admin_skins' => '🧍 مدیریت اسکین‌ها',
@@ -385,8 +386,9 @@ function buildTranslations(): array {
             'fav_cat_mappings' => '🗺️ Mappings',
             'no_favorites' => 'You have nothing here.',
             'random_prompt' => 'Random suggestion:',
-            'send_photo_for_ai' => 'Please send a photo to extract colors.',
+            'send_photo_for_ai' => 'Please send a photo or a HEX like #1A2B3C to extract colors.',
             'ai_colors_result_title' => 'Detected colors:',
+            'ai_objects_result_title' => 'Object colors:',
             'admin_panel' => 'Admin Panel',
             'admin_modules' => 'Choose a section:',
             'admin_skins' => '🧍 Manage Skins',
@@ -462,8 +464,9 @@ function buildTranslations(): array {
             'fav_cat_mappings' => '🗺️ Карты',
             'no_favorites' => 'Тут пока пусто.',
             'random_prompt' => 'Случайное предложение:',
-            'send_photo_for_ai' => 'Отправьте фото для извлечения цветов.',
+            'send_photo_for_ai' => 'Отправьте фото или HEX (например #1A2B3C) для извлечения цветов.',
             'ai_colors_result_title' => 'Обнаруженные цвета:',
+            'ai_objects_result_title' => 'Цвета объектов:',
             'admin_panel' => 'Панель администратора',
             'admin_modules' => 'Выберите раздел:',
             'admin_skins' => '🧍 Скины (упр.)',
@@ -801,13 +804,12 @@ function adminCrudKeyboard(string $lang): array {
 // ---------------------------
 
 function buildLikeShareFavKeyboard(string $lang, string $type, int $tableId, int $likes, bool $isFav, string $sharePayload): array {
-    $botUsername = getBotUsername();
     $likeBtn = ['text' => t('like', $lang, ['count' => $likes]), 'callback_data' => 'like:' . $type . ':' . $tableId];
-    $shareUrl = $botUsername ? ('https://t.me/' . $botUsername . '?start=' . $sharePayload) : 'https://t.me/';
-    $shareBtn = ['text' => t('share', $lang), 'url' => $shareUrl];
+    $shareBtn = ['text' => t('share', $lang), 'callback_data' => 'share_restart'];
     $favBtn = $isFav ? ['text' => t('fav_remove', $lang), 'callback_data' => 'fav:remove:' . $type . ':' . $tableId] : ['text' => t('fav_add', $lang), 'callback_data' => 'fav:add:' . $type . ':' . $tableId];
     return ['inline_keyboard' => [[$likeBtn, $shareBtn], [$favBtn]]];
 }
+
 
 function sponsorsFooter(): string {
     $pdo = db();
@@ -1112,6 +1114,39 @@ function telegramFileToBase64(string $fileId): ?string {
     return 'data:' . $mime . ';base64,' . $b64;
 }
 
+function gdExtractDominantColorsFromDataUrl(string $dataUrl, int $max = 6): array {
+    if (!function_exists('imagecreatefromstring')) return [];
+    $parts = explode(',', $dataUrl, 2);
+    if (count($parts) < 2) return [];
+    $raw = base64_decode($parts[1], true);
+    if ($raw === false) return [];
+    $im = @imagecreatefromstring($raw);
+    if (!$im) return [];
+    $w = imagesx($im); $h = imagesy($im);
+    // downscale for speed
+    $tw = 64; $th = max(1, intval($h * (64 / max(1, $w))));
+    $tmp = imagecreatetruecolor($tw, $th);
+    imagecopyresampled($tmp, $im, 0, 0, 0, 0, $tw, $th, $w, $h);
+    imagedestroy($im);
+    $counts = [];
+    for ($y = 0; $y < $th; $y++) {
+        for ($x = 0; $x < $tw; $x++) {
+            $rgb = imagecolorat($tmp, $x, $y);
+            $r = ($rgb >> 16) & 0xFF; $g = ($rgb >> 8) & 0xFF; $b = $rgb & 0xFF;
+            // quantize to reduce noise
+            $rq = intdiv($r, 16) * 16; $gq = intdiv($g, 16) * 16; $bq = intdiv($b, 16) * 16;
+            $hex = sprintf('#%02X%02X%02X', $rq, $gq, $bq);
+            $counts[$hex] = ($counts[$hex] ?? 0) + 1;
+        }
+    }
+    imagedestroy($tmp);
+    arsort($counts);
+    $top = array_slice($counts, 0, $max, true);
+    $out = [];
+    foreach ($top as $hex => $cnt) { $out[] = ['hex' => $hex, 'name' => $hex]; }
+    return $out;
+}
+
 function openaiExtractColorsFromImage(string $dataUrl): array {
     $payload = [
         'model' => env('OPENAI_MODEL', OPENAI_MODEL),
@@ -1141,6 +1176,14 @@ function openaiExtractColorsFromImage(string $dataUrl): array {
     $data = json_decode($res, true);
     $content = $data['choices'][0]['message']['content'] ?? '';
     $json = trim($content);
+    // Try to extract JSON array even if wrapped in code fences or extra text
+    if ($json !== '' && ($json[0] !== '[')) {
+        $start = strpos($json, '[');
+        $end = strrpos($json, ']');
+        if ($start !== false && $end !== false && $end > $start) {
+            $json = substr($json, $start, $end - $start + 1);
+        }
+    }
     $colors = [];
     if ($json !== '') {
         $decoded = json_decode($json, true);
@@ -1158,6 +1201,53 @@ function openaiExtractColorsFromImage(string $dataUrl): array {
         $normalized[] = ['hex' => $hex, 'name' => $name];
     }
     return array_slice($normalized, 0, 8);
+}
+
+function openaiDetectObjectsColorsFromImage(string $dataUrl): array {
+    $payload = [
+        'model' => env('OPENAI_MODEL', OPENAI_MODEL),
+        'messages' => [[
+            'role' => 'user',
+            'content' => [
+                ['type' => 'input_text', 'text' => 'Identify distinct objects (e.g., car, road, sky, building, person, tree) and for each return dominant color. Return ONLY strict JSON array of objects: {"object":"name","hex":"#RRGGBB","name":"Color name"}. No extra text.'],
+                ['type' => 'input_image', 'image_url' => $dataUrl]
+            ]
+        ]],
+        'temperature' => 0.1,
+    ];
+    $ch = curl_init('https://api.openai.com/v1/chat/completions');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'Authorization: Bearer ' . env('OPENAI_API_KEY', OPENAI_API_KEY)
+    ]);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+    $res = curl_exec($ch);
+    if ($res === false) { curl_close($ch); return []; }
+    curl_close($ch);
+    $data = json_decode($res, true);
+    $content = $data['choices'][0]['message']['content'] ?? '';
+    $json = trim($content);
+    if ($json !== '' && ($json[0] !== '[')) {
+        $start = strpos($json, '[');
+        $end = strrpos($json, ']');
+        if ($start !== false && $end !== false && $end > $start) {
+            $json = substr($json, $start, $end - $start + 1);
+        }
+    }
+    $out = [];
+    if ($json !== '') { $decoded = json_decode($json, true); if (is_array($decoded)) $out = $decoded; }
+    $normalized = [];
+    foreach ($out as $o) {
+        $hex = strtoupper(trim((string)($o['hex'] ?? '')));
+        if ($hex === '' || $hex[0] !== '#') continue;
+        if (strlen($hex) === 4) { $r=$hex[1]; $g=$hex[2]; $b=$hex[3]; $hex='#'.$r.$r.$g.$g.$b.$b; }
+        $name = trim((string)($o['name'] ?? 'Color'));
+        $obj  = trim((string)($o['object'] ?? 'Object'));
+        $normalized[] = ['object' => $obj, 'hex' => $hex, 'name' => $name];
+    }
+    return $normalized;
 }
 
 function generateColorPaletteImage(array $colors): ?string {
@@ -1184,6 +1274,23 @@ function generateColorPaletteImage(array $colors): ?string {
         imagestring($im, 3, $x1 + 6, 150, $name, $black);
     }
     $tmp = sys_get_temp_dir() . '/palette_' . uniqid() . '.png';
+    imagepng($im, $tmp);
+    imagedestroy($im);
+    return $tmp;
+}
+
+function generateSolidColorImage(string $hex): ?string {
+    if (!function_exists('imagecreatetruecolor')) return null;
+    $hex = ltrim($hex, '#');
+    if (strlen($hex) !== 6) return null;
+    $r = hexdec(substr($hex, 0, 2));
+    $g = hexdec(substr($hex, 2, 2));
+    $b = hexdec(substr($hex, 4, 2));
+    $w = 512; $h = 512;
+    $im = imagecreatetruecolor($w, $h);
+    $col = imagecolorallocate($im, $r, $g, $b);
+    imagefilledrectangle($im, 0, 0, $w, $h, $col);
+    $tmp = sys_get_temp_dir() . '/solid_' . uniqid() . '.png';
     imagepng($im, $tmp);
     imagedestroy($im);
     return $tmp;
@@ -1357,10 +1464,7 @@ function handleMessage(array $message): void {
                     'reply_markup' => json_encode(['keyboard' => [[['text' => t('back', $lang)]]], 'resize_keyboard' => true], JSON_UNESCAPED_UNICODE)
                 ]);
                 return;
-            case t('main_rules', $lang):
-                setState($chatId, 'rules_list');
-                sendRulesList($chatId, $lang);
-                return;
+            case t('main_rules', $lang): setState($chatId, 'rules_menu'); sendRulesReplyMenu($chatId, $lang); return;
             case t('main_favorites', $lang):
                 setState($chatId, 'favorites_menu');
                 tgSendMessage($chatId, t('favorites_menu', $lang), [
@@ -1396,6 +1500,16 @@ function handleMessage(array $message): void {
         // Handle by state for search inputs
         $state = getState($chatId);
         switch ($state['state']) {
+            case 'rules_menu':
+                if ($text === t('back', $lang)) {
+                    setState($chatId, null);
+                    tgSendMessage($chatId, t('welcome', $lang), [ 'reply_markup' => json_encode(mainMenuKeyboard($lang), JSON_UNESCAPED_UNICODE) ]);
+                    return;
+                }
+                $r = findRuleByLocalizedTitle($lang, $text);
+                if ($r) { sendRuleAsText($chatId, $lang, $r); }
+                return;
+
             case 'skins_menu':
                 if ($text === t('search_by_id', $lang)) {
                     setState($chatId, 'skins_wait_id');
@@ -1507,7 +1621,26 @@ function handleMessage(array $message): void {
             case 'favorites_menu':
                 handleFavoritesMenu($chatId, $lang, $text);
                 return;
+            case 'favorites_list':
+                $meta = $state['meta'] ?? [];
+                if ($text === t('back', $lang)) { setState($chatId, 'favorites_menu'); tgSendMessage($chatId, t('favorites_menu', $lang), [ 'reply_markup' => json_encode(favoritesMenuKeyboard($lang), JSON_UNESCAPED_UNICODE) ]); return; }
+                $labelToId = $meta['label_to_id'] ?? []; $type = $meta['type'] ?? '';
+                if ($type && isset($labelToId[$text])) { if (!presentFavoriteByTypeAndTableId($type, (int)$labelToId[$text], $lang, $chatId)) tgSendMessage($chatId, t('not_found', $lang)); }
+                return;
+
             case 'ai_wait_photo':
+                if (preg_match('/^#?[0-9A-Fa-f]{6}$/', $text)) {
+                    $hex = strtoupper($text[0] === '#' ? $text : ('#' . $text));
+                    $img = generateSolidColorImage($hex);
+                    if ($img) {
+                        $curlFile = new CURLFile($img, 'image/png', 'color.png');
+                        tg('sendPhoto', ['chat_id' => $chatId, 'photo' => $curlFile, 'caption' => $hex]);
+                        @unlink($img);
+                    } else {
+                        tgSendMessage($chatId, $hex);
+                    }
+                    return;
+                }
                 tgSendMessage($chatId, t('send_photo_for_ai', $lang));
                 return;
         }
@@ -1528,24 +1661,28 @@ function handleMessage(array $message): void {
             $fileId = $photos[0]['file_id'];
             $dataUrl = telegramFileToBase64($fileId);
             if ($dataUrl) {
-                $colors = openaiExtractColorsFromImage($dataUrl);
-                if (count($colors) === 0) {
-                    tgSendMessage($chatId, t('not_found', $lang));
+                $objects = openaiDetectObjectsColorsFromImage($dataUrl);
+                if (count($objects) > 0) {
+                    $lines = [];
+                    $palette = [];
+                    foreach ($objects as $o) { $lines[] = $o['object'] . ': ' . $o['name'] . ' ' . $o['hex']; $palette[] = ['hex' => $o['hex'], 'name' => $o['object']]; }
+                    $textOut = t('ai_objects_result_title', $lang) . "\n" . implode("\n", $lines);
+                    $tmp = generateColorPaletteImage($palette);
+                    if ($tmp) { $curlFile = new CURLFile($tmp, 'image/png', 'objects.png'); tg('sendPhoto', ['chat_id' => $chatId, 'photo' => $curlFile, 'caption' => $textOut]); @unlink($tmp); } else { tgSendMessage($chatId, $textOut); }
+                    setState($chatId, null);
                     return;
                 }
-                $lines = [];
-                foreach ($colors as $idx => $c) {
-                    $lines[] = ($idx + 1) . '. ' . $c['hex'] . ' – ' . $c['name'];
+                $colors = openaiExtractColorsFromImage($dataUrl);
+                if (count($colors) === 0) {
+                    // Fallback to on-device GD extraction
+                    $colors = gdExtractDominantColorsFromDataUrl($dataUrl, 6);
                 }
+                if (count($colors) === 0) { tgSendMessage($chatId, t('not_found', $lang)); return; }
+                $lines = [];
+                foreach ($colors as $idx => $c) { $lines[] = ($idx + 1) . '. ' . $c['hex'] . ' – ' . $c['name']; }
                 $text = t('ai_colors_result_title', $lang) . "\n" . implode("\n", $lines);
                 $tmp = generateColorPaletteImage($colors);
-                if ($tmp) {
-                    $curlFile = new CURLFile($tmp, 'image/png', 'palette.png');
-                    tg('sendPhoto', ['chat_id' => $chatId, 'photo' => $curlFile, 'caption' => $text]);
-                    @unlink($tmp);
-                } else {
-                    tgSendMessage($chatId, $text);
-                }
+                if ($tmp) { $curlFile = new CURLFile($tmp, 'image/png', 'palette.png'); tg('sendPhoto', ['chat_id' => $chatId, 'photo' => $curlFile, 'caption' => $text]); @unlink($tmp); } else { tgSendMessage($chatId, $text); }
                 setState($chatId, null);
                 return;
             }
@@ -1594,6 +1731,12 @@ function handleCallback(array $cb): void {
         $keyboard = buildLikeShareFavKeyboard($lang, $type, (int)$tableIdStr, $likes, $added, '');
         tgEditReplyMarkup($cb['message']['chat']['id'], $cb['message']['message_id'], $keyboard);
         tgAnswerCallback($cb['id'], $added ? t('fav_added', $lang) : t('fav_removed', $lang));
+        return;
+    }
+    if ($data === 'share_restart') {
+        tgAnswerCallback($cb['id']);
+        setState($chatId, null);
+        sendLanguageIfUnsetOrShowMenu($chatId, $lang);
         return;
     }
     if (str_starts_with($data, 'rule_view:')) {
@@ -1711,6 +1854,41 @@ function sendRuleView(int $chatId, string $lang, int $id, ?int $editMessageId = 
         tgSendMessage($chatId, $full, ['reply_markup' => $replyMarkup]);
     }
 }
+function sendRulesReplyMenu(int $chatId, string $lang): void {
+    $pdo = db();
+    $rows = $pdo->query("SELECT id, title_fa, title_en, title_ru FROM rules ORDER BY id ASC")->fetchAll();
+    $keyboard = [];
+    if ($rows) {
+        foreach ($rows as $r) {
+            $title = ($lang === 'fa') ? $r['title_fa'] : (($lang === 'ru') ? $r['title_ru'] : ($r['title_en'] ?? $r['title_fa'] ?? $r['title_ru']));
+            if (!$title) $title = 'Rule #' . $r['id'];
+            $keyboard[] = [[ 'text' => $title ]];
+        }
+    }
+    $keyboard[] = [[ 'text' => t('back', $lang) ]];
+    tgSendMessage($chatId, t('rules_list', $lang), [ 'reply_markup' => json_encode(['keyboard' => $keyboard, 'resize_keyboard' => true], JSON_UNESCAPED_UNICODE) ]);
+}
+
+function findRuleByLocalizedTitle(string $lang, string $title): ?array {
+    $pdo = db();
+    if ($lang === 'fa') { $stmt = $pdo->prepare("SELECT * FROM rules WHERE title_fa = ? LIMIT 1"); }
+    elseif ($lang === 'ru') { $stmt = $pdo->prepare("SELECT * FROM rules WHERE title_ru = ? LIMIT 1"); }
+    else { $stmt = $pdo->prepare("SELECT * FROM rules WHERE title_en = ? LIMIT 1"); }
+    $stmt->execute([$title]);
+    $r = $stmt->fetch();
+    return $r ?: null;
+}
+
+function sendRuleAsText(int $chatId, string $lang, array $r): void {
+    $title = ($lang === 'fa') ? $r['title_fa'] : (($lang === 'ru') ? $r['title_ru'] : $r['title_en']);
+    $text  = ($lang === 'fa') ? $r['text_fa']  : (($lang === 'ru') ? $r['text_ru']  : $r['text_en']);
+    $title = $title ?: ('Rule #' . (int)$r['id']);
+    $text  = $text ?: '';
+    tgSendMessage($chatId, '<b>' . htmlspecialchars($title) . '</b>
+
+' . $text);
+}
+
 
 // ---------------------------
 // Favorites
@@ -1718,16 +1896,57 @@ function sendRuleView(int $chatId, string $lang, int $id, ?int $editMessageId = 
 
 function handleFavoritesMenu(int $chatId, string $lang, string $text): void {
     if ($text === t('fav_cat_skins', $lang)) {
-        listFavorites($chatId, $lang, 'skin'); return;
+        showFavoritesKeyboard($chatId, $lang, 'skin'); return;
     }
     if ($text === t('fav_cat_vehicles', $lang)) {
-        listFavorites($chatId, $lang, 'vehicle'); return;
+        showFavoritesKeyboard($chatId, $lang, 'vehicle'); return;
     }
     if ($text === t('fav_cat_weapons', $lang)) {
-        listFavorites($chatId, $lang, 'weapon'); return;
+        showFavoritesKeyboard($chatId, $lang, 'weapon'); return;
     }
     if ($text === t('fav_cat_mappings', $lang)) {
-        listFavorites($chatId, $lang, 'mapping'); return;
+        showFavoritesKeyboard($chatId, $lang, 'mapping'); return;
+    }
+}
+
+function showFavoritesKeyboard(int $chatId, string $lang, string $type): void {
+    $pdo = db();
+    $table = typeToTable($type);
+    $stmt = $pdo->prepare("SELECT f.item_table_id, t.* FROM favorites f JOIN " . $table . " t ON t.id = f.item_table_id WHERE f.user_chat_id = ? AND f.item_type = ? ORDER BY f.id DESC LIMIT 50");
+    $stmt->execute([$chatId, $type]);
+    $rows = $stmt->fetchAll();
+    if (!$rows) { tgSendMessage($chatId, t('no_favorites', $lang)); return; }
+    $keyboard = [];
+    $labelToId = [];
+    foreach ($rows as $r) {
+        switch ($type) {
+            case 'skin': $label = 'ID ' . $r['skin_id'] . ' - ' . $r['name']; break;
+            case 'vehicle': $label = 'ID ' . $r['vehicle_id'] . ' - ' . $r['name']; break;
+            case 'weapon': $label = 'ID ' . $r['weapon_id'] . ' - ' . $r['name']; break;
+            case 'mapping': $label = 'ID ' . $r['mapping_id'] . ' - ' . $r['name']; break;
+            default: $label = (string)$r['id'];
+        }
+        $keyboard[] = [[ 'text' => $label ]];
+        $labelToId[$label] = (int)$r['id'];
+    }
+    $keyboard[] = [[ 'text' => t('back', $lang) ]];
+    setState($chatId, 'favorites_list', ['type' => $type, 'label_to_id' => $labelToId]);
+    tgSendMessage($chatId, t('favorites_menu', $lang), [ 'reply_markup' => json_encode(['keyboard' => $keyboard, 'resize_keyboard' => true], JSON_UNESCAPED_UNICODE) ]);
+}
+
+function presentFavoriteByTypeAndTableId(string $type, int $tableId, string $lang, int $chatId): bool {
+    $pdo = db();
+    $table = typeToTable($type);
+    $stmt = $pdo->prepare("SELECT * FROM " . $table . " WHERE id = ?");
+    $stmt->execute([$tableId]);
+    $row = $stmt->fetch();
+    if (!$row) return false;
+    switch ($type) {
+        case 'skin': presentSkin($row, $lang, $chatId); return true;
+        case 'vehicle': presentVehicle($row, $lang, $chatId); return true;
+        case 'weapon': presentWeapon($row, $lang, $chatId); return true;
+        case 'mapping': presentMapping($row, $lang, $chatId); return true;
+        default: return false;
     }
 }
 
