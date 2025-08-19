@@ -801,13 +801,12 @@ function adminCrudKeyboard(string $lang): array {
 // ---------------------------
 
 function buildLikeShareFavKeyboard(string $lang, string $type, int $tableId, int $likes, bool $isFav, string $sharePayload): array {
-    $botUsername = getBotUsername();
     $likeBtn = ['text' => t('like', $lang, ['count' => $likes]), 'callback_data' => 'like:' . $type . ':' . $tableId];
-    $shareUrl = $botUsername ? ('https://t.me/' . $botUsername . '?start=' . $sharePayload) : 'https://t.me/';
-    $shareBtn = ['text' => t('share', $lang), 'url' => $shareUrl];
+    $shareBtn = ['text' => t('share', $lang), 'callback_data' => 'share_restart'];
     $favBtn = $isFav ? ['text' => t('fav_remove', $lang), 'callback_data' => 'fav:remove:' . $type . ':' . $tableId] : ['text' => t('fav_add', $lang), 'callback_data' => 'fav:add:' . $type . ':' . $tableId];
     return ['inline_keyboard' => [[$likeBtn, $shareBtn], [$favBtn]]];
 }
+
 
 function sponsorsFooter(): string {
     $pdo = db();
@@ -1357,10 +1356,7 @@ function handleMessage(array $message): void {
                     'reply_markup' => json_encode(['keyboard' => [[['text' => t('back', $lang)]]], 'resize_keyboard' => true], JSON_UNESCAPED_UNICODE)
                 ]);
                 return;
-            case t('main_rules', $lang):
-                setState($chatId, 'rules_list');
-                sendRulesList($chatId, $lang);
-                return;
+            case t('main_rules', $lang): setState($chatId, 'rules_menu'); sendRulesReplyMenu($chatId, $lang); return;
             case t('main_favorites', $lang):
                 setState($chatId, 'favorites_menu');
                 tgSendMessage($chatId, t('favorites_menu', $lang), [
@@ -1396,6 +1392,16 @@ function handleMessage(array $message): void {
         // Handle by state for search inputs
         $state = getState($chatId);
         switch ($state['state']) {
+            case 'rules_menu':
+                if ($text === t('back', $lang)) {
+                    setState($chatId, null);
+                    tgSendMessage($chatId, t('welcome', $lang), [ 'reply_markup' => json_encode(mainMenuKeyboard($lang), JSON_UNESCAPED_UNICODE) ]);
+                    return;
+                }
+                $r = findRuleByLocalizedTitle($lang, $text);
+                if ($r) { sendRuleAsText($chatId, $lang, $r); }
+                return;
+
             case 'skins_menu':
                 if ($text === t('search_by_id', $lang)) {
                     setState($chatId, 'skins_wait_id');
@@ -1507,6 +1513,13 @@ function handleMessage(array $message): void {
             case 'favorites_menu':
                 handleFavoritesMenu($chatId, $lang, $text);
                 return;
+            case 'favorites_list':
+                $meta = $state['meta'] ?? [];
+                if ($text === t('back', $lang)) { setState($chatId, 'favorites_menu'); tgSendMessage($chatId, t('favorites_menu', $lang), [ 'reply_markup' => json_encode(favoritesMenuKeyboard($lang), JSON_UNESCAPED_UNICODE) ]); return; }
+                $labelToId = $meta['label_to_id'] ?? []; $type = $meta['type'] ?? '';
+                if ($type && isset($labelToId[$text])) { if (!presentFavoriteByTypeAndTableId($type, (int)$labelToId[$text], $lang, $chatId)) tgSendMessage($chatId, t('not_found', $lang)); }
+                return;
+
             case 'ai_wait_photo':
                 tgSendMessage($chatId, t('send_photo_for_ai', $lang));
                 return;
@@ -1594,6 +1607,12 @@ function handleCallback(array $cb): void {
         $keyboard = buildLikeShareFavKeyboard($lang, $type, (int)$tableIdStr, $likes, $added, '');
         tgEditReplyMarkup($cb['message']['chat']['id'], $cb['message']['message_id'], $keyboard);
         tgAnswerCallback($cb['id'], $added ? t('fav_added', $lang) : t('fav_removed', $lang));
+        return;
+    }
+    if ($data === 'share_restart') {
+        tgAnswerCallback($cb['id']);
+        setState($chatId, null);
+        sendLanguageIfUnsetOrShowMenu($chatId, $lang);
         return;
     }
     if (str_starts_with($data, 'rule_view:')) {
@@ -1711,6 +1730,41 @@ function sendRuleView(int $chatId, string $lang, int $id, ?int $editMessageId = 
         tgSendMessage($chatId, $full, ['reply_markup' => $replyMarkup]);
     }
 }
+function sendRulesReplyMenu(int $chatId, string $lang): void {
+    $pdo = db();
+    $rows = $pdo->query("SELECT id, title_fa, title_en, title_ru FROM rules ORDER BY id ASC")->fetchAll();
+    $keyboard = [];
+    if ($rows) {
+        foreach ($rows as $r) {
+            $title = ($lang === 'fa') ? $r['title_fa'] : (($lang === 'ru') ? $r['title_ru'] : ($r['title_en'] ?? $r['title_fa'] ?? $r['title_ru']));
+            if (!$title) $title = 'Rule #' . $r['id'];
+            $keyboard[] = [[ 'text' => $title ]];
+        }
+    }
+    $keyboard[] = [[ 'text' => t('back', $lang) ]];
+    tgSendMessage($chatId, t('rules_list', $lang), [ 'reply_markup' => json_encode(['keyboard' => $keyboard, 'resize_keyboard' => true], JSON_UNESCAPED_UNICODE) ]);
+}
+
+function findRuleByLocalizedTitle(string $lang, string $title): ?array {
+    $pdo = db();
+    if ($lang === 'fa') { $stmt = $pdo->prepare("SELECT * FROM rules WHERE title_fa = ? LIMIT 1"); }
+    elseif ($lang === 'ru') { $stmt = $pdo->prepare("SELECT * FROM rules WHERE title_ru = ? LIMIT 1"); }
+    else { $stmt = $pdo->prepare("SELECT * FROM rules WHERE title_en = ? LIMIT 1"); }
+    $stmt->execute([$title]);
+    $r = $stmt->fetch();
+    return $r ?: null;
+}
+
+function sendRuleAsText(int $chatId, string $lang, array $r): void {
+    $title = ($lang === 'fa') ? $r['title_fa'] : (($lang === 'ru') ? $r['title_ru'] : $r['title_en']);
+    $text  = ($lang === 'fa') ? $r['text_fa']  : (($lang === 'ru') ? $r['text_ru']  : $r['text_en']);
+    $title = $title ?: ('Rule #' . (int)$r['id']);
+    $text  = $text ?: '';
+    tgSendMessage($chatId, '<b>' . htmlspecialchars($title) . '</b>
+
+' . $text);
+}
+
 
 // ---------------------------
 // Favorites
@@ -1718,16 +1772,57 @@ function sendRuleView(int $chatId, string $lang, int $id, ?int $editMessageId = 
 
 function handleFavoritesMenu(int $chatId, string $lang, string $text): void {
     if ($text === t('fav_cat_skins', $lang)) {
-        listFavorites($chatId, $lang, 'skin'); return;
+        showFavoritesKeyboard($chatId, $lang, 'skin'); return;
     }
     if ($text === t('fav_cat_vehicles', $lang)) {
-        listFavorites($chatId, $lang, 'vehicle'); return;
+        showFavoritesKeyboard($chatId, $lang, 'vehicle'); return;
     }
     if ($text === t('fav_cat_weapons', $lang)) {
-        listFavorites($chatId, $lang, 'weapon'); return;
+        showFavoritesKeyboard($chatId, $lang, 'weapon'); return;
     }
     if ($text === t('fav_cat_mappings', $lang)) {
-        listFavorites($chatId, $lang, 'mapping'); return;
+        showFavoritesKeyboard($chatId, $lang, 'mapping'); return;
+    }
+}
+
+function showFavoritesKeyboard(int $chatId, string $lang, string $type): void {
+    $pdo = db();
+    $table = typeToTable($type);
+    $stmt = $pdo->prepare("SELECT f.item_table_id, t.* FROM favorites f JOIN " . $table . " t ON t.id = f.item_table_id WHERE f.user_chat_id = ? AND f.item_type = ? ORDER BY f.id DESC LIMIT 50");
+    $stmt->execute([$chatId, $type]);
+    $rows = $stmt->fetchAll();
+    if (!$rows) { tgSendMessage($chatId, t('no_favorites', $lang)); return; }
+    $keyboard = [];
+    $labelToId = [];
+    foreach ($rows as $r) {
+        switch ($type) {
+            case 'skin': $label = 'ID ' . $r['skin_id'] . ' - ' . $r['name']; break;
+            case 'vehicle': $label = 'ID ' . $r['vehicle_id'] . ' - ' . $r['name']; break;
+            case 'weapon': $label = 'ID ' . $r['weapon_id'] . ' - ' . $r['name']; break;
+            case 'mapping': $label = 'ID ' . $r['mapping_id'] . ' - ' . $r['name']; break;
+            default: $label = (string)$r['id'];
+        }
+        $keyboard[] = [[ 'text' => $label ]];
+        $labelToId[$label] = (int)$r['id'];
+    }
+    $keyboard[] = [[ 'text' => t('back', $lang) ]];
+    setState($chatId, 'favorites_list', ['type' => $type, 'label_to_id' => $labelToId]);
+    tgSendMessage($chatId, t('favorites_menu', $lang), [ 'reply_markup' => json_encode(['keyboard' => $keyboard, 'resize_keyboard' => true], JSON_UNESCAPED_UNICODE) ]);
+}
+
+function presentFavoriteByTypeAndTableId(string $type, int $tableId, string $lang, int $chatId): bool {
+    $pdo = db();
+    $table = typeToTable($type);
+    $stmt = $pdo->prepare("SELECT * FROM " . $table . " WHERE id = ?");
+    $stmt->execute([$tableId]);
+    $row = $stmt->fetch();
+    if (!$row) return false;
+    switch ($type) {
+        case 'skin': presentSkin($row, $lang, $chatId); return true;
+        case 'vehicle': presentVehicle($row, $lang, $chatId); return true;
+        case 'weapon': presentWeapon($row, $lang, $chatId); return true;
+        case 'mapping': presentMapping($row, $lang, $chatId); return true;
+        default: return false;
     }
 }
 
