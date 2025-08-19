@@ -308,8 +308,9 @@ function buildTranslations(): array {
             'fav_cat_mappings' => '🗺️ مپ‌ها',
             'no_favorites' => 'چیزی در این بخش ندارید.',
             'random_prompt' => 'یک مورد تصادفی انتخاب شد:',
-            'send_photo_for_ai' => 'لطفاً یک عکس ارسال کنید تا رنگ‌ها استخراج شوند.',
+            'send_photo_for_ai' => 'لطفاً یک عکس یا کد رنگ (مثل #1A2B3C) ارسال کنید تا رنگ‌ها استخراج شوند.',
             'ai_colors_result_title' => 'نتایج تشخیص رنگ:',
+            'ai_objects_result_title' => 'رنگ بخش‌ها:',
             'admin_panel' => 'پنل مدیریت',
             'admin_modules' => 'یک بخش را انتخاب کنید:',
             'admin_skins' => '🧍 مدیریت اسکین‌ها',
@@ -385,8 +386,9 @@ function buildTranslations(): array {
             'fav_cat_mappings' => '🗺️ Mappings',
             'no_favorites' => 'You have nothing here.',
             'random_prompt' => 'Random suggestion:',
-            'send_photo_for_ai' => 'Please send a photo to extract colors.',
+            'send_photo_for_ai' => 'Please send a photo or a HEX like #1A2B3C to extract colors.',
             'ai_colors_result_title' => 'Detected colors:',
+            'ai_objects_result_title' => 'Object colors:',
             'admin_panel' => 'Admin Panel',
             'admin_modules' => 'Choose a section:',
             'admin_skins' => '🧍 Manage Skins',
@@ -462,8 +464,9 @@ function buildTranslations(): array {
             'fav_cat_mappings' => '🗺️ Карты',
             'no_favorites' => 'Тут пока пусто.',
             'random_prompt' => 'Случайное предложение:',
-            'send_photo_for_ai' => 'Отправьте фото для извлечения цветов.',
+            'send_photo_for_ai' => 'Отправьте фото или HEX (например #1A2B3C) для извлечения цветов.',
             'ai_colors_result_title' => 'Обнаруженные цвета:',
+            'ai_objects_result_title' => 'Цвета объектов:',
             'admin_panel' => 'Панель администратора',
             'admin_modules' => 'Выберите раздел:',
             'admin_skins' => '🧍 Скины (упр.)',
@@ -1159,6 +1162,46 @@ function openaiExtractColorsFromImage(string $dataUrl): array {
     return array_slice($normalized, 0, 8);
 }
 
+function openaiDetectObjectsColorsFromImage(string $dataUrl): array {
+    $payload = [
+        'model' => env('OPENAI_MODEL', OPENAI_MODEL),
+        'messages' => [[
+            'role' => 'user',
+            'content' => [
+                ['type' => 'input_text', 'text' => 'Identify distinct objects (e.g., car, road, sky, building, person, tree) and for each return dominant color. Return ONLY strict JSON array of objects: {"object":"name","hex":"#RRGGBB","name":"Color name"}. No extra text.'],
+                ['type' => 'input_image', 'image_url' => $dataUrl]
+            ]
+        ]],
+        'temperature' => 0.1,
+    ];
+    $ch = curl_init('https://api.openai.com/v1/chat/completions');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'Authorization: Bearer ' . env('OPENAI_API_KEY', OPENAI_API_KEY)
+    ]);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+    $res = curl_exec($ch);
+    if ($res === false) { curl_close($ch); return []; }
+    curl_close($ch);
+    $data = json_decode($res, true);
+    $content = $data['choices'][0]['message']['content'] ?? '';
+    $json = trim($content);
+    $out = [];
+    if ($json !== '') { $decoded = json_decode($json, true); if (is_array($decoded)) $out = $decoded; }
+    $normalized = [];
+    foreach ($out as $o) {
+        $hex = strtoupper(trim((string)($o['hex'] ?? '')));
+        if ($hex === '' || $hex[0] !== '#') continue;
+        if (strlen($hex) === 4) { $r=$hex[1]; $g=$hex[2]; $b=$hex[3]; $hex='#'.$r.$r.$g.$g.$b.$b; }
+        $name = trim((string)($o['name'] ?? 'Color'));
+        $obj  = trim((string)($o['object'] ?? 'Object'));
+        $normalized[] = ['object' => $obj, 'hex' => $hex, 'name' => $name];
+    }
+    return $normalized;
+}
+
 function generateColorPaletteImage(array $colors): ?string {
     if (!function_exists('imagecreatetruecolor')) return null;
     $count = max(1, count($colors));
@@ -1183,6 +1226,23 @@ function generateColorPaletteImage(array $colors): ?string {
         imagestring($im, 3, $x1 + 6, 150, $name, $black);
     }
     $tmp = sys_get_temp_dir() . '/palette_' . uniqid() . '.png';
+    imagepng($im, $tmp);
+    imagedestroy($im);
+    return $tmp;
+}
+
+function generateSolidColorImage(string $hex): ?string {
+    if (!function_exists('imagecreatetruecolor')) return null;
+    $hex = ltrim($hex, '#');
+    if (strlen($hex) !== 6) return null;
+    $r = hexdec(substr($hex, 0, 2));
+    $g = hexdec(substr($hex, 2, 2));
+    $b = hexdec(substr($hex, 4, 2));
+    $w = 512; $h = 512;
+    $im = imagecreatetruecolor($w, $h);
+    $col = imagecolorallocate($im, $r, $g, $b);
+    imagefilledrectangle($im, 0, 0, $w, $h, $col);
+    $tmp = sys_get_temp_dir() . '/solid_' . uniqid() . '.png';
     imagepng($im, $tmp);
     imagedestroy($im);
     return $tmp;
@@ -1521,6 +1581,18 @@ function handleMessage(array $message): void {
                 return;
 
             case 'ai_wait_photo':
+                if (preg_match('/^#?[0-9A-Fa-f]{6}$/', $text)) {
+                    $hex = strtoupper($text[0] === '#' ? $text : ('#' . $text));
+                    $img = generateSolidColorImage($hex);
+                    if ($img) {
+                        $curlFile = new CURLFile($img, 'image/png', 'color.png');
+                        tg('sendPhoto', ['chat_id' => $chatId, 'photo' => $curlFile, 'caption' => $hex]);
+                        @unlink($img);
+                    } else {
+                        tgSendMessage($chatId, $hex);
+                    }
+                    return;
+                }
                 tgSendMessage($chatId, t('send_photo_for_ai', $lang));
                 return;
         }
@@ -1541,24 +1613,24 @@ function handleMessage(array $message): void {
             $fileId = $photos[0]['file_id'];
             $dataUrl = telegramFileToBase64($fileId);
             if ($dataUrl) {
-                $colors = openaiExtractColorsFromImage($dataUrl);
-                if (count($colors) === 0) {
-                    tgSendMessage($chatId, t('not_found', $lang));
+                $objects = openaiDetectObjectsColorsFromImage($dataUrl);
+                if (count($objects) > 0) {
+                    $lines = [];
+                    $palette = [];
+                    foreach ($objects as $o) { $lines[] = $o['object'] . ': ' . $o['name'] . ' ' . $o['hex']; $palette[] = ['hex' => $o['hex'], 'name' => $o['object']]; }
+                    $textOut = t('ai_objects_result_title', $lang) . "\n" . implode("\n", $lines);
+                    $tmp = generateColorPaletteImage($palette);
+                    if ($tmp) { $curlFile = new CURLFile($tmp, 'image/png', 'objects.png'); tg('sendPhoto', ['chat_id' => $chatId, 'photo' => $curlFile, 'caption' => $textOut]); @unlink($tmp); } else { tgSendMessage($chatId, $textOut); }
+                    setState($chatId, null);
                     return;
                 }
+                $colors = openaiExtractColorsFromImage($dataUrl);
+                if (count($colors) === 0) { tgSendMessage($chatId, t('not_found', $lang)); return; }
                 $lines = [];
-                foreach ($colors as $idx => $c) {
-                    $lines[] = ($idx + 1) . '. ' . $c['hex'] . ' – ' . $c['name'];
-                }
+                foreach ($colors as $idx => $c) { $lines[] = ($idx + 1) . '. ' . $c['hex'] . ' – ' . $c['name']; }
                 $text = t('ai_colors_result_title', $lang) . "\n" . implode("\n", $lines);
                 $tmp = generateColorPaletteImage($colors);
-                if ($tmp) {
-                    $curlFile = new CURLFile($tmp, 'image/png', 'palette.png');
-                    tg('sendPhoto', ['chat_id' => $chatId, 'photo' => $curlFile, 'caption' => $text]);
-                    @unlink($tmp);
-                } else {
-                    tgSendMessage($chatId, $text);
-                }
+                if ($tmp) { $curlFile = new CURLFile($tmp, 'image/png', 'palette.png'); tg('sendPhoto', ['chat_id' => $chatId, 'photo' => $curlFile, 'caption' => $text]); @unlink($tmp); } else { tgSendMessage($chatId, $text); }
                 setState($chatId, null);
                 return;
             }
