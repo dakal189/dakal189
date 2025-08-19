@@ -1114,6 +1114,39 @@ function telegramFileToBase64(string $fileId): ?string {
     return 'data:' . $mime . ';base64,' . $b64;
 }
 
+function gdExtractDominantColorsFromDataUrl(string $dataUrl, int $max = 6): array {
+    if (!function_exists('imagecreatefromstring')) return [];
+    $parts = explode(',', $dataUrl, 2);
+    if (count($parts) < 2) return [];
+    $raw = base64_decode($parts[1], true);
+    if ($raw === false) return [];
+    $im = @imagecreatefromstring($raw);
+    if (!$im) return [];
+    $w = imagesx($im); $h = imagesy($im);
+    // downscale for speed
+    $tw = 64; $th = max(1, intval($h * (64 / max(1, $w))));
+    $tmp = imagecreatetruecolor($tw, $th);
+    imagecopyresampled($tmp, $im, 0, 0, 0, 0, $tw, $th, $w, $h);
+    imagedestroy($im);
+    $counts = [];
+    for ($y = 0; $y < $th; $y++) {
+        for ($x = 0; $x < $tw; $x++) {
+            $rgb = imagecolorat($tmp, $x, $y);
+            $r = ($rgb >> 16) & 0xFF; $g = ($rgb >> 8) & 0xFF; $b = $rgb & 0xFF;
+            // quantize to reduce noise
+            $rq = intdiv($r, 16) * 16; $gq = intdiv($g, 16) * 16; $bq = intdiv($b, 16) * 16;
+            $hex = sprintf('#%02X%02X%02X', $rq, $gq, $bq);
+            $counts[$hex] = ($counts[$hex] ?? 0) + 1;
+        }
+    }
+    imagedestroy($tmp);
+    arsort($counts);
+    $top = array_slice($counts, 0, $max, true);
+    $out = [];
+    foreach ($top as $hex => $cnt) { $out[] = ['hex' => $hex, 'name' => $hex]; }
+    return $out;
+}
+
 function openaiExtractColorsFromImage(string $dataUrl): array {
     $payload = [
         'model' => env('OPENAI_MODEL', OPENAI_MODEL),
@@ -1143,6 +1176,14 @@ function openaiExtractColorsFromImage(string $dataUrl): array {
     $data = json_decode($res, true);
     $content = $data['choices'][0]['message']['content'] ?? '';
     $json = trim($content);
+    // Try to extract JSON array even if wrapped in code fences or extra text
+    if ($json !== '' && ($json[0] !== '[')) {
+        $start = strpos($json, '[');
+        $end = strrpos($json, ']');
+        if ($start !== false && $end !== false && $end > $start) {
+            $json = substr($json, $start, $end - $start + 1);
+        }
+    }
     $colors = [];
     if ($json !== '') {
         $decoded = json_decode($json, true);
@@ -1188,6 +1229,13 @@ function openaiDetectObjectsColorsFromImage(string $dataUrl): array {
     $data = json_decode($res, true);
     $content = $data['choices'][0]['message']['content'] ?? '';
     $json = trim($content);
+    if ($json !== '' && ($json[0] !== '[')) {
+        $start = strpos($json, '[');
+        $end = strrpos($json, ']');
+        if ($start !== false && $end !== false && $end > $start) {
+            $json = substr($json, $start, $end - $start + 1);
+        }
+    }
     $out = [];
     if ($json !== '') { $decoded = json_decode($json, true); if (is_array($decoded)) $out = $decoded; }
     $normalized = [];
@@ -1625,6 +1673,10 @@ function handleMessage(array $message): void {
                     return;
                 }
                 $colors = openaiExtractColorsFromImage($dataUrl);
+                if (count($colors) === 0) {
+                    // Fallback to on-device GD extraction
+                    $colors = gdExtractDominantColorsFromDataUrl($dataUrl, 6);
+                }
                 if (count($colors) === 0) { tgSendMessage($chatId, t('not_found', $lang)); return; }
                 $lines = [];
                 foreach ($colors as $idx => $c) { $lines[] = ($idx + 1) . '. ' . $c['hex'] . ' – ' . $c['name']; }
