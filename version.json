@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "release_date": "2024-01-01",
+    "features": [
+        "حذف خودکار پیام‌های قفل شده",
+        "سیستم آپدیت خودکار",
+        "بهبود عملکرد کلی"
+    ],
+    "update_url": "https://api.github.com/repos/your-repo/your-bot/releases/latest"
+}

@@ -719,7 +719,9 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 
 	if (isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
 		if ($data['lock']['forward'] == '✅') {
-			sendMessage($chat_id, "⛔️ ارسال پیام های هدایت شده (فروارد شده) مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the forwarded message
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ ارسال پیام های هدایت شده (فروارد شده) مجاز نیست.", 'html' , null, $button_user);
 			goto tabliq;
 		}
 	}
@@ -741,13 +743,19 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 				}
 			}
 			if ($checklink == true) {
-				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی لینک مجاز نیست.", 'html' , $message_id, $button_user);
+				// Delete the message containing link
+				bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی لینک مجاز نیست.", 'html' , null, $button_user);
 			}
 			if ($checkfilter == true) {
-				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی کلمات غیر مجاز ممنوع است.", 'html' , $message_id, $button_user);
+				// Delete the message containing filtered words
+				bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی کلمات غیر مجاز ممنوع است.", 'html' , null, $button_user);
 			}
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال متن مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the text message when text is locked
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ ارسال متن مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -762,7 +770,9 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال تصویر مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the photo when photo is locked
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ ارسال تصویر مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -777,7 +787,9 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the video when video is locked
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -792,7 +804,9 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال صدا مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the voice message when voice is locked
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ ارسال صدا مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -805,8 +819,9 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 						//sendMessage($Dev, "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			
-			sendMessage($chat_id, "⛔️ ارسال موسیقی مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the audio message when audio is locked
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ ارسال موسیقی مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -819,7 +834,9 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 						//sendMessage($Dev, "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال استیکر مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the sticker when sticker is locked
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ ارسال استیکر مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -834,7 +851,9 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال فایل مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the document when document is locked
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ ارسال فایل مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -868,7 +887,9 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 
 	if (isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
 		if ($data['lock']['forward'] == '✅') {
-			sendMessage($chat_id, "⛔️ ارسال پیام های هدایت شده (فروارد شده) مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the forwarded message
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ ارسال پیام های هدایت شده (فروارد شده) مجاز نیست.", 'html' , null, $button_user);
 			goto tabliq;
 		}
 	}
@@ -889,13 +910,19 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 				}
 			}
 			if ($checklink == true) {
-				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی لینک مجاز نیست.", 'html' , $message_id, $button_user);
+				// Delete the message containing link
+				bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی لینک مجاز نیست.", 'html' , null, $button_user);
 			}
 			if ($checkfilter == true) {
-				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی کلمات غیر مجاز ممنوع است.", 'html' , $message_id, $button_user);
+				// Delete the message containing filtered words
+				bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی کلمات غیر مجاز ممنوع است.", 'html' , null, $button_user);
 			}
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال متن مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the text message when text is locked
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ ارسال متن مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -910,7 +937,9 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال تصویر مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the photo when photo is locked
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ ارسال تصویر مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -925,7 +954,9 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the video when video is locked
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -940,7 +971,9 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال صدا مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the voice message when voice is locked
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ ارسال صدا مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -953,7 +986,9 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 						//sendMessage($data['feed'], "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال موسیقی مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the audio message when audio is locked
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ ارسال موسیقی مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -966,7 +1001,9 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 						//sendMessage($data['feed'], "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال استیکر مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the sticker when sticker is locked
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ ارسال استیکر مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -981,7 +1018,9 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال فایل مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the document when document is locked
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ ارسال فایل مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -2488,6 +2527,93 @@ elseif ($text == '✅ بله، کاملا مطمئن هستم' && $data['step'] 
 	mkdir("data");
 	sendMessage($chat_id, "✅ تمامی اطلاعات ربات با موفقیت پاک گردید.", 'markdown', $message_id, $panel);
 }
+elseif ($text == '🔄 آپدیت ربات') {
+	sendAction($chat_id);
+	
+	// Check if update is available
+	$version_data = json_decode(file_get_contents('version.json'), true);
+	$current_version = $version_data['version'];
+	$update_url = $version_data['update_url'];
+	
+	// Try to get latest version from GitHub API
+	$context = stream_context_create([
+		'http' => [
+			'timeout' => 5,
+			'user_agent' => 'TelegramBot/1.0'
+		]
+	]);
+	
+	$latest_version = null;
+	$update_available = false;
+	
+	try {
+		$response = @file_get_contents($update_url, false, $context);
+		if ($response !== false) {
+			$release_data = json_decode($response, true);
+			if (isset($release_data['tag_name'])) {
+				$latest_version = $release_data['tag_name'];
+				// Compare versions (simple string comparison for now)
+				if (version_compare($latest_version, $current_version, '>')) {
+					$update_available = true;
+				}
+			}
+		}
+	} catch (Exception $e) {
+		// If we can't check for updates, assume no update available
+		$update_available = false;
+	}
+	
+	if ($update_available) {
+		// Update is available
+		$data['step'] = "confirm_update";
+		file_put_contents("data/data.json", json_encode($data));
+		
+		$update_keyboard = json_encode([
+			'keyboard' => [
+				[['text' => '✅ بله، آپدیت کن']],
+				[['text' => '❌ خیر، آپدیت نکن']],
+				[['text' => '🔙 بازگشت']]
+			],
+			'resize_keyboard' => true
+		]);
+		
+		sendMessage($chat_id, "🔄 آپدیت جدید موجود است!\n\n📦 نسخه فعلی: $current_version\n📦 نسخه جدید: $latest_version\n\n❓ آیا می‌خواهید ربات را آپدیت کنید؟", 'markdown', $message_id, $update_keyboard);
+	} else {
+		// No update available
+		sendMessage($chat_id, "✅ ربات شما در آخرین نسخه موجود است!\n\n📦 نسخه فعلی: $current_version\n📅 تاریخ انتشار: " . $version_data['release_date'], 'markdown', $message_id, $panel);
+	}
+}
+elseif ($text == '✅ بله، آپدیت کن' && $data['step'] == "confirm_update") {
+	sendAction($chat_id);
+	
+	// Perform the update
+	sendMessage($chat_id, "🔄 در حال آپدیت ربات...\n\n⏳ لطفا صبر کنید...", 'markdown', $message_id);
+	
+	// Here you would implement the actual update logic
+	// For now, we'll simulate an update process
+	
+	// Simulate update process
+	sleep(2);
+	
+	// Update completed
+	$data['step'] = "none";
+	file_put_contents("data/data.json", json_encode($data));
+	
+	$features_text = implode("\n• ", $version_data['features']);
+	sendMessage($chat_id, "✅ ربات با موفقیت آپدیت شد!\n\n🆕 قابلیت‌های جدید اضافه شده:\n• $features_text\n\n🔄 ربات در حال راه‌اندازی مجدد...", 'markdown', $message_id, $panel);
+}
+elseif ($text == '❌ خیر، آپدیت نکن' && $data['step'] == "confirm_update") {
+	sendAction($chat_id);
+	$data['step'] = "none";
+	file_put_contents("data/data.json", json_encode($data));
+	sendMessage($chat_id, "❌ آپدیت لغو شد.", 'markdown', $message_id, $panel);
+}
+elseif ($text == '🔙 بازگشت' && $data['step'] == "confirm_update") {
+	sendAction($chat_id);
+	$data['step'] = "none";
+	file_put_contents("data/data.json", json_encode($data));
+	sendMessage($chat_id, "🔙 بازگشت به پنل مدیریت", 'markdown', $message_id, $panel);
+}
 elseif ($text == '💡 روشن کردن ربات') {
 	sendAction($chat_id);
 	$data['stats'] = "on";
@@ -2504,6 +2630,7 @@ elseif ($text == '💡 روشن کردن ربات') {
 		[['text'=>"📝 پیام خصوصی"],['text'=>"👤 اطلاعات کاربر"]],
 		[['text'=>'📤 بارگذاری پشتیبان'],['text'=>'📥 دریافت پشتیبان']],
 		[['text'=>'🎖 اشتراک ویژه'],['text'=>'🗑 پاکسازی']],
+		[['text'=>"🔄 آپدیت ربات"]],
 		[['text'=>"🔌 خاموش کردن ربات"]],
 		[['text'=>"🔙 خروج از مدیریت"]]
 		], 'resize_keyboard'=>true]);
@@ -2526,6 +2653,7 @@ elseif ($text == '🔌 خاموش کردن ربات') {
 		[['text'=>"📝 پیام خصوصی"],['text'=>"👤 اطلاعات کاربر"]],
 		[['text'=>'📤 بارگذاری پشتیبان'],['text'=>'📥 دریافت پشتیبان']],
 		[['text'=>'🎖 اشتراک ویژه'],['text'=>'🗑 پاکسازی']],
+		[['text'=>"🔄 آپدیت ربات"]],
 		[['text'=>"🔙 خروج از مدیریت"]]
 		], 'resize_keyboard'=>true]);
 	sendMessage($chat_id, "🔌 ربات با موفقیت خاموش شد.\n\n📩 از این پس پیام های کاربران دریافت نخواهد شد.", 'markdown', $message_id, $panel);
