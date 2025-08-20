@@ -79,7 +79,7 @@ if (isset($update->callback_query)) {
 	$callback_id = $data_id;
 	$pv_id = $user_id;
 	$message_id = $update->callback_query->inline_message_id;
-	$locks = ['video', 'audio', 'voice', 'text', 'sticker', 'link', 'photo', 'document', 'forward', 'channel'];
+	$locks = ['video', 'audio', 'voice', 'text', 'sticker', 'link', 'photo', 'document', 'forward', 'channel', 'persian'];
 
 	if ($user_id == $Dev && preg_match('@lockch_(?<channel>.+?)_(?<switch>.+)@i', $callback_data, $matches)) {
 		$select_channel = '@' . $matches['channel'];
@@ -176,6 +176,7 @@ if (isset($update->callback_query)) {
 		$document = $data_2['lock']['document'];
 		$forward = $data_2['lock']['forward'];
 		$channel = $data_2['lock']['channel'];
+		$persian = $data_2['lock']['persian'];
 
 		$btnstats = json_encode(
 			[
@@ -189,7 +190,8 @@ if (isset($update->callback_query)) {
 					[['text'=>"$audio", 'callback_data'=>"audio"],['text'=>"🎵 قفل موسیقی", 'callback_data'=>"audio"]],
 					[['text'=>"$voice", 'callback_data'=>"voice"],['text'=>"🔊 قفل ویس", 'callback_data'=>"voice"]],
 					[['text'=>"$video", 'callback_data'=>"video"],['text'=>"🎥 قفل ویدیو", 'callback_data'=>"video"]],
-					[['text'=>"$document", 'callback_data'=>"document"],['text'=>"💾 قفل فایل", 'callback_data'=>"document"]]
+					[['text'=>"$document", 'callback_data'=>"document"],['text'=>"💾 قفل فایل", 'callback_data'=>"document"]],
+					[['text'=>"$persian", 'callback_data'=>"persian"],['text'=>"🇮🇷 قفل زبان فارسی", 'callback_data'=>"persian"]]
 				]
 			]
 		);
@@ -726,6 +728,15 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 		}
 	}
 	if (isset($message->text)) {
+		// Check Persian language lock first
+		$checkpersian = CheckPersianLanguage($text);
+		if ($checkpersian == true) {
+			// Delete the message containing non-Persian text
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ فقط استفاده از زبان فارسی مجاز است. (دستور /start مجاز است)", 'html' , null, $button_user);
+			goto tabliq;
+		}
+		
 		if ($data['lock']['text'] != '✅') {
 			$checklink = CheckLink($text);
 			$checkfilter = CheckFilter($text);
@@ -894,6 +905,15 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 		}
 	}
 	if (isset($message->text)) {
+		// Check Persian language lock first
+		$checkpersian = CheckPersianLanguage($text);
+		if ($checkpersian == true) {
+			// Delete the message containing non-Persian text
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+			sendMessage($chat_id, "⛔️ فقط استفاده از زبان فارسی مجاز است. (دستور /start مجاز است)", 'html' , null, $button_user);
+			goto tabliq;
+		}
+		
 		if ($data['lock']['text'] != '✅') {
 			$checklink = CheckLink($text);
 			$checkfilter = CheckFilter($text);
@@ -1921,6 +1941,7 @@ elseif ($text == '🔐 قفل ها') {
 	$document = $data['lock']['document'];
 	$forward = $data['lock']['forward'];
 	$channel = $data['lock']['channel'];
+	$persian = $data['lock']['persian'];
 	
 	if ($video == null) {
 		$data['lock']['video'] = "❌";
@@ -1949,6 +1970,9 @@ elseif ($text == '🔐 قفل ها') {
 	if ($forward == null) {
 		$data['lock']['forward'] = "❌";
 	}
+	if ($persian == null) {
+		$data['lock']['persian'] = "❌";
+	}
 	
 	$video = $data['lock']['video'];
 	$audio = $data['lock']['audio'];
@@ -1968,7 +1992,8 @@ elseif ($text == '🔐 قفل ها') {
 		[['text'=>"$audio", 'callback_data'=>"audio"],['text'=>"🎵 قفل موسیقی", 'callback_data'=>"audio"]],
 		[['text'=>"$voice", 'callback_data'=>"voice"],['text'=>"🔊 قفل ویس", 'callback_data'=>"voice"]],
 		[['text'=>"$video", 'callback_data'=>"video"],['text'=>"🎥 قفل ویدیو", 'callback_data'=>"video"]],
-		[['text'=>"$document", 'callback_data'=>"document"],['text'=>"💾 قفل فایل", 'callback_data'=>"document"]]
+		[['text'=>"$document", 'callback_data'=>"document"],['text'=>"💾 قفل فایل", 'callback_data'=>"document"]],
+		[['text'=>"$persian", 'callback_data'=>"persian"],['text'=>"🇮🇷 قفل زبان فارسی", 'callback_data'=>"persian"]]
 	]]);
 	sendMessage($chat_id, "🔐 برای قفل کردن و یا باز کردن از دکمه های سمت چپ استفاده نمایید.\n\n👈 قفل : ✅\n👈 آزاد : ❌", 'markdown', $message_id, $btnstats);
 
@@ -2239,6 +2264,10 @@ elseif ($data['step'] == 'upload-backup') {
 
 		if (isset($json_decode['lock'])) {
 			$new_data['lock'] = $json_decode['lock'];
+			// Ensure persian lock is preserved
+			if (!isset($new_data['lock']['persian'])) {
+				$new_data['lock']['persian'] = $data['lock']['persian'] ?? '❌';
+			}
 		}
 		else {
 			$new_data['lock'] = $data['lock'];

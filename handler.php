@@ -4,7 +4,35 @@ $ex = explode('/', $Folder_url);
 $bot_username = trim($ex[count($ex)-2]);
 ##----------------------
 $update = json_decode(file_get_contents('php://input'));
-if (isset($update->message)) {
+
+// Handle edited messages
+if (isset($update->edited_message)) {
+	$message = $update->edited_message; 
+	$chat_id = $message->chat->id;
+	$text = $message->text;
+	$message_id = $message->message_id;
+	$from_id = $message->from->id;
+	$user_id = $from_id;
+	$tc = $message->chat->type;
+	$first_name = $message->from->first_name;
+	$last_name = $message->from->last_name;
+	$username = $message->from->username;
+	$caption = $message->caption;
+	$reply = $message->reply_to_message->forward_from->id;
+	$reply_id = $message->reply_to_message->from->id;
+	$forward = $message->forward_from;
+	$forward_id = $message->forward_from->id;
+	$sticker_id = $message->sticker->file_id;
+	$video_id = $message->video->file_id;
+	$voice_id = $message->voice->file_id;
+	$file_id = $message->document->file_id;
+	$music_id = $message->audio->file_id;
+	$photo0_id = $message->photo[0]->file_id;
+	$photo1_id = $message->photo[1]->file_id;
+	$photo2_id = $message->photo[2]->file_id;
+	$is_edited = true; // Flag to identify edited messages
+}
+elseif (isset($update->message)) {
 	$message = $update->message; 
 	$chat_id = $message->chat->id;
 	$text = $message->text;
@@ -28,6 +56,7 @@ if (isset($update->message)) {
 	$photo0_id = $message->photo[0]->file_id;
 	$photo1_id = $message->photo[1]->file_id;
 	$photo2_id = $message->photo[2]->file_id;
+	$is_edited = false; // Flag to identify normal messages
 }
 elseif (isset($update->callback_query)) {
 	$callback_query = $update->callback_query;
@@ -874,6 +903,23 @@ function CheckFilter($text) {
 			return true;
 		}
 	}
+}
+
+function CheckPersianLanguage($text) {
+	// Allow /start command
+	if (strtolower(trim($text)) === '/start') {
+		return false; // Not a violation
+	}
+	
+	// Check if text contains only Persian characters, numbers, and common symbols
+	$persian_pattern = '/^[\x{0600}-\x{06FF}\x{0750}-\x{077F}\x{08A0}-\x{08FF}\x{FB50}-\x{FDFF}\x{FE70}-\x{FEFF}\x{0590}-\x{05FF}\x{2000}-\x{206F}\x{0020}-\x{007F}\x{00A0}-\x{00FF}\x{0100}-\x{017F}\x{0180}-\x{024F}\x{1E00}-\x{1EFF}\x{2C60}-\x{2C7F}\x{A720}-\x{A7FF}\x{AB30}-\x{AB6F}\x{FB1D}-\x{FB4F}\x{0000}-\x{007F}]+$/u';
+	
+	// If text doesn't match Persian pattern, it's a violation
+	if (!preg_match($persian_pattern, $text)) {
+		return true; // Language violation detected
+	}
+	
+	return false; // No violation
 }
 ##----------------------
 function curl_file_get_contents($url)
