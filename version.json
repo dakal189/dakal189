@@ -1,0 +1,15 @@
+{
+    "version": "1.0.0",
+    "release_date": "2024-01-01",
+    "features": [
+        "حذف خودکار پیام‌های قفل شده",
+        "سیستم آپدیت خودکار",
+        "بهبود عملکرد کلی",
+        "قفل زبان فارسی",
+        "حذف پیام‌های ویرایش شده"
+    ],
+    "update_file": "update.zip",
+    "update_url": "https://your-domain.com/update.zip",
+    "backup_enabled": true,
+    "auto_backup": true
+}
