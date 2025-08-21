@@ -728,13 +728,15 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 		}
 	}
 	if (isset($message->text)) {
-		// Check Persian language lock first
-		$checkpersian = CheckPersianLanguage($text);
-		if ($checkpersian == true) {
-			// Delete the message containing non-Persian text
-			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
-			sendMessage($chat_id, "⛔️ فقط استفاده از زبان فارسی مجاز است. (دستور /start مجاز است)", 'html' , null, $button_user);
-			goto tabliq;
+		// Check Persian language lock first (only if it's enabled)
+		if ($data['lock']['persian'] == '✅') {
+			$checkpersian = CheckPersianLanguage($text);
+			if ($checkpersian == true) {
+				// Delete the message containing non-Persian text
+				bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+				sendMessage($chat_id, "⛔️ فقط استفاده از زبان فارسی مجاز است. (دستور /start مجاز است)", 'html' , null, $button_user);
+				goto tabliq;
+			}
 		}
 		
 		if ($data['lock']['text'] != '✅') {
@@ -905,13 +907,15 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 		}
 	}
 	if (isset($message->text)) {
-		// Check Persian language lock first
-		$checkpersian = CheckPersianLanguage($text);
-		if ($checkpersian == true) {
-			// Delete the message containing non-Persian text
-			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
-			sendMessage($chat_id, "⛔️ فقط استفاده از زبان فارسی مجاز است. (دستور /start مجاز است)", 'html' , null, $button_user);
-			goto tabliq;
+		// Check Persian language lock first (only if it's enabled)
+		if ($data['lock']['persian'] == '✅') {
+			$checkpersian = CheckPersianLanguage($text);
+			if ($checkpersian == true) {
+				// Delete the message containing non-Persian text
+				bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
+				sendMessage($chat_id, "⛔️ فقط استفاده از زبان فارسی مجاز است. (دستور /start مجاز است)", 'html' , null, $button_user);
+				goto tabliq;
+			}
 		}
 		
 		if ($data['lock']['text'] != '✅') {
