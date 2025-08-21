@@ -12,23 +12,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit();
 }
 
-// بررسی متد درخواست
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+// اجازه هر دو متد POST/GET برای انعطاف بیشتر
+if (!in_array($_SERVER['REQUEST_METHOD'], ['POST', 'GET'])) {
     http_response_code(405);
     echo json_encode(['error' => 'Method not allowed']);
     exit();
 }
 
 try {
-    // دریافت داده‌ها
-    $input = json_decode(file_get_contents('php://input'), true);
-    $user_id = $input['user_id'] ?? null;
-
-    if (!$user_id) {
-        http_response_code(400);
-        echo json_encode(['error' => 'User ID is required']);
-        exit();
-    }
+    // دریافت داده‌ها (در صورت نبود user_id، همچنان آمار کلی برگردد)
+    $input = json_decode(file_get_contents('php://input'), true) ?: [];
+    $user_id = $input['user_id'] ?? ($_GET['user_id'] ?? null);
 
     // اتصال به دیتابیس
     $pdo = new PDO("mysql:host={$DB_HOST};dbname={$DB_NAME};charset=utf8mb4", $DB_USERNAME, $DB_PASSWORD);
@@ -49,17 +43,18 @@ try {
     $stmt->execute();
     $total_messages = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
 
-    // دریافت آمار کاربر خاص
-    $stmt = $pdo->prepare("SELECT COUNT(*) as total FROM members WHERE user_id = ?");
-    $stmt->execute([$user_id]);
-    $user_exists = $stmt->fetch(PDO::FETCH_ASSOC)['total'] > 0;
-
-    // دریافت ربات‌های کاربر
+    // دریافت آمار کاربر خاص (اختیاری)
+    $user_exists = false;
     $user_bots = 0;
-    if ($user_exists) {
-        $stmt = $pdo->prepare("SELECT COUNT(*) as total FROM vip_bots WHERE admin = ? AND `end` > UNIX_TIMESTAMP()");
+    if ($user_id) {
+        $stmt = $pdo->prepare("SELECT COUNT(*) as total FROM members WHERE user_id = ?");
         $stmt->execute([$user_id]);
-        $user_bots = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+        $user_exists = $stmt->fetch(PDO::FETCH_ASSOC)['total'] > 0;
+        if ($user_exists) {
+            $stmt = $pdo->prepare("SELECT COUNT(*) as total FROM vip_bots WHERE admin = ? AND `end` > UNIX_TIMESTAMP()");
+            $stmt->execute([$user_id]);
+            $user_bots = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+        }
     }
 
     // دریافت آمار روزانه

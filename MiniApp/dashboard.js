@@ -45,6 +45,11 @@ function loadUserData() {
         .then(data => {
             if (data.success) {
                 updateUserStats(data.data);
+            } else if (data.data) {
+                updateUserStats(data.data);
+            } else {
+                // سازگاری اگر پاسخ فلت باشد
+                updateUserStats(data);
             }
         })
         .catch(error => {
@@ -266,7 +271,7 @@ function createNewBot() {
 
 function manageBot(botUsername) {
     // انتقال به صفحه مدیریت ربات
-    window.location.href = `bot-manager.html?bot=${botUsername}`;
+    window.location.href = `bots-manager.html?bot=${botUsername}`;
 }
 
 function sendMessageToBot(botUsername) {

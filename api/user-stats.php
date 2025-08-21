@@ -12,8 +12,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit();
 }
 
-// بررسی متد درخواست
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+// اجازه هر دو متد POST/GET
+if (!in_array($_SERVER['REQUEST_METHOD'], ['POST', 'GET'])) {
     http_response_code(405);
     echo json_encode(['error' => 'Method not allowed']);
     exit();
@@ -21,12 +21,25 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 try {
     // دریافت داده‌ها
-    $input = json_decode(file_get_contents('php://input'), true);
-    $user_id = $input['user_id'] ?? null;
-
+    $input = json_decode(file_get_contents('php://input'), true) ?: [];
+    $user_id = $input['user_id'] ?? ($_GET['user_id'] ?? null);
     if (!$user_id) {
-        http_response_code(400);
-        echo json_encode(['error' => 'User ID is required']);
+        // بدون user_id آمار صفر برگردان
+        echo json_encode([
+            'success' => true,
+            'data' => [
+                'user_bots' => 0,
+                'total_users' => 0,
+                'sent_messages' => 0,
+                'is_vip' => false,
+                'today_messages' => 0,
+                'weekly_messages' => 0,
+                'monthly_messages' => 0,
+                'growth_rate' => 0,
+                'user_exists' => false
+            ],
+            'timestamp' => time()
+        ]);
         exit();
     }
 
@@ -40,10 +53,21 @@ try {
     $user_exists = $stmt->fetch(PDO::FETCH_ASSOC)['total'] > 0;
 
     if (!$user_exists) {
+        // اگر کاربر در members نبود، صفرها برگردان
         echo json_encode([
-            'success' => false,
-            'error' => 'User not found',
-            'message' => 'کاربر در سیستم ثبت نشده است'
+            'success' => true,
+            'data' => [
+                'user_bots' => 0,
+                'total_users' => 0,
+                'sent_messages' => 0,
+                'is_vip' => false,
+                'today_messages' => 0,
+                'weekly_messages' => 0,
+                'monthly_messages' => 0,
+                'growth_rate' => 0,
+                'user_exists' => false
+            ],
+            'timestamp' => time()
         ]);
         exit();
     }
