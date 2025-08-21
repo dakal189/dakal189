@@ -4554,3 +4554,105 @@ if ($from_id != $Dev) {
 	}
 }
 @unlink('error_log');
+
+// ========================================
+// اسکریپت ایجاد فایل آپدیت
+// ========================================
+
+/**
+ * تابع ایجاد فایل آپدیت
+ * این تابع برای ایجاد فایل ZIP آپدیت استفاده می‌شود
+ */
+function createUpdateFile($version = null) {
+    // اگر نسخه مشخص نشده، نسخه فعلی را افزایش دهید
+    if ($version === null) {
+        $version_data = json_decode(file_get_contents('version.json'), true);
+        $current_version = $version_data['version'];
+        $version_parts = explode('.', $current_version);
+        $version_parts[2] = intval($version_parts[2]) + 1; // افزایش patch version
+        $version = implode('.', $version_parts);
+    }
+    
+    $update_name = "update_v{$version}.zip";
+    $files_to_include = [
+        'bot.php',
+        'handler.php', 
+        'config.php',
+        'index.php',
+        'version.json'
+    ];
+    
+    // ایجاد فایل ZIP
+    $zip = new ZipArchive();
+    if ($zip->open($update_name, ZipArchive::CREATE) === TRUE) {
+        
+        // اضافه کردن فایل‌ها
+        foreach ($files_to_include as $file) {
+            if (file_exists($file)) {
+                $zip->addFile($file, $file);
+            }
+        }
+        
+        // به‌روزرسانی version.json در فایل آپدیت
+        $version_data = json_decode(file_get_contents('version.json'), true);
+        $version_data['version'] = $version;
+        $version_data['release_date'] = date('Y-m-d');
+        
+        $zip->addFromString('version.json', json_encode($version_data, JSON_PRETTY_PRINT));
+        
+        $zip->close();
+        
+        return [
+            'success' => true,
+            'filename' => $update_name,
+            'version' => $version,
+            'size' => filesize($update_name),
+            'date' => date('Y-m-d H:i:s')
+        ];
+        
+    } else {
+        return [
+            'success' => false,
+            'error' => 'خطا در ایجاد فایل ZIP'
+        ];
+    }
+}
+
+/**
+ * تابع بررسی و ایجاد آپدیت از طریق دستور
+ */
+if (isset($_GET['action']) && $_GET['action'] === 'create_update') {
+    header('Content-Type: application/json; charset=utf-8');
+    
+    $version = isset($_GET['version']) ? $_GET['version'] : null;
+    $result = createUpdateFile($version);
+    
+    echo json_encode($result, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    exit;
+}
+
+/**
+ * تابع بررسی و ایجاد آپدیت از طریق CLI
+ */
+if (php_sapi_name() === 'cli') {
+    $args = $argv;
+    if (isset($args[1]) && $args[1] === 'create_update') {
+        $version = isset($args[2]) ? $args[2] : null;
+        $result = createUpdateFile($version);
+        
+        if ($result['success']) {
+            echo "✅ فایل آپدیت با موفقیت ایجاد شد!\n";
+            echo "📁 نام فایل: {$result['filename']}\n";
+            echo "📦 نسخه: {$result['version']}\n";
+            echo "📅 تاریخ: {$result['date']}\n";
+            echo "📏 حجم: " . number_format($result['size'] / 1024, 2) . " KB\n";
+            echo "\n📋 راهنمای استفاده:\n";
+            echo "1. فایل {$result['filename']} را در هاست آپلود کنید\n";
+            echo "2. آدرس فایل را در version.json تنظیم کنید\n";
+            echo "3. از پنل مدیریت ربات آپدیت کنید\n";
+        } else {
+            echo "❌ خطا در ایجاد فایل آپدیت: {$result['error']}\n";
+        }
+        exit;
+    }
+}
