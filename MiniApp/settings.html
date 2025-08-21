@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تنظیمات - Dakal</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <header class="brand-header">
+            <button onclick="goBack()" class="back-btn">←</button>
+            <h2>⚙️ تنظیمات</h2>
+        </header>
+        <div style="padding:20px">
+            <p>این بخش به‌زودی تکمیل می‌شود.</p>
+        </div>
+    </div>
+    <script>
+        const tg = window.Telegram.WebApp;
+        document.addEventListener('DOMContentLoaded', () => { tg.ready(); tg.expand(); });
+        function goBack(){ window.location.href = 'index.html'; }
+    </script>
+</body>
+</html>

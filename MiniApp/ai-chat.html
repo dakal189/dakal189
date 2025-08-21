@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>چت با AI - Dakal</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        .chat-container {
+            height: calc(100vh - 140px);
+            display: flex;
+            flex-direction: column;
+            background: var(--dakal-bg-secondary);
+        }
+
+        .chat-header {
+            background: var(--dakal-gradient-primary);
+            padding: 16px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: white;
+            position: relative;
+        }
+
+        .ai-avatar {
+            width: 40px;
+            height: 40px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            backdrop-filter: blur(10px);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .ai-info h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .ai-info p {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .message {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            position: relative;
+            animation: messageSlideIn 0.3s ease-out;
+        }
+
+        @keyframes messageSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            background: var(--dakal-gradient-primary);
+            color: white;
+            align-self: flex-end;
+            border-bottom-right-radius: 6px;
+        }
+
+        .message.ai {
+            background: var(--dakal-bg-card);
+            color: var(--dakal-text);
+            align-self: flex-start;
+            border-bottom-left-radius: 6px;
+            border: 1px solid var(--dakal-border);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .message.typing {
+            background: var(--dakal-bg-card);
+            color: var(--dakal-text-secondary);
+            align-self: flex-start;
+            border-bottom-left-radius: 6px;
+            border: 1px solid var(--dakal-border);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .typing-dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .typing-dot {
+            width: 6px;
+            height: 6px;
+            background: var(--dakal-text-secondary);
+            border-radius: 50%;
+            animation: typing 1.4s infinite ease-in-out;
+        }
+
+        .typing-dot:nth-child(1) { animation-delay: -0.32s; }
+        .typing-dot:nth-child(2) { animation-delay: -0.16s; }
+
+        @keyframes typing {
+            0%, 80%, 100% {
+                transform: scale(0.8);
+                opacity: 0.5;
+            }
+            40% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        .chat-input-container {
+            background: var(--dakal-bg-card);
+            padding: 16px 20px;
+            border-top: 1px solid var(--dakal-border);
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+
+        .chat-input-wrapper {
+            flex: 1;
+            position: relative;
+        }
+
+        .chat-input {
+            width: 100%;
+            min-height: 44px;
+            max-height: 120px;
+            padding: 12px 16px;
+            border: 1px solid var(--dakal-border);
+            border-radius: 22px;
+            outline: none;
+            resize: none;
+            font-family: inherit;
+            font-size: 14px;
+            line-height: 1.4;
+            background: var(--dakal-bg);
+            color: var(--dakal-text);
+            transition: all 0.3s ease;
+        }
+
+        .chat-input:focus {
+            border-color: var(--dakal-primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .send-button {
+            width: 44px;
+            height: 44px;
+            background: var(--dakal-gradient-primary);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            flex-shrink: 0;
+        }
+
+        .send-button:hover {
+            transform: scale(1.05);
+            box-shadow: var(--shadow-md);
+        }
+
+        .send-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .message-time {
+            font-size: 10px;
+            opacity: 0.7;
+            margin-top: 4px;
+            text-align: right;
+        }
+
+        .message.ai .message-time {
+            text-align: left;
+        }
+
+        .quick-actions {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+
+        .quick-action {
+            background: var(--dakal-bg-card);
+            border: 1px solid var(--dakal-border);
+            border-radius: 16px;
+            padding: 8px 12px;
+            font-size: 12px;
+            color: var(--dakal-text-secondary);
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .quick-action:hover {
+            background: var(--dakal-primary);
+            color: white;
+            border-color: var(--dakal-primary);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--dakal-text-secondary);
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            font-size: 18px;
+            margin-bottom: 8px;
+            color: var(--dakal-text);
+        }
+
+        .empty-state p {
+            font-size: 14px;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- هدر چت -->
+        <header class="chat-header">
+            <button onclick="goBack()" class="back-btn">←</button>
+            <div class="ai-avatar">🧠</div>
+            <div class="ai-info">
+                <h3>Dakal AI</h3>
+                <p>دستیار هوشمند شما</p>
+            </div>
+        </header>
+
+        <!-- کانتینر چت -->
+        <div class="chat-container">
+            <!-- پیام‌ها -->
+            <div class="chat-messages" id="chatMessages">
+                <!-- پیام خوشامدگویی -->
+                <div class="message ai">
+                    سلام! 👋 من Dakal AI هستم، دستیار هوشمند شما برای مدیریت ربات‌های تلگرام.
+                    
+                    می‌تونم در موارد زیر کمکتون کنم:
+                    • راهنمایی برای ساخت ربات
+                    • حل مشکلات فنی
+                    • بهینه‌سازی عملکرد
+                    • پاسخ به سوالات عمومی
+                    
+                    هر سوالی دارید بپرسید! 😊
+                    <div class="message-time">همین الان</div>
+                </div>
+
+                <!-- پیام‌های سریع -->
+                <div class="quick-actions">
+                    <div class="quick-action" onclick="sendQuickMessage('چطور ربات بسازم؟')">
+                        🤖 ساخت ربات
+                    </div>
+                    <div class="quick-action" onclick="sendQuickMessage('مشکلات رایج')">
+                        ⚠️ مشکلات
+                    </div>
+                    <div class="quick-action" onclick="sendQuickMessage('بهینه‌سازی')">
+                        ⚡ بهینه‌سازی
+                    </div>
+                    <div class="quick-action" onclick="sendQuickMessage('قیمت‌گذاری')">
+                        💰 قیمت‌ها
+                    </div>
+                </div>
+            </div>
+
+            <!-- ورودی چت -->
+            <div class="chat-input-container">
+                <div class="chat-input-wrapper">
+                    <textarea 
+                        id="messageInput" 
+                        class="chat-input" 
+                        placeholder="پیام خود را بنویسید..."
+                        rows="1"
+                        onkeypress="handleKeyPress(event)"
+                        oninput="autoResize(this)"
+                    ></textarea>
+                </div>
+                <button id="sendButton" class="send-button" onclick="sendMessage()">
+                    ➤
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="ai-chat.js"></script>
+</body>
+</html>
