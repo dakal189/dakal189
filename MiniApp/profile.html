@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>پروفایل کاربر - Dakal</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        .profile-container {
+            padding: 20px;
+        }
+
+        .profile-header {
+            background: var(--dakal-gradient-primary);
+            border-radius: 20px;
+            padding: 30px 20px;
+            text-align: center;
+            margin-bottom: 20px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .profile-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%);
+            pointer-events: none;
+        }
+
+        .profile-avatar-large {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            margin: 0 auto 16px;
+            position: relative;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            background: rgba(255, 255, 255, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            color: white;
+            overflow: hidden;
+        }
+
+        .profile-avatar-large img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 50%;
+        }
+
+        .profile-name {
+            font-size: 24px;
+            font-weight: 700;
+            color: white;
+            margin-bottom: 8px;
+        }
+
+        .profile-username {
+            font-size: 16px;
+            color: rgba(255, 255, 255, 0.8);
+            margin-bottom: 4px;
+        }
+
+        .profile-id {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .profile-info-section {
+            background: var(--dakal-bg-card);
+            border: 1px solid var(--dakal-border);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--dakal-text);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .info-grid {
+            display: grid;
+            gap: 12px;
+        }
+
+        .info-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: var(--dakal-bg-secondary);
+            border-radius: 12px;
+            border: 1px solid var(--dakal-border);
+        }
+
+        .info-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            background: var(--dakal-gradient-primary);
+            color: white;
+        }
+
+        .info-content {
+            flex: 1;
+        }
+
+        .info-label {
+            font-size: 12px;
+            color: var(--dakal-text-secondary);
+            margin-bottom: 2px;
+        }
+
+        .info-value {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--dakal-text);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+
+        .stat-card {
+            background: var(--dakal-bg-secondary);
+            border: 1px solid var(--dakal-border);
+            border-radius: 12px;
+            padding: 16px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--dakal-primary);
+            margin-bottom: 4px;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: var(--dakal-text-secondary);
+        }
+
+        .action-buttons {
+            display: grid;
+            gap: 12px;
+            margin-top: 20px;
+        }
+
+        .btn {
+            padding: 14px 20px;
+            border: none;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--dakal-gradient-primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .btn-secondary {
+            background: var(--dakal-bg-secondary);
+            color: var(--dakal-text);
+            border: 1px solid var(--dakal-border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--dakal-border);
+        }
+
+        .empty-avatar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 100%;
+            font-size: 40px;
+            color: rgba(255, 255, 255, 0.8);
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- هدر -->
+        <header class="brand-header">
+            <button onclick="goBack()" class="back-btn">←</button>
+            <h2>👤 پروفایل کاربر</h2>
+        </header>
+
+        <div class="profile-container">
+            <!-- هدر پروفایل -->
+            <div class="profile-header">
+                <div class="profile-avatar-large" id="profileAvatarLarge">
+                    <img id="profileAvatarImg" src="" alt="پروفایل" style="display: none;">
+                    <div id="profileAvatarPlaceholder" class="empty-avatar">❓</div>
+                </div>
+                <div class="profile-name" id="profileName">کاربر Dakal</div>
+                <div class="profile-username" id="profileUsername">@username</div>
+                <div class="profile-id" id="profileId">ID: 123456789</div>
+            </div>
+
+            <!-- اطلاعات شخصی -->
+            <div class="profile-info-section">
+                <h3 class="section-title">📋 اطلاعات شخصی</h3>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-icon">🆔</div>
+                        <div class="info-content">
+                            <div class="info-label">شناسه کاربری</div>
+                            <div class="info-value" id="userId">123456789</div>
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-icon">👤</div>
+                        <div class="info-content">
+                            <div class="info-label">نام</div>
+                            <div class="info-value" id="userFirstName">نامشخص</div>
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-icon">👥</div>
+                        <div class="info-content">
+                            <div class="info-label">نام خانوادگی</div>
+                            <div class="info-value" id="userLastName">نامشخص</div>
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-icon">🌐</div>
+                        <div class="info-content">
+                            <div class="info-label">زبان</div>
+                            <div class="info-value" id="userLanguage">نامشخص</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- آمار کاربر -->
+            <div class="profile-info-section">
+                <h3 class="section-title">📊 آمار کاربر</h3>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-number" id="userBotsCount">0</div>
+                        <div class="stat-label">ربات‌های من</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="userMembersCount">0</div>
+                        <div class="stat-label">کل اعضا</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="userMessagesCount">0</div>
+                        <div class="stat-label">پیام‌های ارسالی</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="userVipStatus">❌</div>
+                        <div class="stat-label">وضعیت VIP</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- دکمه‌های عملیات -->
+            <div class="action-buttons">
+                <button class="btn btn-primary" onclick="openDashboard()">
+                    📊 رفتن به داشبورد
+                </button>
+                <button class="btn btn-secondary" onclick="openSettings()">
+                    ⚙️ تنظیمات
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="profile.js"></script>
+</body>
+</html>

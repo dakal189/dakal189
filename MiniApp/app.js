@@ -28,13 +28,32 @@ function initializeApp() {
 function displayUserInfo() {
     const user = tg.initDataUnsafe?.user;
     if (user) {
-        const userAvatar = document.getElementById('userAvatar');
+        // نمایش نام کاربر در عنوان صفحه
+        const userName = user.first_name || user.username || 'کاربر Dakal';
+        document.title = `${userName} - Dakal`;
+        
+        // نمایش آواتار
+        const avatarImg = document.getElementById('userAvatarImg');
+        const avatarPlaceholder = document.getElementById('userAvatarPlaceholder');
+        
         if (user.photo_url) {
-            userAvatar.style.backgroundImage = `url(${user.photo_url})`;
-            userAvatar.style.backgroundSize = 'cover';
-            userAvatar.textContent = '';
+            // اگر عکس پروفایل موجود باشد
+            avatarImg.src = user.photo_url;
+            avatarImg.style.display = 'block';
+            avatarPlaceholder.style.display = 'none';
+            
+            // اضافه کردن event listener برای خطا
+            avatarImg.onerror = function() {
+                // اگر عکس لود نشد، از placeholder استفاده کن
+                avatarImg.style.display = 'none';
+                avatarPlaceholder.style.display = 'flex';
+                avatarPlaceholder.textContent = '❓';
+            };
         } else {
-            userAvatar.textContent = user.first_name?.charAt(0) || '👤';
+            // اگر عکس پروفایل موجود نباشد
+            avatarImg.style.display = 'none';
+            avatarPlaceholder.style.display = 'flex';
+            avatarPlaceholder.textContent = '❓';
         }
     }
 }
@@ -117,18 +136,11 @@ function openAISettings() {
 }
 
 function showUserProfile() {
-    const user = tg.initDataUnsafe?.user;
-    if (user) {
-        const message = `👤 اطلاعات کاربر:
-        
-نام: ${user.first_name || 'نامشخص'}
-نام خانوادگی: ${user.last_name || 'نامشخص'}
-یوزرنیم: ${user.username ? '@' + user.username : 'ندارد'}
-زبان: ${user.language_code || 'نامشخص'}`;
-        
-        tg.showAlert(message);
-    }
+    // هدایت به صفحه پروفایل کامل
+    window.location.href = 'profile.html';
 }
+
+
 
 // توابع کمکی
 function showLoading() {
