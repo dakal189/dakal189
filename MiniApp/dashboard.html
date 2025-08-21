@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>داشبورد - Dakal</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        .dashboard-container {
+            padding: 20px;
+        }
+
+        .user-welcome {
+            background: var(--dakal-gradient-primary);
+            padding: 20px;
+            border-radius: 16px;
+            color: white;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .user-welcome h2 {
+            font-size: 20px;
+            margin-bottom: 8px;
+        }
+
+        .user-welcome p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: var(--dakal-bg-card);
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            border: 1px solid var(--dakal-border);
+            transition: all 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .stat-icon {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+
+        .stat-number {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--dakal-primary);
+            margin-bottom: 4px;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: var(--dakal-text-secondary);
+        }
+
+        .bots-section {
+            margin-bottom: 24px;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--dakal-text);
+        }
+
+        .add-bot-btn {
+            background: var(--dakal-gradient-primary);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .add-bot-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .bot-card {
+            background: var(--dakal-bg-card);
+            border: 1px solid var(--dakal-border);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+            transition: all 0.3s ease;
+        }
+
+        .bot-card:hover {
+            border-color: var(--dakal-primary);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .bot-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .bot-name {
+            font-weight: 600;
+            color: var(--dakal-text);
+            font-size: 16px;
+        }
+
+        .bot-status {
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: 500;
+        }
+
+        .bot-status.active {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--dakal-success);
+        }
+
+        .bot-status.inactive {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--dakal-danger);
+        }
+
+        .bot-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .bot-stat {
+            text-align: center;
+            padding: 8px;
+            background: var(--dakal-bg-secondary);
+            border-radius: 8px;
+        }
+
+        .bot-stat-number {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--dakal-primary);
+        }
+
+        .bot-stat-label {
+            font-size: 10px;
+            color: var(--dakal-text-secondary);
+        }
+
+        .bot-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .bot-action-btn {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid var(--dakal-border);
+            background: var(--dakal-bg);
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .bot-action-btn:hover {
+            background: var(--dakal-primary);
+            color: white;
+            border-color: var(--dakal-primary);
+        }
+
+        .bot-action-btn.primary {
+            background: var(--dakal-primary);
+            color: white;
+            border-color: var(--dakal-primary);
+        }
+
+        .recent-activity {
+            background: var(--dakal-bg-card);
+            border: 1px solid var(--dakal-border);
+            border-radius: 12px;
+            padding: 16px;
+        }
+
+        .activity-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--dakal-border);
+        }
+
+        .activity-item:last-child {
+            border-bottom: none;
+        }
+
+        .activity-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+        }
+
+        .activity-content {
+            flex: 1;
+        }
+
+        .activity-title {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--dakal-text);
+            margin-bottom: 2px;
+        }
+
+        .activity-time {
+            font-size: 12px;
+            color: var(--dakal-text-secondary);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--dakal-text-secondary);
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            font-size: 18px;
+            margin-bottom: 8px;
+            color: var(--dakal-text);
+        }
+
+        .empty-state p {
+            font-size: 14px;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- هدر -->
+        <header class="brand-header">
+            <button onclick="goBack()" class="back-btn">←</button>
+            <h2>📊 داشبورد</h2>
+        </header>
+
+        <div class="dashboard-container">
+            <!-- خوشامدگویی کاربر -->
+            <div class="user-welcome">
+                <h2 id="userName">کاربر عزیز</h2>
+                <p>به داشبورد شخصی خود خوش آمدید!</p>
+            </div>
+
+            <!-- آمار کلی -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">🤖</div>
+                    <div class="stat-number" id="userBots">0</div>
+                    <div class="stat-label">ربات‌های من</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">👥</div>
+                    <div class="stat-number" id="totalUsers">0</div>
+                    <div class="stat-label">کاربران کل</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">📝</div>
+                    <div class="stat-number" id="sentMessages">0</div>
+                    <div class="stat-label">پیام‌های ارسالی</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">💎</div>
+                    <div class="stat-number" id="vipStatus">رایگان</div>
+                    <div class="stat-label">وضعیت اشتراک</div>
+                </div>
+            </div>
+
+            <!-- ربات‌های کاربر -->
+            <div class="bots-section">
+                <div class="section-header">
+                    <h3 class="section-title">🤖 ربات‌های من</h3>
+                    <button class="add-bot-btn" onclick="createNewBot()">+ ربات جدید</button>
+                </div>
+                
+                <div id="botsList">
+                    <!-- ربات‌ها اینجا لود می‌شوند -->
+                </div>
+            </div>
+
+            <!-- فعالیت‌های اخیر -->
+            <div class="recent-activity">
+                <h3 class="section-title">📈 فعالیت‌های اخیر</h3>
+                <div id="recentActivity">
+                    <!-- فعالیت‌ها اینجا لود می‌شوند -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="dashboard.js"></script>
+</body>
+</html>
