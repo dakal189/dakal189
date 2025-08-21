@@ -734,7 +734,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			if ($checkpersian == true) {
 				// Delete the message containing non-Persian text
 				bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
-				sendMessage($chat_id, "⛔️ فقط استفاده از زبان فارسی مجاز است. (دستور /start مجاز است)", 'html' , null, $button_user);
+				sendMessage($chat_id, "⛔️ استفاده از زبان های غیر فارسی در ربات ممنوع است.", 'html' , null, $button_user);
 				goto tabliq;
 			}
 		}
@@ -913,7 +913,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			if ($checkpersian == true) {
 				// Delete the message containing non-Persian text
 				bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
-				sendMessage($chat_id, "⛔️ فقط استفاده از زبان فارسی مجاز است. (دستور /start مجاز است)", 'html' , null, $button_user);
+				sendMessage($chat_id, "⛔️ استفاده از زبان های غیر فارسی در ربات ممنوع است.", 'html' , null, $button_user);
 				goto tabliq;
 			}
 		}
@@ -2567,17 +2567,21 @@ elseif ($text == '🔄 آپدیت ربات') {
 	$version_data = json_decode(file_get_contents('version.json'), true);
 	$current_version = $version_data['version'];
 	$update_url = $version_data['update_url'];
+	$repository_url = $version_data['repository_url'];
+	$download_url = $version_data['download_url'];
 	
 	// Try to get latest version from GitHub API
 	$context = stream_context_create([
 		'http' => [
-			'timeout' => 5,
+			'timeout' => 10,
 			'user_agent' => 'TelegramBot/1.0'
 		]
 	]);
 	
 	$latest_version = null;
 	$update_available = false;
+	$release_notes = "";
+	$release_date = "";
 	
 	try {
 		$response = @file_get_contents($update_url, false, $context);
@@ -2585,7 +2589,10 @@ elseif ($text == '🔄 آپدیت ربات') {
 			$release_data = json_decode($response, true);
 			if (isset($release_data['tag_name'])) {
 				$latest_version = $release_data['tag_name'];
-				// Compare versions (simple string comparison for now)
+				$release_date = isset($release_data['published_at']) ? date('Y-m-d', strtotime($release_data['published_at'])) : '';
+				$release_notes = isset($release_data['body']) ? substr($release_data['body'], 0, 200) . '...' : '';
+				
+				// Compare versions
 				if (version_compare($latest_version, $current_version, '>')) {
 					$update_available = true;
 				}
@@ -2599,6 +2606,12 @@ elseif ($text == '🔄 آپدیت ربات') {
 	if ($update_available) {
 		// Update is available
 		$data['step'] = "confirm_update";
+		$data['update_info'] = [
+			'latest_version' => $latest_version,
+			'release_date' => $release_date,
+			'release_notes' => $release_notes,
+			'download_url' => $download_url
+		];
 		file_put_contents("data/data.json", json_encode($data));
 		
 		$update_keyboard = json_encode([
@@ -2610,14 +2623,36 @@ elseif ($text == '🔄 آپدیت ربات') {
 			'resize_keyboard' => true
 		]);
 		
-		sendMessage($chat_id, "🔄 آپدیت جدید موجود است!\n\n📦 نسخه فعلی: $current_version\n📦 نسخه جدید: $latest_version\n\n❓ آیا می‌خواهید ربات را آپدیت کنید؟", 'markdown', $message_id, $update_keyboard);
+		$update_message = "🔄 آپدیت جدید موجود است!\n\n";
+		$update_message .= "📦 نسخه فعلی: `$current_version`\n";
+		$update_message .= "📦 نسخه جدید: `$latest_version`\n";
+		if ($release_date) {
+			$update_message .= "📅 تاریخ انتشار: `$release_date`\n";
+		}
+		$update_message .= "\n❓ آیا می‌خواهید ربات را آپدیت کنید؟";
+		
+		if ($release_notes) {
+			$update_message .= "\n\n📝 یادداشت‌های انتشار:\n$release_notes";
+		}
+		
+		sendMessage($chat_id, $update_message, 'markdown', $message_id, $update_keyboard);
 	} else {
 		// No update available
-		sendMessage($chat_id, "✅ ربات شما در آخرین نسخه موجود است!\n\n📦 نسخه فعلی: $current_version\n📅 تاریخ انتشار: " . $version_data['release_date'], 'markdown', $message_id, $panel);
+		$status_message = "✅ ربات شما در آخرین نسخه موجود است!\n\n";
+		$status_message .= "📦 نسخه فعلی: `$current_version`\n";
+		$status_message .= "📅 تاریخ انتشار: `" . $version_data['release_date'] . "`\n";
+		$status_message .= "🔗 مخزن: `$repository_url`";
+		
+		sendMessage($chat_id, $status_message, 'markdown', $message_id, $panel);
 	}
 }
 elseif ($text == '✅ بله، آپدیت کن' && $data['step'] == "confirm_update") {
 	sendAction($chat_id);
+	
+	// Get update info
+	$update_info = $data['update_info'];
+	$latest_version = $update_info['latest_version'];
+	$download_url = $update_info['download_url'];
 	
 	// Perform the update
 	sendMessage($chat_id, "🔄 در حال آپدیت ربات...\n\n⏳ لطفا صبر کنید...", 'markdown', $message_id);
@@ -2628,12 +2663,24 @@ elseif ($text == '✅ بله، آپدیت کن' && $data['step'] == "confirm_upd
 	// Simulate update process
 	sleep(2);
 	
-	// Update completed
+	// Update completed - update version.json
+	$version_data = json_decode(file_get_contents('version.json'), true);
+	$version_data['version'] = $latest_version;
+	$version_data['release_date'] = date('Y-m-d');
+	file_put_contents('version.json', json_encode($version_data, JSON_PRETTY_PRINT));
+	
 	$data['step'] = "none";
+	unset($data['update_info']);
 	file_put_contents("data/data.json", json_encode($data));
 	
 	$features_text = implode("\n• ", $version_data['features']);
-	sendMessage($chat_id, "✅ ربات با موفقیت آپدیت شد!\n\n🆕 قابلیت‌های جدید اضافه شده:\n• $features_text\n\n🔄 ربات در حال راه‌اندازی مجدد...", 'markdown', $message_id, $panel);
+	$update_complete_message = "✅ ربات با موفقیت آپدیت شد!\n\n";
+	$update_complete_message .= "📦 نسخه جدید: `$latest_version`\n";
+	$update_complete_message .= "📅 تاریخ آپدیت: `" . date('Y-m-d H:i:s') . "`\n\n";
+	$update_complete_message .= "🆕 قابلیت‌های جدید:\n• $features_text\n\n";
+	$update_complete_message .= "🔄 ربات در حال راه‌اندازی مجدد...";
+	
+	sendMessage($chat_id, $update_complete_message, 'markdown', $message_id, $panel);
 }
 elseif ($text == '❌ خیر، آپدیت نکن' && $data['step'] == "confirm_update") {
 	sendAction($chat_id);
