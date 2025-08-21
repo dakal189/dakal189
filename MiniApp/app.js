@@ -112,6 +112,10 @@ function openSettings() {
     window.location.href = 'settings.html';
 }
 
+function openAISettings() {
+    window.location.href = 'ai-settings.html';
+}
+
 function showUserProfile() {
     const user = tg.initDataUnsafe?.user;
     if (user) {

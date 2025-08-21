@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تنظیمات AI - Dakal</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        .settings-container {
+            padding: 20px;
+        }
+
+        .section-card {
+            background: var(--dakal-bg-card);
+            border: 1px solid var(--dakal-border);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--dakal-text);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--dakal-text);
+            margin-bottom: 8px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid var(--dakal-border);
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 14px;
+            background: var(--dakal-bg);
+            color: var(--dakal-text);
+            transition: all 0.3s ease;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--dakal-primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .form-textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--dakal-gradient-primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .btn-secondary {
+            background: var(--dakal-bg-secondary);
+            color: var(--dakal-text);
+            border: 1px solid var(--dakal-border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--dakal-border);
+        }
+
+        .btn-danger {
+            background: var(--dakal-danger);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .questions-list {
+            margin-top: 16px;
+        }
+
+        .question-item {
+            background: var(--dakal-bg-secondary);
+            border: 1px solid var(--dakal-border);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+            transition: all 0.3s ease;
+        }
+
+        .question-item:hover {
+            border-color: var(--dakal-primary);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .question-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 12px;
+        }
+
+        .question-title {
+            font-weight: 600;
+            color: var(--dakal-text);
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .question-keywords {
+            font-size: 12px;
+            color: var(--dakal-text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .question-answer {
+            font-size: 13px;
+            color: var(--dakal-text);
+            line-height: 1.5;
+            margin-bottom: 12px;
+            background: var(--dakal-bg);
+            padding: 8px;
+            border-radius: 6px;
+            border: 1px solid var(--dakal-border);
+        }
+
+        .question-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .question-status {
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: 500;
+        }
+
+        .question-status.active {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--dakal-success);
+        }
+
+        .question-status.inactive {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--dakal-danger);
+        }
+
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .modal.show {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .modal-content {
+            background: var(--dakal-bg-card);
+            border-radius: 12px;
+            padding: 24px;
+            width: 90%;
+            max-width: 400px;
+            max-height: 80vh;
+            overflow-y: auto;
+            transform: scale(0.9);
+            transition: transform 0.3s ease;
+        }
+
+        .modal.show .modal-content {
+            transform: scale(1);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--dakal-text);
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            color: var(--dakal-text-secondary);
+            cursor: pointer;
+            padding: 0;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: all 0.3s ease;
+        }
+
+        .modal-close:hover {
+            background: var(--dakal-bg-secondary);
+            color: var(--dakal-text);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--dakal-text-secondary);
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            font-size: 18px;
+            margin-bottom: 8px;
+            color: var(--dakal-text);
+        }
+
+        .empty-state p {
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .help-text {
+            font-size: 12px;
+            color: var(--dakal-text-secondary);
+            margin-top: 4px;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- هدر -->
+        <header class="brand-header">
+            <button onclick="goBack()" class="back-btn">←</button>
+            <h2>⚙️ تنظیمات AI</h2>
+        </header>
+
+        <div class="settings-container">
+            <!-- اضافه کردن سوال جدید -->
+            <div class="section-card">
+                <h3 class="section-title">➕ اضافه کردن سوال جدید</h3>
+                
+                <form id="addQuestionForm">
+                    <div class="form-group">
+                        <label class="form-label">سوال:</label>
+                        <input type="text" class="form-input" id="question" placeholder="مثال: چطور ربات بسازم؟" required>
+                        <div class="help-text">سوال اصلی که کاربر می‌پرسد</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">کلمات کلیدی:</label>
+                        <input type="text" class="form-input" id="keywords" placeholder="مثال: ربات, ساخت, چطور, چگونه" required>
+                        <div class="help-text">کلمات کلیدی که AI باید تشخیص دهد (با کاما جدا کنید)</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">پاسخ:</label>
+                        <textarea class="form-input form-textarea" id="answer" placeholder="پاسخ کامل به سوال..." required></textarea>
+                        <div class="help-text">پاسخ کامل و مفصل به سوال کاربر</div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">
+                        ➕ اضافه کردن سوال
+                    </button>
+                </form>
+            </div>
+
+            <!-- لیست سوالات -->
+            <div class="section-card">
+                <h3 class="section-title">📝 لیست سوالات</h3>
+                
+                <div id="questionsList">
+                    <!-- سوالات اینجا لود می‌شوند -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal برای ویرایش -->
+    <div class="modal" id="editModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">✏️ ویرایش سوال</h3>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            
+            <form id="editQuestionForm">
+                <input type="hidden" id="editId">
+                
+                <div class="form-group">
+                    <label class="form-label">سوال:</label>
+                    <input type="text" class="form-input" id="editQuestion" required>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">کلمات کلیدی:</label>
+                    <input type="text" class="form-input" id="editKeywords" required>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">پاسخ:</label>
+                    <textarea class="form-input form-textarea" id="editAnswer" required></textarea>
+                </div>
+
+                <div class="question-actions">
+                    <button type="submit" class="btn btn-primary">💾 ذخیره تغییرات</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">❌ انصراف</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="ai-settings.js"></script>
+</body>
+</html>
