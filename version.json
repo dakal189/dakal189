@@ -8,7 +8,8 @@
         "قفل زبان فارسی",
         "حذف پیام‌های ویرایش شده"
     ],
-    "update_url": "https://api.github.com/repos/YOUR_USERNAME/YOUR_REPO/releases/latest",
-    "repository_url": "https://github.com/YOUR_USERNAME/YOUR_REPO",
-    "download_url": "https://github.com/YOUR_USERNAME/YOUR_REPO/archive/refs/heads/main.zip"
+    "update_file": "update.zip",
+    "update_url": "https://your-domain.com/update.zip",
+    "backup_enabled": true,
+    "auto_backup": true
 }
