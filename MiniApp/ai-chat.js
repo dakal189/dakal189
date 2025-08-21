@@ -82,7 +82,7 @@ function sendToAI(message) {
     sendButton.disabled = true;
     
     // ارسال به سرور
-    fetch('/api/ai-chat', {
+    fetch('/api/ai-chat.php', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',

@@ -18,11 +18,32 @@ function initializeAISettings() {
     // نمایش دکمه بازگشت
     showBackButton();
     
-    // لود کردن سوالات
-    loadQuestions();
-    
-    // تنظیم event listeners
-    setupEventListeners();
+    // بررسی دسترسی ادمین قبل از لود
+    const userId = tg.initDataUnsafe?.user?.id;
+    if (!userId) {
+        showNotification('خطای احراز هویت', 'error');
+        return;
+    }
+    fetch('/api/meta.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId })
+    })
+    .then(r => r.json())
+    .then(meta => {
+        if (!meta.is_admin) {
+            showNotification('دسترسی فقط برای ادمین مجاز است', 'error');
+            setTimeout(() => { window.location.href = 'index.html'; }, 1200);
+            return;
+        }
+        // لود کردن سوالات
+        loadQuestions();
+        // تنظیم event listeners
+        setupEventListeners();
+    })
+    .catch(() => {
+        showNotification('خطا در بررسی دسترسی', 'error');
+    });
 }
 
 function setupEventListeners() {
@@ -55,7 +76,7 @@ function addQuestion() {
         return;
     }
 
-    fetch('/api/ai-manage-questions', {
+    fetch('/api/ai-manage-questions.php', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -101,7 +122,7 @@ function editQuestion() {
         return;
     }
 
-    fetch('/api/ai-manage-questions', {
+    fetch('/api/ai-manage-questions.php', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -135,7 +156,7 @@ function loadQuestions() {
     const user = tg.initDataUnsafe?.user;
     if (!user) return;
 
-    fetch('/api/ai-manage-questions', {
+    fetch('/api/ai-manage-questions.php', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -241,7 +262,7 @@ function toggleQuestion(id, isActive) {
     const action = isActive == 1 ? 'غیرفعال' : 'فعال';
 
     if (confirm(`آیا می‌خواهید این سوال را ${action} کنید؟`)) {
-        fetch('/api/ai-manage-questions', {
+        fetch('/api/ai-manage-questions.php', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -274,7 +295,7 @@ function deleteQuestion(id) {
     if (!user) return;
 
     if (confirm('آیا مطمئن هستید که می‌خواهید این سوال را حذف کنید؟')) {
-        fetch('/api/ai-manage-questions', {
+        fetch('/api/ai-manage-questions.php', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

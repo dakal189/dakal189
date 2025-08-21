@@ -21,7 +21,7 @@ function initializeDashboard() {
     // لود کردن داده‌ها
     loadUserData();
     loadUserBots();
-    loadRecentActivity();
+    // loadRecentActivity(); // موقتا غیرفعال تا زمانی که API آن پیاده‌سازی شود
 }
 
 function loadUserData() {
@@ -32,7 +32,7 @@ function loadUserData() {
         userName.textContent = user.first_name || 'کاربر عزیز';
         
         // درخواست آمار کاربر
-        fetch('/api/user-stats', {
+        fetch('/api/user-stats.php', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -73,7 +73,7 @@ function loadUserBots() {
     const user = tg.initDataUnsafe?.user;
     if (!user) return;
 
-    fetch('/api/user-bots', {
+    fetch('/api/user-bots.php', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -275,34 +275,7 @@ function sendMessageToBot(botUsername) {
 }
 
 function toggleBot(botUsername, isActive) {
-    const action = isActive ? 'توقف' : 'شروع';
-    
-    if (confirm(`آیا می‌خواهید ربات @${botUsername} را ${action} کنید؟`)) {
-        fetch('/api/toggle-bot', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                user_id: tg.initDataUnsafe?.user?.id,
-                bot_username: botUsername,
-                action: isActive ? 'deactivate' : 'activate'
-            })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showNotification(`ربات @${botUsername} با موفقیت ${action} شد.`);
-                loadUserBots(); // بارگذاری مجدد
-            } else {
-                showNotification('خطا در انجام عملیات.', 'error');
-            }
-        })
-        .catch(error => {
-            console.error('خطا:', error);
-            showNotification('خطا در ارتباط با سرور.', 'error');
-        });
-    }
+    showNotification('این قابلیت به زودی اضافه می‌شود.', 'info');
 }
 
 // توابع کمکی

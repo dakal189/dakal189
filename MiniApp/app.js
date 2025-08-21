@@ -58,12 +58,21 @@ function displayUserInfo() {
     }
 }
 
+function findAICard() {
+    // کارت تنظیمات AI را پیدا می‌کند
+    const cards = document.querySelectorAll('.menu-card');
+    for (const card of cards) {
+        if (card.textContent.includes('تنظیمات AI')) return card;
+    }
+    return null;
+}
+
 function loadStats() {
     // نمایش لودینگ
     showLoading();
     
     // درخواست آمار از سرور
-    fetch('/api/stats', {
+    fetch('/api/stats.php', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -84,7 +93,9 @@ function loadStats() {
     });
 }
 
-function updateStats(data) {
+function updateStats(response) {
+    // پشتیبانی از هر دو ساختار: {data:{...}} یا فلت
+    const data = response?.data || response || {};
     document.getElementById('totalUsers').textContent = formatNumber(data.total_users || 0);
     document.getElementById('activeBots').textContent = formatNumber(data.active_bots || 0);
     document.getElementById('totalMessages').textContent = formatNumber(data.total_messages || 0);
@@ -104,6 +115,26 @@ function setupEventListeners() {
     document.getElementById('userAvatar').addEventListener('click', function() {
         showUserProfile();
     });
+
+    // کنترل نمایش کارت تنظیمات AI بر اساس نقش ادمین
+    try {
+        const userId = tg.initDataUnsafe?.user?.id;
+        if (userId) {
+            fetch('/api/meta.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: userId })
+            })
+            .then(r => r.json())
+            .then(meta => {
+                if (!meta.is_admin) {
+                    const aiCard = findAICard();
+                    if (aiCard) aiCard.style.display = 'none';
+                }
+            })
+            .catch(() => {});
+        }
+    } catch (e) {}
 }
 
 // توابع ناوبری
@@ -132,7 +163,22 @@ function openSettings() {
 }
 
 function openAISettings() {
-    window.location.href = 'ai-settings.html';
+    const userId = tg.initDataUnsafe?.user?.id;
+    if (!userId) return;
+    fetch('/api/meta.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId })
+    })
+    .then(r => r.json())
+    .then(meta => {
+        if (meta.is_admin) {
+            window.location.href = 'ai-settings.html';
+        } else {
+            showNotification('دسترسی فقط برای ادمین مجاز است', 'error');
+        }
+    })
+    .catch(() => showNotification('خطا در بررسی دسترسی', 'error'));
 }
 
 function showUserProfile() {
@@ -228,7 +274,9 @@ setupPageButtons();
 
 // تابع برای ارسال داده به سرور
 function sendToServer(endpoint, data) {
-    return fetch(`/api/${endpoint}`, {
+    // اطمینان از .php
+    const url = endpoint.endsWith('.php') ? endpoint : `${endpoint}.php`;
+    return fetch(`/api/${url}`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
