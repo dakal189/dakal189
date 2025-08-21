@@ -1,0 +1,426 @@
+/* متغیرهای رنگ برند Dakal */
+:root {
+    --dakal-primary: #6366f1;
+    --dakal-primary-dark: #4f46e5;
+    --dakal-secondary: #8b5cf6;
+    --dakal-accent: #06b6d4;
+    --dakal-success: #10b981;
+    --dakal-warning: #f59e0b;
+    --dakal-danger: #ef4444;
+    
+    --dakal-bg: #ffffff;
+    --dakal-bg-secondary: #f8fafc;
+    --dakal-bg-card: #ffffff;
+    --dakal-text: #1e293b;
+    --dakal-text-secondary: #64748b;
+    --dakal-border: #e2e8f0;
+    
+    --dakal-gradient-primary: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    --dakal-gradient-secondary: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+    --dakal-gradient-accent: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+    
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+}
+
+/* تنظیمات پایه */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--dakal-bg);
+    color: var(--dakal-text);
+    direction: rtl;
+    line-height: 1.6;
+    overflow-x: hidden;
+}
+
+.app-container {
+    max-width: 400px;
+    margin: 0 auto;
+    min-height: 100vh;
+    background: var(--dakal-bg);
+    position: relative;
+}
+
+/* هدر برند */
+.brand-header {
+    background: var(--dakal-gradient-primary);
+    padding: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: white;
+    position: relative;
+    overflow: hidden;
+}
+
+.brand-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grain" width="100" height="100" patternUnits="userSpaceOnUse"><circle cx="25" cy="25" r="1" fill="white" opacity="0.1"/><circle cx="75" cy="75" r="1" fill="white" opacity="0.1"/><circle cx="50" cy="10" r="0.5" fill="white" opacity="0.1"/><circle cx="10" cy="60" r="0.5" fill="white" opacity="0.1"/><circle cx="90" cy="40" r="0.5" fill="white" opacity="0.1"/></pattern></defs><rect width="100" height="100" fill="url(%23grain)"/></svg>');
+    opacity: 0.3;
+}
+
+.brand-logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    position: relative;
+    z-index: 1;
+}
+
+.logo-icon {
+    font-size: 32px;
+    background: rgba(255, 255, 255, 0.2);
+    width: 50px;
+    height: 50px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.brand-text h1 {
+    font-size: 24px;
+    font-weight: 700;
+    margin-bottom: 2px;
+    letter-spacing: -0.5px;
+}
+
+.brand-text p {
+    font-size: 12px;
+    opacity: 0.9;
+    font-weight: 400;
+}
+
+.user-info {
+    position: relative;
+    z-index: 1;
+}
+
+.user-avatar {
+    width: 40px;
+    height: 40px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    backdrop-filter: blur(10px);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.user-avatar:hover {
+    transform: scale(1.1);
+    background: rgba(255, 255, 255, 0.3);
+}
+
+/* آمار سریع */
+.quick-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    padding: 20px;
+    background: var(--dakal-bg-secondary);
+}
+
+.stat-item {
+    background: var(--dakal-bg-card);
+    padding: 16px;
+    border-radius: 12px;
+    text-align: center;
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--dakal-border);
+    transition: all 0.3s ease;
+}
+
+.stat-item:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.stat-number {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--dakal-primary);
+    margin-bottom: 4px;
+}
+
+.stat-label {
+    font-size: 12px;
+    color: var(--dakal-text-secondary);
+    font-weight: 500;
+}
+
+/* منوی اصلی */
+.main-menu {
+    padding: 20px;
+}
+
+.menu-section {
+    margin-bottom: 24px;
+}
+
+.menu-section h2 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--dakal-text);
+    margin-bottom: 12px;
+    padding-right: 8px;
+}
+
+.menu-grid {
+    display: grid;
+    gap: 12px;
+}
+
+.menu-card {
+    background: var(--dakal-bg-card);
+    border-radius: 16px;
+    padding: 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border: 1px solid var(--dakal-border);
+    position: relative;
+    overflow: hidden;
+}
+
+.menu-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--dakal-gradient-primary);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    z-index: 0;
+}
+
+.menu-card:hover::before {
+    opacity: 0.05;
+}
+
+.menu-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--dakal-primary);
+}
+
+.menu-card.primary {
+    border-left: 4px solid var(--dakal-primary);
+}
+
+.menu-card.secondary {
+    border-left: 4px solid var(--dakal-secondary);
+}
+
+.menu-card.tertiary {
+    border-left: 4px solid var(--dakal-accent);
+}
+
+.card-icon {
+    font-size: 24px;
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
+}
+
+.menu-card.primary .card-icon {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
+    color: var(--dakal-primary);
+}
+
+.menu-card.secondary .card-icon {
+    background: linear-gradient(135deg, rgba(6, 182, 212, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
+    color: var(--dakal-secondary);
+}
+
+.menu-card.tertiary .card-icon {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(239, 68, 68, 0.1) 100%);
+    color: var(--dakal-accent);
+}
+
+.card-content {
+    flex: 1;
+    position: relative;
+    z-index: 1;
+}
+
+.card-content h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--dakal-text);
+    margin-bottom: 4px;
+}
+
+.card-content p {
+    font-size: 12px;
+    color: var(--dakal-text-secondary);
+    line-height: 1.4;
+}
+
+.card-arrow {
+    font-size: 18px;
+    color: var(--dakal-text-secondary);
+    transition: all 0.3s ease;
+    position: relative;
+    z-index: 1;
+}
+
+.menu-card:hover .card-arrow {
+    color: var(--dakal-primary);
+    transform: translateX(-4px);
+}
+
+/* فوتر */
+.app-footer {
+    text-align: center;
+    padding: 20px;
+    color: var(--dakal-text-secondary);
+    font-size: 12px;
+    border-top: 1px solid var(--dakal-border);
+    background: var(--dakal-bg-secondary);
+}
+
+/* انیمیشن‌های ورود */
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.brand-header {
+    animation: fadeInUp 0.6s ease-out;
+}
+
+.quick-stats {
+    animation: fadeInUp 0.6s ease-out 0.1s both;
+}
+
+.menu-section:nth-child(1) {
+    animation: fadeInUp 0.6s ease-out 0.2s both;
+}
+
+.menu-section:nth-child(2) {
+    animation: fadeInUp 0.6s ease-out 0.3s both;
+}
+
+.menu-section:nth-child(3) {
+    animation: fadeInUp 0.6s ease-out 0.4s both;
+}
+
+/* حالت‌های مختلف */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --dakal-bg: #0f172a;
+        --dakal-bg-secondary: #1e293b;
+        --dakal-bg-card: #334155;
+        --dakal-text: #f1f5f9;
+        --dakal-text-secondary: #94a3b8;
+        --dakal-border: #475569;
+    }
+}
+
+/* ریسپانسیو */
+@media (max-width: 360px) {
+    .brand-text h1 {
+        font-size: 20px;
+    }
+    
+    .menu-card {
+        padding: 16px;
+    }
+    
+    .card-icon {
+        width: 40px;
+        height: 40px;
+        font-size: 20px;
+    }
+}
+
+/* لودینگ */
+.loading {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(99, 102, 241, 0.3);
+    border-radius: 50%;
+    border-top-color: var(--dakal-primary);
+    animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* نوتیفیکیشن */
+.notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: var(--dakal-success);
+    color: white;
+    padding: 12px 16px;
+    border-radius: 8px;
+    box-shadow: var(--shadow-lg);
+    z-index: 1000;
+    transform: translateX(100%);
+    transition: transform 0.3s ease;
+}
+
+.notification.show {
+    transform: translateX(0);
+}
+
+/* دکمه بازگشت */
+.back-btn {
+    background: rgba(255, 255, 255, 0.2);
+    border: none;
+    color: white;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+    transition: all 0.3s ease;
+}
+
+.back-btn:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: scale(1.1);
+}

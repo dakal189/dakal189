@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dakal - ربات پیامرسان ساز</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- هدر برند -->
+        <header class="brand-header">
+            <div class="brand-logo">
+                <div class="logo-icon">🚀</div>
+                <div class="brand-text">
+                    <h1>Dakal</h1>
+                    <p>ربات پیامرسان ساز</p>
+                </div>
+            </div>
+            <div class="user-info">
+                <div class="user-avatar" id="userAvatar">👤</div>
+            </div>
+        </header>
+
+        <!-- آمار سریع -->
+        <div class="quick-stats">
+            <div class="stat-item">
+                <div class="stat-number" id="totalUsers">0</div>
+                <div class="stat-label">کاربران</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number" id="activeBots">0</div>
+                <div class="stat-label">ربات‌ها</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number" id="totalMessages">0</div>
+                <div class="stat-label">پیام‌ها</div>
+            </div>
+        </div>
+
+        <!-- منوی اصلی -->
+        <div class="main-menu">
+            <div class="menu-section">
+                <h2>🎯 مدیریت اصلی</h2>
+                <div class="menu-grid">
+                    <div class="menu-card primary" onclick="openDashboard()">
+                        <div class="card-icon">📊</div>
+                        <div class="card-content">
+                            <h3>داشبورد</h3>
+                            <p>آمار و گزارش‌های کامل</p>
+                        </div>
+                        <div class="card-arrow">→</div>
+                    </div>
+
+                    <div class="menu-card primary" onclick="openBotsManager()">
+                        <div class="card-icon">🤖</div>
+                        <div class="card-content">
+                            <h3>مدیریت ربات‌ها</h3>
+                            <p>کنترل ربات‌های شما</p>
+                        </div>
+                        <div class="card-arrow">→</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="menu-section">
+                <h2>💬 ارتباطات</h2>
+                <div class="menu-grid">
+                    <div class="menu-card secondary" onclick="openAIChat()">
+                        <div class="card-icon">🧠</div>
+                        <div class="card-content">
+                            <h3>چت با AI</h3>
+                            <p>پاسخگویی هوشمند</p>
+                        </div>
+                        <div class="card-arrow">→</div>
+                    </div>
+
+                    <div class="menu-card secondary" onclick="openSendMessage()">
+                        <div class="card-icon">📝</div>
+                        <div class="card-content">
+                            <h3>ارسال پیام</h3>
+                            <p>پیام‌های انبوه</p>
+                        </div>
+                        <div class="card-arrow">→</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="menu-section">
+                <h2>⚙️ تنظیمات</h2>
+                <div class="menu-grid">
+                    <div class="menu-card tertiary" onclick="openUsers()">
+                        <div class="card-icon">👥</div>
+                        <div class="card-content">
+                            <h3>مدیریت کاربران</h3>
+                            <p>کنترل کاربران</p>
+                        </div>
+                        <div class="card-arrow">→</div>
+                    </div>
+
+                    <div class="menu-card tertiary" onclick="openSettings()">
+                        <div class="card-icon">⚙️</div>
+                        <div class="card-content">
+                            <h3>تنظیمات</h3>
+                            <p>پیکربندی سیستم</p>
+                        </div>
+                        <div class="card-arrow">→</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- فوتر -->
+        <footer class="app-footer">
+            <p>© 2024 Dakal - قدرت گرفته از تلگرام</p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
