@@ -192,11 +192,12 @@ function ensureTables(): void {
             inviter_id BIGINT NOT NULL,
             invited_id BIGINT NOT NULL,
             created_at DATETIME NOT NULL,
+            revoked_at DATETIME NULL,
             UNIQUE KEY unique_invited (invited_id),
             INDEX idx_inviter_id (inviter_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
-        // Lottery tickets
+        // Lottery tickets (weekly legacy)
         "CREATE TABLE IF NOT EXISTS lottery_tickets (
             id INT AUTO_INCREMENT PRIMARY KEY,
             user_id BIGINT NOT NULL,
@@ -205,7 +206,7 @@ function ensureTables(): void {
             INDEX idx_week_user (week_start_date, user_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
-        // Lottery draws per week
+        // Lottery draws per week (legacy)
         "CREATE TABLE IF NOT EXISTS lottery_draws (
             id INT AUTO_INCREMENT PRIMARY KEY,
             week_start_date DATE NOT NULL UNIQUE,
@@ -215,11 +216,51 @@ function ensureTables(): void {
             total_tickets INT NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
-        // Weekly referral rewards marker to avoid double rewarding
+        // Weekly referral rewards marker (legacy)
         "CREATE TABLE IF NOT EXISTS weekly_referral_rewards (
             id INT AUTO_INCREMENT PRIMARY KEY,
             week_start_date DATE NOT NULL UNIQUE,
             rewarded_at DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+
+        // Custom lotteries (admin-defined)
+        "CREATE TABLE IF NOT EXISTS custom_lotteries (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            title VARCHAR(255) NOT NULL,
+            entry_cost_points INT NULL,
+            entry_requires_referral TINYINT NOT NULL DEFAULT 0,
+            referral_bonus_per_invite INT NOT NULL DEFAULT 0,
+            prize_points INT NOT NULL DEFAULT 0,
+            is_active TINYINT NOT NULL DEFAULT 1,
+            created_at DATETIME NOT NULL,
+            closed_at DATETIME NULL,
+            drawn_at DATETIME NULL,
+            winner_user_id BIGINT NULL,
+            total_tickets INT NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+
+        // Custom lottery tickets (positive/negative deltas)
+        "CREATE TABLE IF NOT EXISTS custom_lottery_tickets (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            lottery_id INT NOT NULL,
+            user_id BIGINT NOT NULL,
+            num_tickets INT NOT NULL,
+            created_at DATETIME NOT NULL,
+            INDEX idx_lottery_user (lottery_id, user_id),
+            FOREIGN KEY (lottery_id) REFERENCES custom_lotteries(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+
+        // Logs to map referral tickets to invited users for revocation
+        "CREATE TABLE IF NOT EXISTS custom_lottery_referral_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            lottery_id INT NOT NULL,
+            inviter_id BIGINT NOT NULL,
+            invited_id BIGINT NOT NULL,
+            tickets_awarded INT NOT NULL,
+            created_at DATETIME NOT NULL,
+            revoked_at DATETIME NULL,
+            INDEX idx_inviter_invited (inviter_id, invited_id),
+            FOREIGN KEY (lottery_id) REFERENCES custom_lotteries(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
     ];
 
@@ -227,6 +268,9 @@ function ensureTables(): void {
     foreach ($sqls as $sql) {
         $pdo->exec($sql);
     }
+
+    // Attempt to add revoked_at to referrals if missing
+    try { $pdo->exec("ALTER TABLE referrals ADD COLUMN IF NOT EXISTS revoked_at DATETIME NULL"); } catch (Throwable $e) { /* ignore */ }
 }
 
 // ==========================
@@ -307,9 +351,8 @@ function buildMainMenuKeyboard(bool $isAdmin): array {
     $keyboard = [
         ['📊 امتیاز من', '📎 لینک دعوت من'],
         ['🛒 فروشگاه آیتم‌ها', '📤 درخواست‌های من'],
-        ['📢 عضویت در کانال‌ها', '🎁 جایزه روزانه'],
-        ['👤 پروفایل', '🏆 برترین‌های هفته'],
-        ['🎟 خرید بلیت قرعه‌کشی', '🎲 قرعه‌کشی'],
+        ['🎁 جایزه روزانه', '👤 پروفایل'],
+        ['🏆 برترین‌ها', '🎲 قرعه‌کشی'],
     ];
     if ($isAdmin) {
         $keyboard[] = ['🛠 پنل ادمین'];
@@ -324,11 +367,18 @@ function buildMainMenuKeyboard(bool $isAdmin): array {
 }
 
 function buildVerifyChannelsInlineKeyboard(): array {
-    return [
-        'inline_keyboard' => [
-            [ ['text' => '✅ تایید عضویت', 'callback_data' => 'verify_sub'] ],
-        ],
-    ];
+    $rows = [];
+    $channels = listRequiredChannels();
+    foreach ($channels as $ch) {
+        $text = $ch['title'] ?: ($ch['username'] ? '@' . $ch['username'] : (string) $ch['chat_id']);
+        if (!empty($ch['username'])) {
+            $rows[] = [ [ 'text' => $text, 'url' => 'https://t.me/' . $ch['username'] ] ];
+        } else {
+            $rows[] = [ [ 'text' => $text, 'callback_data' => 'noop' ] ];
+        }
+    }
+    $rows[] = [ [ 'text' => '✅ تایید عضویت', 'callback_data' => 'verify_sub' ] ];
+    return [ 'inline_keyboard' => $rows ];
 }
 
 function buildShopItemKeyboard(array $items): array {
@@ -403,8 +453,15 @@ function setPendingReferrerIfApplicable(int $userId, ?int $referrerId): void {
     $stmt->execute([$userId]);
     if ($stmt->fetch()) return;
 
+    if ((int) ($row['pending_referrer_id'] ?? 0) === $referrerId) return; // already pending same inviter
+
     $stmt = $pdo->prepare('UPDATE users SET pending_referrer_id = ? WHERE user_id = ?');
     $stmt->execute([$referrerId, $userId]);
+
+    // Notify inviter about a new pending referral
+    $invited = getUser($userId);
+    $uname = ($invited && $invited['username']) ? '@' . $invited['username'] : (string) $userId;
+    tgSendMessage($referrerId, 'ℹ️ کاربر ' . $uname . ' با لینک رفرال شما وارد شد. پس از تایید عضویت در کانال‌ها، امتیاز به شما اضافه خواهد شد.');
 }
 
 function ensureUserNotBanned(int $userId): bool {
@@ -511,6 +568,14 @@ function recordReferralIfEligibleAfterVerification(int $userId): void {
         updateUserLevel($pending);
 
         $pdo->commit();
+
+        // Award tickets in active custom lotteries (if configured)
+        awardReferralTicketsForActiveLotteries($pending, $userId);
+
+        // Notify inviter about successful credit
+        $invited = getUser($userId);
+        $uname = ($invited && $invited['username']) ? '@' . $invited['username'] : (string) $userId;
+        tgSendMessage($pending, '✅ عضویت ' . $uname . ' تایید شد و ' . REFERRAL_REWARD_POINTS . ' امتیاز به شما اضافه شد.');
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
     }
@@ -543,16 +608,47 @@ function isMemberAllRequiredChannels(int $userId): bool {
 function formatChannelsJoinMessage(): string {
     $channels = listRequiredChannels();
     if (empty($channels)) return "هیچ کانال اجباری تنظیم نشده است.";
-    $lines = ["لطفا ابتدا در کانال‌های زیر عضو شوید و سپس دکمه \"تایید عضویت\" را بزنید:" , ""]; 
-    foreach ($channels as $ch) {
-        $title = $ch['title'] ?: ($ch['username'] ? '@' . $ch['username'] : (string) $ch['chat_id']);
-        if (!empty($ch['username'])) {
-            $lines[] = '• https://t.me/' . $ch['username'] . ' (' . $title . ')';
-        } else {
-            $lines[] = '• ' . $title;
-        }
-    }
+    $lines = ["لطفا ابتدا در کانال‌های زیر عضو شوید و سپس دکمه \"تایید عضویت\" را بزنید:"];
     return implode("\n", $lines);
+}
+
+function enforceMembershipGate(int $chatId, int $userId, bool $isAdmin): bool {
+    if ($isAdmin) return true;
+    if (isMemberAllRequiredChannels($userId)) return true;
+    tryRevokeReferralIfNecessary($userId);
+    tgSendMessage($chatId, formatChannelsJoinMessage(), [ 'reply_markup' => buildVerifyChannelsInlineKeyboard() ]);
+    return false;
+}
+
+function tryRevokeReferralIfNecessary(int $invitedUserId): void {
+    try {
+        $pdo = pdo();
+        // Check if referral was previously credited and not revoked yet
+        $stmt = $pdo->prepare('SELECT inviter_id FROM referrals WHERE invited_id = ? AND (revoked_at IS NULL)');
+        $stmt->execute([$invitedUserId]);
+        $ref = $stmt->fetch();
+        if (!$ref) return;
+        $inviterId = (int) $ref['inviter_id'];
+
+        $pdo->beginTransaction();
+        // Mark referral revoked
+        $upd = $pdo->prepare('UPDATE referrals SET revoked_at = ? WHERE invited_id = ? AND revoked_at IS NULL');
+        $upd->execute([nowUtc(), $invitedUserId]);
+        // Deduct points and decrement referral count (not below zero)
+        $pdo->prepare('UPDATE users SET points = points - ?, referrals_count = GREATEST(referrals_count - 1, 0) WHERE user_id = ?')->execute([REFERRAL_REWARD_POINTS, $inviterId]);
+        updateUserLevel($inviterId);
+        $pdo->commit();
+
+        // Revoke lottery referral tickets if any
+        revokeReferralTicketsForActiveLotteries($inviterId, $invitedUserId);
+
+        // Notify inviter
+        $invited = getUser($invitedUserId);
+        $uname = ($invited && $invited['username']) ? '@' . $invited['username'] : (string) $invitedUserId;
+        tgSendMessage($inviterId, '⚠️ کاربر ' . $uname . ' عضویت خود را در کانال‌ها لغو کرد. امتیاز رفرال شما (' . REFERRAL_REWARD_POINTS . ' امتیاز) کسر شد.');
+    } catch (Throwable $e) {
+        if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) $pdo->rollBack();
+    }
 }
 
 // ==========================
@@ -779,6 +875,143 @@ function runWeeklyLotteryDrawCron(): string {
     return 'قرعه‌کشی با خطا مواجه شد.';
 }
 
+// Custom lotteries (admin-defined)
+function listActiveCustomLotteries(): array {
+    $stmt = pdo()->prepare('SELECT * FROM custom_lotteries WHERE is_active = 1 AND drawn_at IS NULL ORDER BY id DESC');
+    $stmt->execute();
+    return $stmt->fetchAll();
+}
+
+function getCustomLottery(int $lotteryId): ?array {
+    $stmt = pdo()->prepare('SELECT * FROM custom_lotteries WHERE id = ?');
+    $stmt->execute([$lotteryId]);
+    $row = $stmt->fetch();
+    return $row ?: null;
+}
+
+function buildLotteriesKeyboard(array $lots): array {
+    $rows = [];
+    foreach ($lots as $l) {
+        $title = $l['title'];
+        if (!is_null($l['entry_cost_points']) && (int)$l['entry_cost_points'] > 0) {
+            $rows[] = [ [ 'text' => '🎟 ' . $title . ' (هزینه ' . $l['entry_cost_points'] . ')', 'callback_data' => 'lot_buy_' . $l['id'] ] ];
+        } else {
+            $rows[] = [ [ 'text' => 'ℹ️ ' . $title . ' (ورود با رفرال)', 'callback_data' => 'lot_info_' . $l['id'] ] ];
+        }
+    }
+    if (empty($rows)) $rows[] = [ [ 'text' => 'به‌روزرسانی', 'callback_data' => 'noop' ] ];
+    return [ 'inline_keyboard' => $rows ];
+}
+
+function buyCustomLotteryTicket(int $userId, array $lottery): array {
+    $cost = (int) ($lottery['entry_cost_points'] ?? 0);
+    if ($cost <= 0) return [false, 'ورود این قرعه‌کشی از طریق رفرال است.'];
+    $pdo = pdo();
+    $pdo->beginTransaction();
+    try {
+        $stmt = $pdo->prepare('SELECT points FROM users WHERE user_id = ? FOR UPDATE');
+        $stmt->execute([$userId]);
+        $u = $stmt->fetch();
+        if (!$u) { $pdo->rollBack(); return [false, 'کاربر یافت نشد.']; }
+        if ((int) $u['points'] < $cost) { $pdo->rollBack(); return [false, 'امتیاز کافی ندارید.']; }
+        $pdo->prepare('UPDATE users SET points = points - ? WHERE user_id = ?')->execute([$cost, $userId]);
+        $pdo->prepare('INSERT INTO custom_lottery_tickets (lottery_id, user_id, num_tickets, created_at) VALUES (?, ?, ?, ?)')->execute([$lottery['id'], $userId, 1, nowUtc()]);
+        updateUserLevel($userId);
+        $pdo->commit();
+        return [true, '🎟 یک بلیت برای «' . $lottery['title'] . '» خریداری شد.'];
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        return [false, 'خطا در خرید بلیت.'];
+    }
+}
+
+function awardReferralTicketsForActiveLotteries(int $inviterId, int $invitedId): void {
+    try {
+        $lots = listActiveCustomLotteries();
+        foreach ($lots as $l) {
+            $tickets = 0;
+            if ((int)$l['entry_requires_referral'] === 1) { $tickets += 1; }
+            if ((int)$l['referral_bonus_per_invite'] > 0) { $tickets += (int)$l['referral_bonus_per_invite']; }
+            if ($tickets <= 0) continue;
+            $pdo = pdo();
+            $pdo->prepare('INSERT INTO custom_lottery_tickets (lottery_id, user_id, num_tickets, created_at) VALUES (?, ?, ?, ?)')->execute([$l['id'], $inviterId, $tickets, nowUtc()]);
+            $pdo->prepare('INSERT INTO custom_lottery_referral_logs (lottery_id, inviter_id, invited_id, tickets_awarded, created_at) VALUES (?, ?, ?, ?, ?)')->execute([$l['id'], $inviterId, $invitedId, $tickets, nowUtc()]);
+        }
+    } catch (Throwable $e) { /* ignore */ }
+}
+
+function revokeReferralTicketsForActiveLotteries(int $inviterId, int $invitedId): void {
+    try {
+        $pdo = pdo();
+        $stmt = $pdo->prepare('SELECT * FROM custom_lottery_referral_logs WHERE inviter_id = ? AND invited_id = ? AND revoked_at IS NULL');
+        $stmt->execute([$inviterId, $invitedId]);
+        $rows = $stmt->fetchAll();
+        foreach ($rows as $r) {
+            $tickets = (int) $r['tickets_awarded'];
+            if ($tickets <= 0) continue;
+            $pdo->prepare('INSERT INTO custom_lottery_tickets (lottery_id, user_id, num_tickets, created_at) VALUES (?, ?, ?, ?)')->execute([$r['lottery_id'], $inviterId, -$tickets, nowUtc()]);
+            $pdo->prepare('UPDATE custom_lottery_referral_logs SET revoked_at = ? WHERE id = ?')->execute([nowUtc(), $r['id']]);
+        }
+    } catch (Throwable $e) { /* ignore */ }
+}
+
+function adminLotteryCreate(string $title, $costSpec, int $prizePoints, int $bonus): string {
+    $title = sanitizeText($title, 255);
+    $entryCostPoints = null;
+    $requiresReferral = 0;
+    if ($costSpec === 'ref') {
+        $requiresReferral = 1;
+    } else {
+        $entryCostPoints = max(0, (int) $costSpec);
+    }
+    $stmt = pdo()->prepare('INSERT INTO custom_lotteries (title, entry_cost_points, entry_requires_referral, referral_bonus_per_invite, prize_points, is_active, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)');
+    $stmt->execute([$title, $entryCostPoints, $requiresReferral, max(0,$bonus), $prizePoints, nowUtc()]);
+    $id = (int) pdo()->lastInsertId();
+    return '🎲 قرعه‌کشی #' . $id . ' با عنوان «' . $title . '» ایجاد شد.';
+}
+
+function adminLotteryList(): string {
+    $stmt = pdo()->prepare('SELECT * FROM custom_lotteries ORDER BY id DESC LIMIT 20');
+    $stmt->execute();
+    $rows = $stmt->fetchAll();
+    if (empty($rows)) return 'هیچ قرعه‌کشی‌ای ثبت نشده است.';
+    $lines = ['🎲 لیست قرعه‌کشی‌ها:'];
+    foreach ($rows as $r) {
+        $cost = is_null($r['entry_cost_points']) ? 'ref' : $r['entry_cost_points'];
+        $status = ((int)$r['is_active'] === 1 && is_null($r['drawn_at'])) ? 'فعال' : (is_null($r['drawn_at']) ? 'بسته' : 'پایان یافته');
+        $lines[] = '#' . $r['id'] . ' | ' . $r['title'] . ' | cost=' . $cost . ' | prize=' . $r['prize_points'] . ' | bonus=' . $r['referral_bonus_per_invite'] . ' | ' . $status;
+    }
+    return implode("\n", $lines);
+}
+
+function adminLotteryClose(int $lotteryId): string {
+    $stmt = pdo()->prepare('UPDATE custom_lotteries SET is_active = 0, closed_at = ? WHERE id = ?');
+    $stmt->execute([nowUtc(), $lotteryId]);
+    return 'قرعه‌کشی #' . $lotteryId . ' بسته شد.';
+}
+
+function adminLotteryDraw(int $lotteryId): string {
+    $lot = getCustomLottery($lotteryId);
+    if (!$lot) return 'قرعه‌کشی یافت نشد.';
+    // Sum tickets by user
+    $stmt = pdo()->prepare('SELECT user_id, SUM(num_tickets) as t FROM custom_lottery_tickets WHERE lottery_id = ? GROUP BY user_id HAVING t > 0 ORDER BY user_id ASC');
+    $stmt->execute([$lotteryId]);
+    $rows = $stmt->fetchAll();
+    if (empty($rows)) return 'هیچ بلیتی برای این قرعه‌کشی ثبت نشده است.';
+    $total = 0; foreach ($rows as $r) { $total += (int)$r['t']; }
+    $rand = random_int(1, $total);
+    $acc = 0; $winner = 0;
+    foreach ($rows as $r) { $acc += (int)$r['t']; if ($acc >= $rand) { $winner = (int)$r['user_id']; break; } }
+    if ($winner <= 0) return 'خطا در انتخاب برنده.';
+    // Prize points
+    if ((int)$lot['prize_points'] > 0) { addUserPoints($winner, (int)$lot['prize_points']); }
+    pdo()->prepare('UPDATE custom_lotteries SET drawn_at = ?, winner_user_id = ?, total_tickets = ? WHERE id = ?')->execute([nowUtc(), $winner, $total, $lotteryId]);
+    $msg = '🎲 برنده قرعه‌کشی #' . $lotteryId . ' («' . $lot['title'] . '») کاربر ' . $winner . ' است.';
+    if (PUBLIC_ANNOUNCE_CHANNEL_ID) tgSendMessage(PUBLIC_ANNOUNCE_CHANNEL_ID, $msg);
+    if (ADMIN_GROUP_ID) tgSendMessage(ADMIN_GROUP_ID, $msg);
+    return $msg;
+}
+
 // ==========================
 // Business Logic: Admin Ops
 // ==========================
@@ -800,6 +1033,10 @@ function adminHelpText(): string {
         '/unban user_id',
         '/cron_weekly  (پاداش تاپ رفرال هفته قبل)',
         '/cron_lottery (قرعه‌کشی هفته قبل)',
+        '/lottery_create عنوان | cost=10|ref | prize=200 | bonus=0',
+        '/lottery_list',
+        '/lottery_close ID',
+        '/lottery_draw ID',
     ]);
 }
 
@@ -1021,7 +1258,6 @@ if (!ensureUserNotBanned($userId)) {
 }
 
 if (isRateLimited($userId)) {
-    // Silently drop to prevent spam
     echo 'OK';
     exit;
 }
@@ -1030,6 +1266,10 @@ $isAdminUser = isAdmin($userId);
 
 // Process callback queries
 if ($callbackId && $data !== null) {
+    // Gating for user callbacks in private chat (except verify/noop)
+    if ($chatId === $userId && !$isAdminUser && $data !== 'verify_sub' && $data !== 'noop') {
+        if (!enforceMembershipGate($chatId, $userId, false)) { echo 'OK'; exit; }
+    }
     if ($data === 'verify_sub') {
         if (isMemberAllRequiredChannels($userId)) {
             recordReferralIfEligibleAfterVerification($userId);
@@ -1045,12 +1285,6 @@ if ($callbackId && $data !== null) {
     }
 
     if (strpos($data, 'req_item_') === 0) {
-        // User requested an item
-        if (!isMemberAllRequiredChannels($userId)) {
-            tgAnswerCallbackQuery($callbackId, 'برای درخواست آیتم ابتدا در کانال‌ها عضو شوید.', true);
-            tgSendMessage($chatId, channelsText(), [ 'reply_markup' => buildVerifyChannelsInlineKeyboard() ]);
-            exit;
-        }
         $itemId = (int) substr($data, strlen('req_item_'));
         $reqId = createItemRequest($userId, $itemId);
         if ($reqId === -1) {
@@ -1120,6 +1354,64 @@ if ($callbackId && $data !== null) {
         exit;
     }
 
+    // Top menus
+    if ($data === 'top_ref') {
+        $stmt = pdo()->prepare('SELECT user_id, username, referrals_count FROM users ORDER BY referrals_count DESC, user_id ASC LIMIT 10');
+        $stmt->execute();
+        $rows = $stmt->fetchAll();
+        if (empty($rows)) { tgAnswerCallbackQuery($callbackId, 'داده‌ای نیست'); exit; }
+        $lines = ['👥 برترین‌های رفرال (همیشگی):'];
+        $rank = 1;
+        foreach ($rows as $r) {
+            $uname = $r['username'] ? '@' . $r['username'] : (string)$r['user_id'];
+            $lines[] = $rank . ' - ' . $uname . ' : ' . $r['referrals_count'] . ' 👤';
+            $rank++;
+        }
+        tgEditMessageText($chatId, $messageId, implode("\n", $lines), [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '⬅️ بازگشت', 'callback_data' => 'top_back' ] ] ] ] ]);
+        exit;
+    }
+    if ($data === 'top_pts') {
+        $stmt = pdo()->prepare('SELECT user_id, username, points FROM users ORDER BY points DESC, user_id ASC LIMIT 10');
+        $stmt->execute();
+        $rows = $stmt->fetchAll();
+        if (empty($rows)) { tgAnswerCallbackQuery($callbackId, 'داده‌ای نیست'); exit; }
+        $lines = ['⭐ برترین‌های امتیاز (همیشگی):'];
+        $rank = 1;
+        foreach ($rows as $r) {
+            $uname = $r['username'] ? '@' . $r['username'] : (string)$r['user_id'];
+            $lines[] = $rank . ' - ' . $uname . ' : ' . $r['points'] . ' ⭐';
+            $rank++;
+        }
+        tgEditMessageText($chatId, $messageId, implode("\n", $lines), [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '⬅️ بازگشت', 'callback_data' => 'top_back' ] ] ] ] ]);
+        exit;
+    }
+    if ($data === 'top_back') {
+        tgEditMessageText($chatId, $messageId, 'یک گزینه را انتخاب کنید:', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '👥 برترین‌های رفرال', 'callback_data' => 'top_ref' ], [ 'text' => '⭐ برترین‌های امتیاز', 'callback_data' => 'top_pts' ] ] ] ] ]);
+        exit;
+    }
+
+    // Custom lottery callbacks
+    if (strpos($data, 'lot_buy_') === 0) {
+        $lotId = (int) substr($data, strlen('lot_buy_'));
+        $lot = getCustomLottery($lotId);
+        if (!$lot) { tgAnswerCallbackQuery($callbackId, 'قرعه‌کشی یافت نشد.', true); exit; }
+        [$ok, $msg] = buyCustomLotteryTicket($userId, $lot);
+        tgAnswerCallbackQuery($callbackId, $ok ? 'انجام شد' : $msg, !$ok);
+        if ($ok) tgSendMessage($chatId, $msg);
+        exit;
+    }
+    if (strpos($data, 'lot_info_') === 0) {
+        $lotId = (int) substr($data, strlen('lot_info_'));
+        $lot = getCustomLottery($lotId);
+        if (!$lot) { tgAnswerCallbackQuery($callbackId, 'قرعه‌کشی یافت نشد.', true); exit; }
+        $cost = is_null($lot['entry_cost_points']) ? 'ورود با رفرال' : ('هزینه: ' . $lot['entry_cost_points']);
+        $bonus = (int)$lot['referral_bonus_per_invite'];
+        $txt = '🎲 ' . $lot['title'] . "\n" . $cost . "\n" . 'جایزه: ' . $lot['prize_points'] . ' امتیاز' . ($bonus > 0 ? "\n" . '🎁 بلیط اضافه به ازای هر دعوت: ' . $bonus : '');
+        tgAnswerCallbackQuery($callbackId, '');
+        tgSendMessage($chatId, $txt);
+        exit;
+    }
+
     // Unknown callback
     tgAnswerCallbackQuery($callbackId, 'دستور نامعتبر');
     exit;
@@ -1137,9 +1429,8 @@ if ($messageText !== null) {
             }
         }
 
-        // Force join if needed
         if (!isMemberAllRequiredChannels($userId)) {
-            tgSendMessage($chatId, channelsText(), [ 'reply_markup' => buildVerifyChannelsInlineKeyboard() ]);
+            tgSendMessage($chatId, formatChannelsJoinMessage(), [ 'reply_markup' => buildVerifyChannelsInlineKeyboard() ]);
         } else {
             recordReferralIfEligibleAfterVerification($userId);
             tgSendMessage($chatId, 'به ربات خوش آمدید! از منو انتخاب کنید.', [ 'reply_markup' => buildMainMenuKeyboard($isAdminUser) ]);
@@ -1187,20 +1478,35 @@ if ($messageText !== null) {
             $reply = runWeeklyReferralRewardsCron();
         } elseif (preg_match('/^\/cron_lottery$/', $messageText)) {
             $reply = runWeeklyLotteryDrawCron();
+        } elseif (preg_match('/^\/lottery_create\s+(.+)\|\s*cost=(ref|\d+)\s*\|\s*prize=(\d+)\s*(?:\|\s*bonus=(\d+))?$/u', $messageText, $m)) {
+            $title = trim($m[1]);
+            $costSpec = $m[2] === 'ref' ? 'ref' : (int)$m[2];
+            $prize = (int)$m[3];
+            $bonus = isset($m[4]) ? (int)$m[4] : 0;
+            $reply = adminLotteryCreate($title, $costSpec, $prize, $bonus);
+        } elseif (preg_match('/^\/lottery_list$/', $messageText)) {
+            $reply = adminLotteryList();
+        } elseif (preg_match('/^\/lottery_close\s+(\d+)/', $messageText, $m)) {
+            $reply = adminLotteryClose((int)$m[1]);
+        } elseif (preg_match('/^\/lottery_draw\s+(\d+)/', $messageText, $m)) {
+            $reply = adminLotteryDraw((int)$m[1]);
         }
 
         if ($reply) {
             tgSendMessage($chatId, $reply);
             exit;
         }
-        // Unknown admin command falls through to help
         if ($messageText[0] === '/') {
             tgSendMessage($chatId, adminHelpText());
             exit;
         }
     }
 
-    // User panel actions
+    // For non-admin users, enforce membership before using the bot
+    if (!$isAdminUser) {
+        if (!enforceMembershipGate($chatId, $userId, false)) exit;
+    }
+
     switch ($messageText) {
         case '📊 امتیاز من':
             tgSendMessage($chatId, 'امتیاز شما: ' . getUserPoints($userId));
@@ -1221,9 +1527,6 @@ if ($messageText !== null) {
             }
             tgSendMessage($chatId, implode("\n", $lines));
             break;
-        case '📢 عضویت در کانال‌ها':
-            tgSendMessage($chatId, channelsText(), [ 'reply_markup' => buildVerifyChannelsInlineKeyboard() ]);
-            break;
         case '🎁 جایزه روزانه':
             [$ok, $msg] = tryGrantDailyBonus($userId);
             tgSendMessage($chatId, $msg);
@@ -1232,31 +1535,14 @@ if ($messageText !== null) {
             $u = getUser($userId);
             tgSendMessage($chatId, userProfileText($u));
             break;
-        case '🏆 برترین‌های هفته':
-            $weekStart = weekStartMondayUtc();
-            $top = computeTopReferrersForWeek($weekStart, 10);
-            if (empty($top)) { tgSendMessage($chatId, 'هنوز برترینی برای این هفته وجود ندارد.'); break; }
-            $lines = ['🏆 تاپ رفرال‌های این هفته:'];
-            $rank = 1;
-            foreach ($top as $row) {
-                $lines[] = $rank . ') ' . $row['inviter_id'] . ' - دعوتی: ' . $row['invites'];
-                $rank++;
-            }
-            tgSendMessage($chatId, implode("\n", $lines));
-            break;
-        case '🎟 خرید بلیت قرعه‌کشی':
-            if (!isMemberAllRequiredChannels($userId)) {
-                tgSendMessage($chatId, channelsText(), [ 'reply_markup' => buildVerifyChannelsInlineKeyboard() ]);
-                break;
-            }
-            [$ok, $msg] = buyLotteryTicket($userId);
-            tgSendMessage($chatId, $msg);
+        case '🏆 برترین‌ها':
+            tgSendMessage($chatId, 'یک گزینه را انتخاب کنید:', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '👥 برترین‌های رفرال', 'callback_data' => 'top_ref' ], [ 'text' => '⭐ برترین‌های امتیاز', 'callback_data' => 'top_pts' ] ] ] ] ]);
             break;
         case '🎲 قرعه‌کشی':
-            tgSendMessage($chatId, lotteryInfoText());
+            $lots = listActiveCustomLotteries();
+            tgSendMessage($chatId, 'قرعه‌کشی‌های فعال:', [ 'reply_markup' => buildLotteriesKeyboard($lots) ]);
             break;
         default:
-            // Show main menu
             tgSendMessage($chatId, 'یکی از گزینه‌های منو را انتخاب کنید.', [ 'reply_markup' => buildMainMenuKeyboard($isAdminUser) ]);
             break;
     }
