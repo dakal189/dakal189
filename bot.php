@@ -329,6 +329,7 @@ function buildAdminPanelInlineKeyboard(bool $enabled): array {
             [ [ 'text' => '🚫 مدیریت بن', 'callback_data' => 'admin_ban' ] ],
             [ [ 'text' => '🎲 مدیریت قرعه‌کشی', 'callback_data' => 'admin_lottery' ] ],
             [ [ 'text' => '🏆 گزارش‌ها و کرون‌جاب', 'callback_data' => 'admin_reports' ] ],
+            [ [ 'text' => '❎ بستن پنل', 'callback_data' => 'admin_close' ] ],
         ],
     ];
 }
@@ -1459,11 +1460,8 @@ if ($callbackId && $data !== null) {
             tgEditMessageText($chatId, $messageId, '🏆 گزارش‌ها و کرون‌جاب', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '🎰 قرعه‌کشی هفتگی', 'callback_data' => 'admin_cron_lottery' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
             exit;
         }
-        if ($data === 'admin_main') {
-            tgAnswerCallbackQuery($callbackId, '');
-            tgEditMessageText($chatId, $messageId, 'انتخاب کنید:', [ 'reply_markup' => buildAdminMainMenuKeyboard() ]);
-            exit;
-        }
+        if ($data === 'admin_main') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, '🛠 پنل ادمین', [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
+        if ($data === 'admin_close') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, 'پنل بسته شد.', []); exit; }
 
         // Prompt states
         if ($data === 'admin_items_add') { setAdminState($userId, 'await_item_add'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '➕ لطفاً به صورت «نام | هزینه» ارسال کنید.'); exit; }
@@ -1484,7 +1482,7 @@ if ($callbackId && $data !== null) {
         if ($data === 'admin_ban_user') { setAdminState($userId, 'await_ban'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '🚷 user_id کاربر برای بن کردن؟'); exit; }
         if ($data === 'admin_unban_user') { setAdminState($userId, 'await_unban'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '✅ user_id کاربر برای آزاد کردن؟'); exit; }
 
-        if ($data === 'admin_lottery_new') { setAdminState($userId, 'await_lottery_new'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '🎯 فرمت: عنوان | cost=10|ref | prize=200 | bonus=0'); exit; }
+        if ($data === 'admin_lottery_new') { setAdminState($userId, 'await_lottery_new'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, "🎯 لطفاً اطلاعات را در سه خط ارسال کنید:\n1) عنوان\n2) cost=10 یا cost=ref\n3) prize=200 [اختیاری: خط چهارم bonus=0]"); exit; }
         if ($data === 'admin_lottery_list') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, adminLotteryList()); exit; }
         if ($data === 'admin_lottery_close') { setAdminState($userId, 'await_lottery_close'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '⛔ ID قرعه‌کشی برای بستن؟'); exit; }
         if ($data === 'admin_lottery_draw') { setAdminState($userId, 'await_lottery_draw'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '🎟 ID قرعه‌کشی برای انجام قرعه‌کشی؟'); exit; }
@@ -1598,7 +1596,11 @@ if ($messageText !== null) {
             if ($s === 'await_points_sub') { if (preg_match('/^(\d+)\s+(-?\d+)$/', $messageText, $m)) { tgSendMessage($chatId, adminSubPoints((int)$m[1], (int)$m[2])); clearAdminState($userId); } else { tgSendMessage($chatId, 'فرمت نامعتبر. «user_id amount»'); } exit; }
             if ($s === 'await_ban') { if (preg_match('/^(\d+)$/', $messageText)) { tgSendMessage($chatId, adminBanUser((int)$messageText)); clearAdminState($userId); } else { tgSendMessage($chatId, 'user_id نامعتبر'); } exit; }
             if ($s === 'await_unban') { if (preg_match('/^(\d+)$/', $messageText)) { tgSendMessage($chatId, adminUnbanUser((int)$messageText)); clearAdminState($userId); } else { tgSendMessage($chatId, 'user_id نامعتبر'); } exit; }
-            if ($s === 'await_lottery_new') { if (preg_match('/^(.+)\|\s*cost=(ref|\d+)\s*\|\s*prize=(\d+)\s*(?:\|\s*bonus=(\d+))?$/u', $messageText, $m)) { $title = trim($m[1]); $costSpec = $m[2] === 'ref' ? 'ref' : (int)$m[2]; $prize = (int)$m[3]; $bonus = isset($m[4]) ? (int)$m[4] : 0; tgSendMessage($chatId, adminLotteryCreate($title, $costSpec, $prize, $bonus)); clearAdminState($userId); } else { tgSendMessage($chatId, 'فرمت نامعتبر. عنوان | cost=10|ref | prize=200 | bonus=0'); } exit; }
+            if ($s === 'await_lottery_new') { $lines = preg_split('/\r?\n/', trim($messageText)); $title = trim($lines[0] ?? ''); $costLine = trim($lines[1] ?? ''); $prizeLine = trim($lines[2] ?? ''); $bonusLine = trim($lines[3] ?? ''); if ($title !== '' && preg_match('/^cost=(ref|\d+)$/', $costLine, $cm) && preg_match('/^prize=(\d+)$/', $prizeLine, $pm)) { $costSpec = $cm[1] === 'ref' ? 'ref' : (int)$cm[1]; $prize = (int)$pm[1]; $bonus = 0; if ($bonusLine !== '' && preg_match('/^bonus=(\d+)$/', $bonusLine, $bm)) { $bonus = (int)$bm[1]; } tgSendMessage($chatId, adminLotteryCreate($title, $costSpec, $prize, $bonus)); clearAdminState($userId); } else { tgSendMessage($chatId, "فرمت نامعتبر.
+1) عنوان
+2) cost=10 یا cost=ref
+3) prize=200
+[اختیاری] 4) bonus=0"); } exit; }
             if ($s === 'await_lottery_close') { if (preg_match('/^(\d+)$/', $messageText)) { tgSendMessage($chatId, adminLotteryClose((int)$messageText)); clearAdminState($userId); } else { tgSendMessage($chatId, 'ID نامعتبر'); } exit; }
             if ($s === 'await_lottery_draw') { if (preg_match('/^(\d+)$/', $messageText)) { tgSendMessage($chatId, adminLotteryDraw((int)$messageText)); clearAdminState($userId); } else { tgSendMessage($chatId, 'ID نامعتبر'); } exit; }
         }
