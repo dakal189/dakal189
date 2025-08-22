@@ -34,7 +34,7 @@ if (is_file($__env)) {
 // Configuration
 // ==========================
 
-define('BOT_TOKEN', getenv('BOT_TOKEN') ?: '');
+define('BOT_TOKEN', '7657246591:AAF9b-UEuyypu5tIhQ-KrMvqnxn56vIxIXQ');
 if (!BOT_TOKEN) {
     http_response_code(500);
     echo 'BOT_TOKEN is not set';
@@ -43,52 +43,35 @@ if (!BOT_TOKEN) {
 
 define('API_URL', 'https://api.telegram.org/bot' . BOT_TOKEN . '/');
 
-define('DB_HOST', getenv('DB_HOST') ?: '127.0.0.1');
-define('DB_PORT', getenv('DB_PORT') ?: '3306');
-define('DB_NAME', getenv('DB_NAME') ?: 'telegram_referral_bot');
-define('DB_USER', getenv('DB_USER') ?: 'root');
-define('DB_PASS', getenv('DB_PASS') ?: '');
+define('BOT_USERNAME', 'samp_info_bot');
 
-define('ADMIN_IDS', (function () {
-    $env = getenv('ADMIN_IDS') ?: '';
-    $adminIds = [];
-    foreach (array_filter(array_map('trim', explode(',', $env))) as $id) {
-        if (ctype_digit($id) || preg_match('/^-?\d+$/', $id)) {
-            $adminIds[] = (int) $id;
-        }
-    }
-    return $adminIds;
-})());
+define('DB_HOST', 'localhost');
+define('DB_PORT', '3306');
+define('DB_NAME', 'dakallli_Test2');
+define('DB_USER', 'dakallli_Test2');
+define('DB_PASS', 'hosyarww123');
 
-define('ADMIN_GROUP_ID', (int) (getenv('ADMIN_GROUP_ID') ?: 0)); // Group ID to receive item requests
+define('ADMIN_IDS', [5641303137]);
 
-define('PUBLIC_ANNOUNCE_CHANNEL_ID', (int) (getenv('PUBLIC_ANNOUNCE_CHANNEL_ID') ?: 0)); // Optional public channel for announcements
+define('ADMIN_GROUP_ID', -1002987179440); // Group ID to receive item requests
 
-define('REFERRAL_REWARD_POINTS', (int) (getenv('REFERRAL_REWARD_POINTS') ?: 10));
+define('PUBLIC_ANNOUNCE_CHANNEL_ID', -1002798392543); // Optional public channel for announcements
 
-define('DAILY_BONUS_POINTS', (int) (getenv('DAILY_BONUS_POINTS') ?: 5));
+define('REFERRAL_REWARD_POINTS', 10);
 
-define('LOTTERY_TICKET_COST', (int) (getenv('LOTTERY_TICKET_COST') ?: 10));
+define('DAILY_BONUS_POINTS', 5);
 
-define('LOTTERY_PRIZE_POINTS', (int) (getenv('LOTTERY_PRIZE_POINTS') ?: 200));
+define('LOTTERY_TICKET_COST', 10);
 
-define('ANTI_SPAM_MIN_INTERVAL_MS', (int) (getenv('ANTI_SPAM_MIN_INTERVAL_MS') ?: 700));
+define('LOTTERY_PRIZE_POINTS', 200);
 
-define('CRON_SECRET', getenv('CRON_SECRET') ?: '');
+define('ANTI_SPAM_MIN_INTERVAL_MS', 700);
+
+define('CRON_SECRET', 'CHANGE_ME');
 
 define('WEEKLY_TOP_REWARDS', (function () {
-    // position => points; can be overridden with env WEEKLY_TOP_REWARDS like "1:300,2:200,3:100"
-    $env = getenv('WEEKLY_TOP_REWARDS') ?: '';
     $defaults = [1 => 300, 2 => 200, 3 => 100];
-    if (!$env) return $defaults;
-    $out = [];
-    foreach (explode(',', $env) as $pair) {
-        $parts = array_map('trim', explode(':', $pair));
-        if (count($parts) === 2 && ctype_digit($parts[0]) && ctype_digit($parts[1])) {
-            $out[(int) $parts[0]] = (int) $parts[1];
-        }
-    }
-    return $out ?: $defaults;
+    return $defaults;
 })());
 
 // ==========================
@@ -400,7 +383,12 @@ function buildVerifyChannelsInlineKeyboard(): array {
         if (!empty($ch['username'])) {
             $rows[] = [ [ 'text' => $text, 'url' => 'https://t.me/' . $ch['username'] ] ];
         } else {
-            $rows[] = [ [ 'text' => $text, 'callback_data' => 'noop' ] ];
+            $invite = tgExportChatInviteLink((int)$ch['chat_id']);
+            if (($invite['ok'] ?? false) && !empty($invite['result'])) {
+                $rows[] = [ [ 'text' => $text, 'url' => $invite['result'] ] ];
+            } else {
+                $rows[] = [ [ 'text' => $text, 'callback_data' => 'noop' ] ];
+            }
         }
     }
     $rows[] = [ [ 'text' => '✅ تایید عضویت', 'callback_data' => 'verify_sub' ] ];
@@ -1196,7 +1184,7 @@ function userProfileText(array $user): string {
 }
 
 function myInviteLink(int $userId): string {
-    return '📎 لینک دعوت شما:' . "\n" . 'https://t.me/' . (getenv('BOT_USERNAME') ?: 'YourBot') . '?start=' . $userId;
+    return '📎 لینک دعوت شما:' . "\n" . 'https://t.me/' . BOT_USERNAME . '?start=' . $userId;
 }
 
 function shopText(): string {
@@ -1220,6 +1208,26 @@ function lotteryInfoText(): string {
 // ==========================
 
 ensureTables();
+
+// Seed initial required channel if not present
+(function () {
+    $chatId = -1002798392543; // required channel/group
+    try {
+        $pdo = pdo();
+        $stmt = $pdo->prepare('SELECT 1 FROM channels WHERE chat_id = ?');
+        $stmt->execute([$chatId]);
+        if (!$stmt->fetch()) {
+            $title = null; $username = null;
+            $res = tgGetChat($chatId);
+            if ($res['ok'] ?? false) {
+                $title = $res['result']['title'] ?? null;
+                $username = $res['result']['username'] ?? null;
+            }
+            $ins = $pdo->prepare('INSERT INTO channels (chat_id, username, title, added_at) VALUES (?, ?, ?, ?)');
+            $ins->execute([$chatId, $username, $title, nowUtc()]);
+        }
+    } catch (Throwable $e) { /* ignore */ }
+})();
 
 if (isset($_GET['cron'])) {
     $secret = $_GET['secret'] ?? '';
