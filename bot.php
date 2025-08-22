@@ -276,6 +276,14 @@ function ensureTables(): void {
             `key` VARCHAR(64) PRIMARY KEY,
             `value` VARCHAR(255) NOT NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+
+        // Admin states per user
+        "CREATE TABLE IF NOT EXISTS admin_states (
+            user_id BIGINT PRIMARY KEY,
+            state VARCHAR(64) NOT NULL,
+            data TEXT NULL,
+            updated_at DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
     ];
 
     $pdo = pdo();
@@ -314,9 +322,13 @@ function buildAdminPanelInlineKeyboard(bool $enabled): array {
     return [
         'inline_keyboard' => [
             [ [ 'text' => $toggleText, 'callback_data' => $toggleCb ] ],
-            [ [ 'text' => '🛒 لیست آیتم‌ها', 'callback_data' => 'admin_items_list' ] ],
-            [ [ 'text' => '📢 کانال‌های اجباری', 'callback_data' => 'admin_channels_list' ] ],
-            [ [ 'text' => '📝 راهنمای ادمین', 'callback_data' => 'admin_help' ] ],
+            [ [ 'text' => '🎁 مدیریت آیتم‌ها', 'callback_data' => 'admin_items' ] ],
+            [ [ 'text' => '📢 مدیریت کانال‌ها', 'callback_data' => 'admin_channels' ] ],
+            [ [ 'text' => '👥 مدیریت کاربران', 'callback_data' => 'admin_users' ] ],
+            [ [ 'text' => '💰 مدیریت امتیاز', 'callback_data' => 'admin_points' ] ],
+            [ [ 'text' => '🚫 مدیریت بن', 'callback_data' => 'admin_ban' ] ],
+            [ [ 'text' => '🎲 مدیریت قرعه‌کشی', 'callback_data' => 'admin_lottery' ] ],
+            [ [ 'text' => '🏆 گزارش‌ها و کرون‌جاب', 'callback_data' => 'admin_reports' ] ],
         ],
     ];
 }
@@ -1197,6 +1209,30 @@ function adminUnbanUser(int $userId): string {
     $stmt = pdo()->prepare('UPDATE users SET is_banned = 0 WHERE user_id = ?');
     $stmt->execute([$userId]);
     return 'کاربر آنبن شد.';
+}
+
+function getAdminState(int $userId): ?array {
+    $stmt = pdo()->prepare('SELECT state, data FROM admin_states WHERE user_id = ?');
+    $stmt->execute([$userId]);
+    $row = $stmt->fetch();
+    if (!$row) return null;
+    $data = null;
+    if (!empty($row['data'])) {
+        $decoded = json_decode($row['data'], true);
+        if (is_array($decoded)) $data = $decoded;
+    }
+    return ['state' => $row['state'], 'data' => $data];
+}
+
+function setAdminState(int $userId, string $state, $data = null): void {
+    $payload = $data === null ? null : json_encode($data, JSON_UNESCAPED_UNICODE);
+    $stmt = pdo()->prepare('INSERT INTO admin_states (user_id, state, data, updated_at) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE state = VALUES(state), data = VALUES(data), updated_at = VALUES(updated_at)');
+    $stmt->execute([$userId, $state, $payload, nowUtc()]);
+}
+
+function clearAdminState(int $userId): void {
+    $stmt = pdo()->prepare('DELETE FROM admin_states WHERE user_id = ?');
+    $stmt->execute([$userId]);
 }
 
 // ==========================
