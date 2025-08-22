@@ -1,3300 +1,628 @@
 <?php
-error_reporting(0);
-set_time_limit(5);
-date_default_timezone_set('Asia/Tehran');
-##----------------------
-require 'config.php';
-##----------------------
-if (!is_dir('Data')) {
-	mkdir('Data');
+
+// Single-file Telegram Referral Bot (PHP + MySQL)
+// Webhook entrypoint: set to https://YOUR_DOMAIN/bot.php?secret=WEBHOOK_SECRET
+
+// ====== CONFIG (defaults; override via env) ======
+$CONFIG = [
+	'app' => [
+		'name' => getenv('APP_NAME') ?: 'ReferralBot',
+		'env' => getenv('APP_ENV') ?: 'production',
+		'timezone' => getenv('APP_TIMEZONE') ?: 'Asia/Tehran',
+		'webhook_secret' => getenv('WEBHOOK_SECRET') ?: 'change-me-secret',
+	],
+	'db' => [
+		'host' => getenv('DB_HOST') ?: 'localhost',
+		'port' => (int)(getenv('DB_PORT') ?: 3306),
+		'database' => getenv('DB_DATABASE') ?: 'dakallli_Test2',
+		'username' => getenv('DB_USERNAME') ?: 'dakallli_Test2',
+		'password' => getenv('DB_PASSWORD') ?: 'hosyarww123',
+		'charset' => getenv('DB_CHARSET') ?: 'utf8mb4',
+	],
+	'telegram' => [
+		'token' => getenv('TELEGRAM_BOT_TOKEN') ?: '7657246591:AAF9b-UEuyypu5tIhQ-KrMvqnxn56vIxIXQ',
+		'admin_id' => (int)(getenv('TELEGRAM_ADMIN_ID') ?: 5641303137),
+		'admin_group_id' => getenv('TELEGRAM_ADMIN_GROUP_ID') ?: '-1002987179440',
+		'api_base' => 'https://api.telegram.org',
+	],
+	'settings' => [
+		'points_per_referral' => (int)(getenv('POINTS_PER_REFERRAL') ?: 10),
+	]
+];
+
+date_default_timezone_set($CONFIG['app']['timezone']);
+
+// ====== PHP ERROR LOGGING ======
+error_reporting(E_ALL);
+ini_set('log_errors', '1');
+ini_set('display_errors', '0');
+
+// ====== LOGGING ======
+$LOG_FILE = __DIR__ . '/storage/logs/referral_single.log';
+if (!is_dir(dirname($LOG_FILE))) {
+	@mkdir(dirname($LOG_FILE), 0777, true);
 }
-if (!is_file('Data/ads.json')) {
-	file_put_contents('Data/ads.json', json_encode([]));
+function log_info(string $msg, array $ctx = []): void {
+	global $LOG_FILE;
+	file_put_contents($LOG_FILE, sprintf("%s [INFO] %s %s\n", date('c'), $msg, $ctx ? json_encode($ctx, JSON_UNESCAPED_UNICODE) : ''), FILE_APPEND);
 }
-if (!is_dir('Bots')) {
-	mkdir('Bots');
+function log_error(string $msg, array $ctx = []): void {
+	global $LOG_FILE;
+	file_put_contents($LOG_FILE, sprintf("%s [ERROR] %s %s\n", date('c'), $msg, $ctx ? json_encode($ctx, JSON_UNESCAPED_UNICODE) : ''), FILE_APPEND);
 }
-##----------------------
-function CreateZip($files = array(), $destination, $password = null, $overwrite = false)
-{
-	if (file_exists($destination)) {
-		return false;
-	}
-	$valid_files = array();
-	if (is_array($files)) {
-		foreach($files as $file) {
-			if (file_exists($file)) {
-				$valid_files[] = $file;
-			}
+
+// ====== SECURITY (webhook secret) ======
+$secretHeader = $_SERVER['HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN'] ?? '';
+$secretQuery = $_GET['secret'] ?? '';
+$expectedSecret = (string)($CONFIG['app']['webhook_secret'] ?? '');
+if (!empty($expectedSecret) && ($secretHeader !== $expectedSecret && $secretQuery !== $expectedSecret)) {
+	log_error('Forbidden webhook secret mismatch', ['ip' => $_SERVER['REMOTE_ADDR'] ?? '']);
+	http_response_code(403);
+	echo 'forbidden';
+	exit;
+}
+
+// ====== DEBUG ENDPOINTS (GET) ======
+if (isset($_GET['health'])) {
+	echo 'ok';
+	exit;
+}
+
+// ====== TELEGRAM CLIENT ======
+function tg_call(string $method, array $params = []) {
+	global $CONFIG;
+	$url = rtrim($CONFIG['telegram']['api_base'], '/') . '/bot' . $CONFIG['telegram']['token'] . '/' . $method;
+	$useCurl = function_exists('curl_init');
+	if ($useCurl) {
+		$ch = curl_init($url);
+		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+		curl_setopt($ch, CURLOPT_POST, true);
+		curl_setopt($ch, CURLOPT_POSTFIELDS, $params);
+		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+		curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+		$res = curl_exec($ch);
+		if ($res === false) {
+			$err = curl_error($ch);
+			curl_close($ch);
+			throw new RuntimeException('Telegram request failed: ' . $err);
 		}
-	}
-	if (count($valid_files)) {
-		$zip = new ZipArchive();
-		if ($zip->open($destination, $overwrite ? ZIPARCHIVE::OVERWRITE : ZIPARCHIVE::CREATE) !== true) {
-			return false;
-		}
-		if (!is_null($password)) {
-			$zip->setPassword($password);
-		}
-		foreach($valid_files as $file) {
-			$zip->addFile($file, basename($file));
-			if (!is_null($password)) {
-				$zip->setEncryptionName(basename($file), ZipArchive::EM_AES_256);
-			}
-		}
-		$zip->close();
-		return file_exists($destination);
+		$code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+		curl_close($ch);
 	} else {
-		return false;
-	}
-}
-##----------------------
-function makeInlineKeyboard($text)
-{
-	$keyboard = [];
-	$explode = explode("\n", $text);
-	$i = 0; $j = 0;
-	foreach ($explode as $values) {
-		$value = explode(', ', $values);
-		foreach ($value as $inline) {
-			preg_match('#(.+?)\|(.+)#i', $inline, $matches);
-			if (filter_var($matches[2], FILTER_VALIDATE_URL)) {
-				$keyboard[$i][$j]['text'] = $matches[1];
-				$keyboard[$i][$j]['url'] = $matches[2];
-			}
-			$keyboard[$i][$j] = array_reverse($keyboard[$i][$j]);
-			$j++;
-		}
-		$keyboard[$i] = array_reverse($keyboard[$i]);
-		$i++;
-		$j = 0;
-	}
-	if ($keyboard != null) return ['inline_keyboard' => $keyboard];
-	return null;
-}
-##----------------------
-function convert_size($size)
-{
-    $unit = [
-	'بایت',
-	'کیلوبایت',
-	'مگابایت',
-	'گیگابایت',
-	'ترابایت',
-	'پنتابایت'
-    ];
-    $i = 0;
-    return @round($size/pow(1024, ($i=(int)floor(log($size, 1024)))), 2) . ' ' . $unit[$i];
-}
-##----------------------
-function convert($string)
-{
-	$persian = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
-	$arabic = ['٩', '٨', '٧', '٦', '٥', '٤', '٣', '٢', '١', '٠'];
-	$num = range(0, 9);
-	$string = str_replace($persian, $num, $string);
-	return str_replace($arabic, $num, $string);
-}
-##----------------------
-function bot($method, $data = [], $bot_token = API_KEY_CR)
-{
-	$ch = curl_init('https://api.telegram.org/bot' . $bot_token . '/' . $method);
-	curl_setopt_array($ch,
-	[
-		CURLOPT_POST => true,
-		CURLOPT_RETURNTRANSFER => true,
-		CURLOPT_POSTFIELDS => $data
-	]);
-	$result = curl_exec($ch);
-	curl_close($ch);
-	return (!empty($result) ? json_decode($result) : false);
-}
-##----------------------
-function sendAction($chat_id, $action = 'typing')
-{
-	return bot('sendChatAction', [
-		'chat_id' => $chat_id,
-		'action' => $action
-	]);
-}
-##----------------------
-function sendMessage($chat_id, $text, $mode = null, $reply = null, $keyboard = null)
-{
-	return bot('sendMessage', [
-		'chat_id' => $chat_id,
-		'text' => $text,
-		'parse_mode' => $mode,
-		'reply_to_message_id' => $reply,
-		'reply_markup' => $keyboard,
-		'disable_web_page_preview' => true
-	]);
-}
-##----------------------
-function sendDocument($chatid, $document, $caption = null)
-{
-	return bot('sendDocument', [
-		'chat_id' => $chatid,
-		'document' => $document,
-		'caption' => $caption,
-		'parse_mode' => 'html'
-	]);
-}
-##----------------------
-function forwardMessage($chatid, $from_id, $massege_id)
-{
-	return bot('forwardMessage', [
-		'chat_id' => $chatid,
-		'from_chat_id' => $from_id,
-		'message_id' => $massege_id
-	]);
-}
-##----------------------
-function getChat($chatid)
-{
-	return bot('getChat', [
-		'chat_id' => $chatid
-	]);
-}
-##----------------------
-function myFloor($num) {
-	if ($num == floor($num)) {
-		return floor($num)-1;
-	}
-	else {
-		return floor($num);
-	}
-}
-##----------------------
-$update = json_decode(file_get_contents('php://input'));
-if (isset($update->message)) {
-	$message = $update->message; 
-	$chat_id = $message->chat->id;
-	$text = $message->text;
-	$message_id = $message->message_id;
-	$from_id = $message->from->id;
-	$user_id = $from_id;
-	$tc = $message->chat->type;
-	$first_name = $message->from->first_name;
-	$last_name = $message->from->last_name;
-	$username = $message->from->username;
-	$caption = $message->caption;
-	$reply = $message->reply_to_message->forward_from->id;
-	$reply_id = $message->reply_to_message->from->id;
-}
-elseif (isset($update->callback_query)) {
-	$Data = $update->callback_query->data;
-	$data_id = $update->callback_query->id;
-	$chatid = $update->callback_query->message->chat->id;
-	$chat_id = $update->callback_query->message->chat->id;
-	$fromid = $update->callback_query->from->id;
-	$from_id = $fromid;
-	$first_name = $update->callback_query->from->first_name;
-	$user_id = $fromid;
-	$tccall = $update->callback_query->chat->type;
-	$messageid = $update->callback_query->message->message_id;
-	$message_id = $update->callback_query->message->message_id;
-}
-else {
-	exit();
-}
-##----------------------
-$pdo = new PDO("mysql:host={$DB_HOST};dbname={$DB_NAME};charset=utf8mb4", $DB_USERNAME, $DB_PASSWORD);
-$pdo->exec('SET NAMES utf8mb4');
-
-
-$pdo->exec("CREATE TABLE IF NOT EXISTS `members` (
-        `id` INT(255) NOT NULL AUTO_INCREMENT,
-        `user_id` BIGINT(255) NOT NULL,
-        `time` INT(255) NOT NULL,
-        PRIMARY KEY (`id`)
-);");
-
-$pdo->exec("CREATE TABLE IF NOT EXISTS `bots` (
-        `id` int(255) NOT NULL AUTO_INCREMENT,
-        `admin` BIGINT(255) NOT NULL,
-        `username` varchar(1024),
-	`token` varchar(1024),
-	`time` int(255) NOT NULL,
-        PRIMARY KEY (`id`)
-);");
-
-$pdo->exec("CREATE TABLE IF NOT EXISTS `sendlist` (
-        `id` int(255) NOT NULL AUTO_INCREMENT,
-        `user_id` BIGINT(255) NOT NULL,
-        `message_id` int(255) DEFAULT NULL,
-        `offset` int(255) NOT NULL,
-        `time` int(255) NOT NULL,
-        `type` varchar(255) NOT NULL,
-        `data` json NOT NULL,
-        `caption` varchar(1024) DEFAULT NULL,
-        PRIMARY KEY (`id`)
-);");
-
-$pdo->exec("CREATE TABLE IF NOT EXISTS `vip_bots` (
-        `id` int(255) NOT NULL AUTO_INCREMENT,
-        `admin` BIGINT(255) NOT NULL,
-        `bot` varchar(1024),
-	`start` int(255) NOT NULL,
-	`end` int(255) NOT NULL,
-        `alert` int(1) NOT NULL,
-        PRIMARY KEY (`id`)
-);");
-
-$pdo->exec("CREATE TABLE IF NOT EXISTS `bots_sendlist` (
-        `id` int(255) NOT NULL AUTO_INCREMENT,
-        `user_id` BIGINT(255) NOT NULL,
-	`token` varchar(255) NOT NULL,
-	`bot_username` varchar(255) NOT NULL,
-        `message_id` int(255) DEFAULT NULL,
-        `offset` int(255) NOT NULL,
-        `time` int(255) NOT NULL,
-        `type` varchar(255) NOT NULL,
-        `data` json NOT NULL,
-        `caption` varchar(1024) DEFAULT NULL,
-        PRIMARY KEY (`id`)
-);");
-
-$pdo->exec("CREATE TABLE IF NOT EXISTS `xo_games` (
-        `id` int(255) NOT NULL AUTO_INCREMENT,
-        `message_id` varchar(255) NOT NULL,
-        `start` int(255) NOT NULL,
-	`time` int(255) NOT NULL,
-	`bot` varchar(1024) NOT NULL,
-        PRIMARY KEY (`id`)
-);");
-
-$db = $pdo->prepare("SELECT * FROM `members` WHERE `user_id`={$user_id}");
-$db->execute();
-if (!$db->fetch()) {
-        $pdo->exec("INSERT INTO `members` (`user_id`, `time`) VALUES ({$user_id}, UNIX_TIMESTAMP());");
-}
-##----------------------JSON
-@$list = json_decode(file_get_contents("Data/list.json"), true);
-@$data = json_decode(file_get_contents("Data/$from_id/data.json"), true);
-@$step = $data['step'];
-##----------------------
-if (!is_null($from_id) and !is_dir("Data/$from_id/")) {
-	mkdir("Data/$from_id");
-	$data = [
-		'step' => 'none'
-	];
-	file_put_contents("Data/$from_id/data.json", json_encode($data));
-	if ($list['user'] == null) {
-		$list['user'] = [];
-	}
-	$list['user'][] = $from_id;
-	file_put_contents('Data/list.json', json_encode($list));
-}
-##----------------------
-if (!isset($list['bot_count'])) {
-	$list['bot_count'] = 5;
-	file_put_contents('Data/list.json', json_encode($list));
-}
-##----------------------
-$get_in_channel_1 = json_decode(file_get_contents('https://api.telegram.org/bot' . API_KEY_CR . '/getChatMember?chat_id=' . $lock_channel_1 . '&user_id=' . $user_id));
-$in_channel_1 = isset($get_in_channel_1->result->status) ? in_array($get_in_channel_1->result->status, ['creator', 'administrator', 'member']) : true;
-$get_in_channel_2 = json_decode(file_get_contents('https://api.telegram.org/bot' . API_KEY_LOCK_BOT . '/getChatMember?chat_id=' . $lock_channel_2 . '&user_id=' . $user_id));
-$in_channel_2 = isset($get_in_channel_2->result->status) ? in_array($get_in_channel_2->result->status, ['creator', 'administrator', 'member']) : true;
-##----------------------Buttons
-if ($from_id != $admin) {
-	$menu = json_encode(
-		[
-			'keyboard' => [
-				[['text'=>'🚀 مینی اپ Dakal', 'web_app' => ['url' => $host_folder . 'MiniApp/']]],
-				[['text'=>'🤖 ربات های من'],['text'=>'🔰 ساخت ربات']],
-				[['text'=>'🌈 ثبت تبلیغ']],
-				[['text'=>'📕 قوانین'],['text'=>'📖 راهنما']]
-			],
-			'resize_keyboard' => true
-		]);
-}
-else {
-	$menu = json_encode(
-		[
-			'keyboard' => [
-				[['text'=>'🚀 مینی اپ Dakal', 'web_app' => ['url' => $host_folder . 'MiniApp/']]],
-				[['text'=>'🤖 ربات های من'],['text'=>'🔰 ساخت ربات']],
-				[['text'=>'🌈 ثبت تبلیغ']],
-				[['text'=>'📕 قوانین'],['text'=>'📖 راهنما']],
-				[['text'=>'🔑 مدیریت']]
-			],
-			'resize_keyboard' => true
-		]
-	);
-}
-
-$ads_menu = json_encode(
-	[
-		'keyboard' => [
-			[['text'=>'✏️ ثبت تبلیغ']],
-			[['text'=>'🗒 لیست تبلیغات']],
-			[['text'=>'🔙 بازگشت به مدیریت']]
-		],
-		'resize_keyboard' => true
-	]
-);
-##----------------------Dev
-$panel = json_encode(
-	[
-		'keyboard' => [
-			[['text'=>'🔖 پیام همگانی'],['text'=>'🚀 هدایت همگانی']],
-			[['text'=>'🤖 آمار ربات ها'],['text'=>'📊 آمار کاربران']],
-			[['text'=>'⛔️ لیست کاربران مسدود']],
-			[['text'=>'🔓 آزاد کردن'],['text'=>'🔒 مسدود کردن']],
-			[['text'=>'🎖 لیست رباتهای ویژه']],
-			[['text'=>'➖ اشتراک ویژه'],['text'=>'➕ اشتراک ویژه']],
-			[['text'=>'✖️ حذف ربات'],['text'=>'🤖 تعداد مجاز']],
-			[['text'=>'💠 تبلیغات']],
-			[['text'=>'🔙 بازگشت']]
-		],
-		'resize_keyboard' => true
-	]
-);
-##----------------------Other
-$back = json_encode(
-	[
-		'keyboard' => [
-			[['text'=>'🔙 بازگشت']]
-		],
-		'resize_keyboard' => true
-	]
-);
-$backpanel = json_encode(
-	[
-		'keyboard' => [
-			[['text'=>'🔙 بازگشت به مدیریت']]
-		],
-		'resize_keyboard' => true
-	]
-);
-$backpanelads = json_encode(
-	[
-		'keyboard' => [
-			[['text'=>'🔙 بازگشت به تبلیغات']]
-		],
-		'resize_keyboard' => true
-	]
-);
-$remove = json_encode(
-	[
-		'KeyboardRemove' => [],
-		'remove_keyboard' => true
-	]
-);
-##----------------------
-if (in_array($user_id, $list['ban'])) {
-	exit();
-}
-##----------------------
-if ($from_id != $admin) {
-	if (time()-filectime('Data/flood.json') >= 50*60) {
-		unlink('Data/flood.json');
-	}
-
-	@$flood = json_decode(file_get_contents('Data/flood.json'), true);
-	$now = date('Y-m-d-h-i-a', $update->message->date);
-	$flood['flood']["$now-$from_id"] += 1;
-	file_put_contents('Data/flood.json', json_encode($flood));
-
-	if ($flood['flood']["$now-$from_id"] >= 25 && $tc == 'private') {
-		sendAction($chat_id);
-		if ($list['ban'] == null) {
-			$list['ban'] = [];
-		}
-		unlink('Data/flood.json');
-		array_push($list['ban'], $from_id);
-		file_put_contents("Data/list.json", json_encode($list));
-		sendMessage($from_id, "⛔️ شما به دلیل ارسال پیام های مکرر و بیهوده مسدود گردیدید.\n\n🔰 برای آزاد شدن به $support پیام دهید.", 'markdown', null, $remove);
-		sendMessage($admin, "👤 کاربر [$from_id](tg://user?id=$from_id) به دلیل ارسال پیام های مکرر و بیهوده از ربات مسدود گردید.\n/unban\_{$from_id}", 'markdown');
-		exit();
-	}
-}
-##----------------------
-if (strtolower($text) == '/start') {
-	sendAction($chat_id);
-	sendMessage($chat_id, "😁✋🏻 سلام\n\n👇🏻 یکی از گزینه های زیر را انتخاب کنید.", null, $message_id, $menu);
-	$data['step'] = "none";
-	file_put_contents("Data/$from_id/data.json",json_encode($data));
-}
-elseif ($from_id != $admin && (!$in_channel_1 || !$in_channel_2)) {
-	sendAction($chat_id);
-        $lock_channel_1_emoji = $in_channel_1 ? '✅' : '❌';
-        $lock_channel_2_emoji = $in_channel_2 ? '✅' : '❌';
-	bot('sendMessage', [
-		'chat_id'=>$chat_id,
-		'reply_to_message_id'=>$message_id,
-		'text'=>"🔰 لطفا برای حمایت از ما و گرفتن اجازه استفاده از ربات در کانال های زیر عضو شوید.
-
-📣{$lock_channel_1_emoji} {$lock_channel_1}
-📣{$lock_channel_2_emoji} {$lock_channel_2}",
-		'reply_markup'=>json_encode(
-			[
-				'keyboard'=>[
-					[['text' => '/start']]
-				],
-				'resize_keyboard'=>true
+		$opts = [
+			'http' => [
+				'method' => 'POST',
+				'header' => "Content-Type: application/x-www-form-urlencoded\r\n",
+				'content' => http_build_query($params),
+				'timeout' => 30,
 			]
-		)
+		];
+		$context = stream_context_create($opts);
+		$res = @file_get_contents($url, false, $context);
+		$code = 0;
+		if (isset($http_response_header) && preg_match('#\s(\d{3})\s#', $http_response_header[0], $m)) {
+			$code = (int)$m[1];
+		}
+		if ($res === false) {
+			throw new RuntimeException('Telegram request failed (no curl)');
+		}
+	}
+	$data = json_decode($res, true) ?: [];
+	if ($code !== 200 || !($data['ok'] ?? false)) {
+		throw new RuntimeException('Telegram API error: ' . ($data['description'] ?? 'unknown'));
+	}
+	return $data['result'];
+}
+function tg_sendMessage(array $params) { return tg_call('sendMessage', $params); }
+function tg_editMessageText(array $params) { return tg_call('editMessageText', $params); }
+function tg_answerCallbackQuery(array $params) { return tg_call('answerCallbackQuery', $params); }
+function tg_getChatMember(array $params) { return tg_call('getChatMember', $params); }
+
+if (isset($_GET['debug']) && $_GET['debug'] === 'send') {
+	try {
+		tg_sendMessage(['chat_id' => (int)$CONFIG['telegram']['admin_id'], 'text' => 'Debug OK']);
+		echo 'sent';
+	} catch (Throwable $e) {
+		log_error('debug send failed', ['e' => $e->getMessage()]);
+		echo 'error';
+	}
+	exit;
+}
+
+// ====== INPUT ======
+$raw = file_get_contents('php://input');
+if (!$raw) {
+	log_info('Empty body');
+	echo 'ok';
+	exit;
+}
+$update = json_decode($raw, true);
+if (!$update) {
+	log_error('Invalid JSON');
+	echo 'ok';
+	exit;
+}
+
+// ====== DB ======
+$dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=%s', $CONFIG['db']['host'], $CONFIG['db']['port'], $CONFIG['db']['database'], $CONFIG['db']['charset']);
+try {
+	$pdo = new PDO($dsn, $CONFIG['db']['username'], $CONFIG['db']['password'], [
+		PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+		PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+		PDO::ATTR_EMULATE_PREPARES => false,
 	]);
-        exit();
+	log_info('DB connected');
+} catch (Throwable $e) {
+	log_error('DB connect failed', ['e' => $e->getMessage()]);
+	echo 'ok';
+	exit;
 }
-elseif ($text == "🔙 بازگشت") {
-	sendAction($chat_id);
-	$data['step'] = "none";
-	file_put_contents("Data/$from_id/data.json",json_encode($data));
-	sendMessage($chat_id, "🔰 به منوی اصلی خوش آمدید.\n\n👇🏻 یکی از گزینه های زیر را انتخاب کنید.", null, $message_id, $menu);
+
+// ====== SCHEMA ======
+try {
+	$pdo->exec("CREATE TABLE IF NOT EXISTS users (
+		id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+		telegram_id BIGINT NOT NULL UNIQUE,
+		username VARCHAR(64) NULL,
+		first_name VARCHAR(128) NULL,
+		last_name VARCHAR(128) NULL,
+		language_code VARCHAR(8) NULL,
+		points INT NOT NULL DEFAULT 0,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+	$pdo->exec("CREATE TABLE IF NOT EXISTS referrals (
+		id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+		inviter_user_id BIGINT UNSIGNED NOT NULL,
+		invitee_user_id BIGINT UNSIGNED NOT NULL,
+		status ENUM('pending','qualified','revoked') NOT NULL DEFAULT 'pending',
+		qualified_at TIMESTAMP NULL,
+		revoked_at TIMESTAMP NULL,
+		UNIQUE KEY uniq_ref_pair (inviter_user_id, invitee_user_id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+	$pdo->exec("CREATE TABLE IF NOT EXISTS points_transactions (
+		id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+		user_id BIGINT UNSIGNED NOT NULL,
+		amount INT NOT NULL,
+		type ENUM('referral_reward','spend','revoke','adjust') NOT NULL,
+		reference_id BIGINT NULL,
+		description VARCHAR(255) NULL,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_user_created (user_id, created_at)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+	$pdo->exec("CREATE TABLE IF NOT EXISTS items (
+		id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+		name VARCHAR(128) NOT NULL,
+		required_points INT NOT NULL,
+		is_active TINYINT(1) NOT NULL DEFAULT 1,
+		priority INT NOT NULL DEFAULT 0,
+		stock INT NULL,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+	$pdo->exec("CREATE TABLE IF NOT EXISTS orders (
+		id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+		user_id BIGINT UNSIGNED NOT NULL,
+		item_id BIGINT UNSIGNED NOT NULL,
+		status ENUM('pending','under_review','approved','rejected') NOT NULL DEFAULT 'pending',
+		note VARCHAR(255) NULL,
+		admin_id BIGINT UNSIGNED NULL,
+		admin_message_id BIGINT NULL,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+	$pdo->exec("CREATE TABLE IF NOT EXISTS admins (
+		user_id BIGINT UNSIGNED PRIMARY KEY,
+		role ENUM('owner','admin') NOT NULL DEFAULT 'admin',
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+	$pdo->exec("CREATE TABLE IF NOT EXISTS forced_channels (
+		id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+		channel_id VARCHAR(64) NOT NULL,
+		title VARCHAR(128) NULL,
+		is_required TINYINT(1) NOT NULL DEFAULT 1,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+	$pdo->exec("CREATE TABLE IF NOT EXISTS settings (
+		`key` VARCHAR(64) PRIMARY KEY,
+		`value` VARCHAR(255) NOT NULL,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+} catch (Throwable $e) {
+	log_error('Schema create failed', ['e' => $e->getMessage()]);
+	echo 'ok';
+	exit;
 }
-elseif ($text == "📕 قوانین") {
-	sendAction($chat_id);
-	sendMessage($chat_id, "📕 *قوانین* :
 
-🔞 هرگونه *مسائل خلاف شرع و مستهجن* ممنوع است.
-🚷 نقض *قوانین جمهوری اسلامی ایران* ممنوع است.
-🚯 ارسال پیام های مکرر و بیهوده (*SPAM*)  ممنوع است.
-
-⛔️ تخطی از موارد ذکر شده *مسدود شدن دائمی* شما را در پی خواهد داشت.", 'markdown', $message_id);
-}
-elseif ($text == "📖 راهنما" || strtolower($text) == '/help') {
-	sendAction($chat_id);
-	sendMessage($chat_id, "📖 آموزش ایجاد ربات پیامرسان :
-
-1⃣ ابتدا به ربات @BotFather رفته و دستور /start را می فرستید.
-2⃣ حالا برای ساخت یک ربات جدید دستور /newbot را می فرستید.
-ربات پیام زیر را برای شما می فرستد :
-Alright, a new bot. How are we going to call it? Please choose a name for your bot.
-3⃣ یک نام برای ربات خود انتخاب کنید و بفرستید.
-ربات در پاسخ پیام زیر را میفرستد :
-Good. Now let's choose a username for your bot. It must end in bot. Like this, for example: TetrisBot or tetris_bot.
-ربات در این پیام می گوید :« اکنون می بایست برای ربات خود یک نام کاربری انتخاب کنید. نام کاربری ای که انتخاب می کنید باید به کلمهٔ bot ختم شود. به عنوان مثال TetrisBot یا tetris_bot»
-4⃣ اگر نام کاربری ای که فرستادید به bot ختم نشده باشد ربات به صورت زیر پاسخ می دهد و می گوید :« نام کاربری حتما باید به کلمه bot ختم شود »
-Sorry, the username must end in 'bot'. E.g. 'Tetris_bot' or 'Tetrisbot'
-اگر نام کاربری که فرستادید قبلا توسط فرد دیگری گرفته شده باشد ربات پاسخ زیر را برای شما می فرستد و می گوید :« این نام کاربری قبلا توسط فرد دیگری گرفته شده است، لطفا یک نام کاربری بدون مالک ارسال کنید»
-Sorry, this username is already taken. Please try something different.
-5⃣ در صورتی که تمام موارد ذکر شده در بالا را رعایت کرده باشید ربات @BotFather پیامی حاوی توکن رباتتان برای شما ارسال خواهد کرد. آنرا برای این ربات فروارد کنید تا ربات پیامرسانتان ساخته شود.", '', $message_id);
-}
-elseif ($text == "🔰 ساخت ربات") {
-	sendAction($chat_id);
-	$count_bot = count($data['bots']);
-	if ( ($count_bot<$list['bot_count']) or $from_id == $admin) {
-		$data['step'] = "create";
-		file_put_contents("Data/$from_id/data.json",json_encode($data));
-		sendMessage($chat_id, "🤖 توکن رباتت رو که از @BotFather گرفتی برام هدایت (فروارد) کن
-
-📕 اگه راهنمایی لازم داری دستور /help رو ارسال کن", null, $message_id, $back);
+// ====== SEED OWNER ADMIN ======
+try {
+	if (!empty($CONFIG['telegram']['admin_id'])) {
+		$tgAdminId = (int)$CONFIG['telegram']['admin_id'];
+		$u = db_fetch_one($pdo, 'SELECT * FROM users WHERE telegram_id = ?', [$tgAdminId]);
+		if (!$u) {
+			$pdo->prepare('INSERT INTO users (telegram_id) VALUES (?)')->execute([$tgAdminId]);
+			$uid = (int)$pdo->lastInsertId();
+			$pdo->prepare('INSERT INTO admins (user_id, role) VALUES (?, ?) ON DUPLICATE KEY UPDATE role=VALUES(role)')->execute([$uid, 'owner']);
+		} else {
+			$pdo->prepare('INSERT INTO admins (user_id, role) VALUES (?, ?) ON DUPLICATE KEY UPDATE role=VALUES(role)')->execute([(int)$u['id'], 'owner']);
+		}
 	}
-	else {
-		if ($list['bot_count'] < 1) {
-			sendMessage($chat_id, "🎃 امکان ساخت ربات توسط مدیریت غیر فعال شده است.\n\n🤠 لطفا زمانی دیگر دوباره امتحان کنید.", 'markdown', $message_id, $menu);
-		}
-		else {
-			sendMessage($chat_id, "🎃 هر کاربر تنها می تواند *$list[bot_count]* ربات بسازد.\n\n🤖 شما اکنون *$count_bot* ربات دارید و امکان ساخت ربات های بیشتر از شما سلب شده است.\n\n🌈 برای ساخت رباتی جدید باید ربات های قدیمی خود را حذف کنید.", 'markdown', $message_id, $menu);
-		}
+} catch (Throwable $e) {
+	log_error('Admin seed failed', ['e' => $e->getMessage()]);
+}
+
+// ====== HELPERS ======
+function db_fetch_one(PDO $pdo, string $sql, array $params = []): ?array {
+	$stmt = $pdo->prepare($sql);
+	$stmt->execute($params);
+	$row = $stmt->fetch();
+	return $row !== false ? $row : null;
+}
+function db_fetch_all(PDO $pdo, string $sql, array $params = []): array {
+	$stmt = $pdo->prepare($sql);
+	$stmt->execute($params);
+	return $stmt->fetchAll();
+}
+function settings_get(PDO $pdo, string $key, $default = null) {
+	$row = db_fetch_one($pdo, 'SELECT `value` FROM settings WHERE `key` = ?', [$key]);
+	if ($row) return $row['value'];
+	global $CONFIG;
+	if (isset($CONFIG['settings'][$key])) return $CONFIG['settings'][$key];
+	return $default;
+}
+function settings_set(PDO $pdo, string $key, string $value): void {
+	$pdo->prepare('INSERT INTO settings (`key`,`value`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `value`=VALUES(`value`)')->execute([$key, $value]);
+}
+function ensure_user(PDO $pdo, array $tgUser): array {
+	$tid = (int)$tgUser['id'];
+	$row = db_fetch_one($pdo, 'SELECT * FROM users WHERE telegram_id = ?', [$tid]);
+	if ($row) {
+		$pdo->prepare('UPDATE users SET username=?, first_name=?, last_name=?, language_code=? WHERE id=?')
+			->execute([$tgUser['username'] ?? null, $tgUser['first_name'] ?? null, $tgUser['last_name'] ?? null, $tgUser['language_code'] ?? null, (int)$row['id']]);
+		return db_fetch_one($pdo, 'SELECT * FROM users WHERE id = ?', [(int)$row['id']]);
+	}
+	$pdo->prepare('INSERT INTO users (telegram_id, username, first_name, last_name, language_code) VALUES (?,?,?,?,?)')
+		->execute([$tid, $tgUser['username'] ?? null, $tgUser['first_name'] ?? null, $tgUser['last_name'] ?? null, $tgUser['language_code'] ?? null]);
+	$id = (int)$pdo->lastInsertId();
+	return db_fetch_one($pdo, 'SELECT * FROM users WHERE id = ?', [$id]);
+}
+function user_by_tid(PDO $pdo, int $telegramId): ?array {
+	return db_fetch_one($pdo, 'SELECT * FROM users WHERE telegram_id = ?', [$telegramId]);
+}
+function admin_is(PDO $pdo, int $telegramId): bool {
+	$u = user_by_tid($pdo, $telegramId);
+	if (!$u) return false;
+	$adm = db_fetch_one($pdo, 'SELECT * FROM admins WHERE user_id = ?', [(int)$u['id']]);
+	if ($adm) return true;
+	global $CONFIG;
+	if (!empty($CONFIG['telegram']['admin_id']) && (int)$CONFIG['telegram']['admin_id'] === $telegramId) {
+		$pdo->prepare('INSERT INTO admins (user_id, role) VALUES (?, ?) ON DUPLICATE KEY UPDATE role = VALUES(role)')->execute([(int)$u['id'], 'owner']);
+		return true;
+	}
+	return false;
+}
+function add_points(PDO $pdo, int $userId, int $amount, string $type, ?int $refId = null, ?string $desc = null): void {
+	$pdo->prepare('INSERT INTO points_transactions (user_id, amount, type, reference_id, description) VALUES (?,?,?,?,?)')
+		->execute([$userId, $amount, $type, $refId, $desc]);
+	$pdo->prepare('UPDATE users SET points = points + ? WHERE id = ?')->execute([$amount, $userId]);
+}
+function set_points_absolute(PDO $pdo, int $userId, int $newPoints): void {
+	$cur = db_fetch_one($pdo, 'SELECT points FROM users WHERE id = ?', [$userId]);
+	$old = $cur ? (int)$cur['points'] : 0;
+	$delta = $newPoints - $old;
+	if ($delta !== 0) {
+		add_points($pdo, $userId, $delta, 'adjust', null, 'Admin set points');
 	}
 }
-elseif ($step == "create") {
-	sendAction($chat_id);
-	$count_bot = count($data['bots']);
-	if ( ($count_bot<$list['bot_count']) or $from_id == $admin) {
-		if (!preg_match('|(?<token>[0-9]+\:[a-zA-Z0-9\-\_]+)|ius', $text, $matches)) {
-			sendMessage($chat_id, "⛔️ توکن ارسالی نامعتبر است.", null, $message_id, $back);
-			exit();
+function forced_channels(PDO $pdo): array {
+	return db_fetch_all($pdo, 'SELECT * FROM forced_channels WHERE is_required = 1');
+}
+function check_all_joined(PDO $pdo, int $userTelegramId): array {
+	$chs = forced_channels($pdo);
+	$missing = [];
+	foreach ($chs as $ch) {
+		try {
+			$res = tg_getChatMember(['chat_id' => $ch['channel_id'], 'user_id' => $userTelegramId]);
+			$status = $res['status'] ?? 'left';
+			if (!in_array($status, ['member','administrator','creator'], true)) {
+				$missing[] = $ch;
+			}
+		} catch (Throwable $e) {
+			$missing[] = $ch;
 		}
-		$token = $matches['token'];
-		$result = json_decode(file_get_contents('https://api.telegram.org/bot' . $token . '/getMe'), true);
-		$ok = $result['ok'];
-		if ($ok) {
-			$un = strtolower($result['result']['username']);
-			if (!file_exists("Bots/$un/config.php")) {
+	}
+	return [count($missing) === 0, $missing];
+}
+function kb_join_check(array $channels): array {
+	$rows = [];
+	foreach ($channels as $ch) {
+		$rows[] = [ ['text' => 'عضویت در ' . ($ch['title'] ?: $ch['channel_id']), 'url' => 'https://t.me/' . ltrim($ch['channel_id'], '@')] ];
+	}
+	$rows[] = [ ['text' => 'بررسی عضویت ✅', 'callback_data' => 'check_join'] ];
+	return ['inline_keyboard' => $rows];
+}
+function kb_order_review(int $orderId): array {
+	return [ 'inline_keyboard' => [ [
+		['text' => 'تایید درخواست ✅', 'callback_data' => 'order_approve:' . $orderId],
+		['text' => 'رد درخواست ❌', 'callback_data' => 'order_reject:' . $orderId],
+	] ] ];
+}
+function qualify_referral_if_pending(PDO $pdo, int $inviteeUserId): ?array {
+	$ref = db_fetch_one($pdo, "SELECT r.* FROM referrals r WHERE r.invitee_user_id = ? AND r.status = 'pending'", [$inviteeUserId]);
+	if (!$ref) return null;
+	$pdo->prepare("UPDATE referrals SET status = 'qualified', qualified_at = NOW() WHERE id = ?")->execute([(int)$ref['id']]);
+	return $ref;
+}
 
-				$pdo->exec("CREATE TABLE IF NOT EXISTS `{$un}_members` (
-					`id` INT(255) NOT NULL AUTO_INCREMENT,
-					`user_id` BIGINT(255) NOT NULL,
-					`time` INT(255) NOT NULL,
-					PRIMARY KEY (`id`)
-				);");
+// ====== ROUTER ======
+try {
+	if (isset($update['message'])) {
+		log_info('onMessage', ['from' => $update['message']['from']['id'] ?? null]);
+		$chatId = $update['message']['chat']['id'];
+		$from = $update['message']['from'] ?? $update['message']['chat'];
+		$user = ensure_user($pdo, $from);
+		$text = trim($update['message']['text'] ?? '');
 
-				$prepared = $pdo->prepare("SELECT * FROM `bots` WHERE `username`='{$un}';");
-				$prepared->execute();
-				$fetch = $prepared->fetchAll();
-				if (count($fetch) <= 0) {
-					$pdo->exec("INSERT INTO `bots` (`admin`, `username`, `token`, `time`) VALUES ({$user_id}, '{$un}', '{$token}', UNIX_TIMESTAMP());");
+		// Admin state machine key
+		$adminStateKey = 'admin_state_' . (int)$from['id'];
+		$state = settings_get($pdo, $adminStateKey, '');
+
+		if (strpos($text, '/start') === 0) {
+			$refTid = null;
+			if (preg_match('/^\/start\s+ref_(\d+)/', $text, $m)) { $refTid = (int)$m[1]; }
+			if ($refTid && $refTid !== (int)$from['id']) {
+				$inviter = user_by_tid($pdo, $refTid);
+				if ($inviter) {
+					$exists = db_fetch_one($pdo, 'SELECT id FROM referrals WHERE inviter_user_id = ? AND invitee_user_id = ?', [(int)$inviter['id'], (int)$user['id']]);
+					if (!$exists) {
+						$pdo->prepare('INSERT INTO referrals (inviter_user_id, invitee_user_id) VALUES (?, ?)')->execute([(int)$inviter['id'], (int)$user['id']]);
+					}
 				}
+			}
 
-				$config = file_get_contents("Source/config.php");
-				$config = str_replace("**ADMIN**", $from_id, $config);
-				$config = str_replace("**TOKEN**", $token, $config);
-				$config = str_replace("**URL**", "$host_folder/Bots/$un/", $config);
-				mkdir("Bots/$un");
-				mkdir("Bots/$un/data");
-				copy('Source/index.php', "Bots/$un/bot.php");
-				file_put_contents("Bots/$un/config.php", $config);
-				$delete_updates = json_decode(file_get_contents("https://api.telegram.org/bot$token/getUpdates"),true);
-				$count_updates = count($delete_updates['result']) - 1;
-				$last_update_id = $delete_updates['result'][$count_updates]['update_id'] + 1;
-				file_get_contents("https://api.telegram.org/bot$token/getUpdates?offset=$last_update_id");
-				$txt = urlencode("✅ ربات شما با موفقیت ساخته شد.\n💠 برای مشاهده امکانات ربات دستور /start را ارسال نمایید.\n\n📣 کانال : " . $main_channel);
-				$keyboard = json_encode(['KeyboardRemove'=>[], 'remove_keyboard'=>true]);
-				file_get_contents("https://api.telegram.org/bot".$token."/sendMessage?chat_id=".$from_id."&text=".$txt."&reply_markup=$keyboard&disable_web_page_preview=true");
-				$WebHook = file_get_contents("https://api.telegram.org/bot$token/setWebhook?url=$host_folder/Bots/$un/bot.php&max_connections=1&allowed_updates=[\"message\",\"callback_query\",\"inline_query\"]");
-				$data['step'] = "none";
-				$data['bots'][] = "@$un";
-				file_put_contents("Data/$from_id/data.json",json_encode($data));
-				$keyboard = json_encode
-				(
-					[
-						'inline_keyboard' => [
-							[['text' => '🤖 @' . $un, 'url' => 'https://telegram.me/' . $un . '?start']]
-						]
-					]
-				);
-				sendMessage($chat_id, "✅ ربات شما با موفقیت به سرور ما متصل گردید.\n\n🤖 <a href='https://telegram.me/$un?start'>@$un</a>", 'html', $message_id, $keyboard);
-				sendMessage($chat_id, "👇🏻 یکی از گزینه های زیر را انتخاب کنید.", null, $message_id, $menu);
-				$first_name = str_replace(["<", ">"], null, $first_name);
-				sendMessage($logchannel, "id: <code>$from_id</code>\n👤 کاربر <a href='tg://user?id=$from_id'>$first_name</a>\nربات خود را با یوزرنیم « @$un » ایجاد کرد.\n🤖 توکن ربات :\n<code>$token</code>", 'html', null);
+			list($ok, $missing) = check_all_joined($pdo, (int)$from['id']);
+			if (!$ok) {
+				tg_sendMessage([
+					'chat_id' => $chatId,
+					'text' => 'لطفاً ابتدا در کانال‌های اجباری عضو شوید و سپس روی بررسی عضویت بزنید.',
+					'reply_markup' => json_encode(kb_join_check($missing), JSON_UNESCAPED_UNICODE)
+				]);
+				return;
+			}
+
+			$pointsPerRef = (int)settings_get($pdo, 'points_per_referral', 10);
+			$ref = qualify_referral_if_pending($pdo, (int)$user['id']);
+			if ($ref) {
+				add_points($pdo, (int)$ref['inviter_user_id'], $pointsPerRef, 'referral_reward', (int)$ref['id'], 'Referral qualified');
+			}
+
+			tg_sendMessage(['chat_id' => $chatId, 'text' => 'خوش آمدید! از /shop برای مشاهده آیتم‌ها و از /panel برای مدیریت استفاده کنید.']);
+			return;
+		}
+
+		if ($text === '/shop') {
+			$items = db_fetch_all($pdo, 'SELECT * FROM items WHERE is_active = 1 ORDER BY priority DESC, id ASC');
+			if (!$items) {
+				tg_sendMessage(['chat_id' => $chatId, 'text' => 'فعلاً آیتمی موجود نیست.']);
+				return;
+			}
+			$rows = [];
+			$msg = "فروشگاه:\n";
+			foreach ($items as $it) {
+				$msg .= sprintf("- %s | %d امتیاز\n", $it['name'], $it['required_points']);
+				$rows[] = [ ['text' => 'درخواست ' . $it['name'], 'callback_data' => 'order:' . $it['id']] ];
+			}
+			tg_sendMessage(['chat_id' => $chatId, 'text' => $msg, 'reply_markup' => json_encode(['inline_keyboard' => $rows], JSON_UNESCAPED_UNICODE)]);
+			return;
+		}
+
+		if ($text === '/panel') {
+			if (!admin_is($pdo, (int)$from['id'])) {
+				tg_sendMessage(['chat_id' => $chatId, 'text' => 'دسترسی ندارید.']);
+				return;
+			}
+			$kb = [ 'inline_keyboard' => [
+				[ ['text' => 'تنظیم امتیاز کاربر ✍️', 'callback_data' => 'panel_setpoints'] ],
+				[ ['text' => 'افزودن آیتم 🧩', 'callback_data' => 'panel_additem'], ['text' => 'لیست آیتم‌ها 📋', 'callback_data' => 'panel_listitems'] ],
+				[ ['text' => 'افزودن کانال اجباری ➕', 'callback_data' => 'panel_addchannel'], ['text' => 'لیست کانال‌ها 📋', 'callback_data' => 'panel_listchannels'] ],
+				[ ['text' => 'تنظیم امتیاز هر دعوت ⚙️', 'callback_data' => 'panel_setrefpoint'], ['text' => 'لغو ⛔', 'callback_data' => 'panel_cancel'] ],
+			] ];
+			tg_sendMessage(['chat_id' => $chatId, 'text' => 'پنل مدیریت:', 'reply_markup' => json_encode($kb, JSON_UNESCAPED_UNICODE)]);
+			return;
+		}
+
+		if ($text === '/cancel') {
+			settings_set($pdo, $adminStateKey, '');
+			tg_sendMessage(['chat_id' => $chatId, 'text' => 'لغو شد.']);
+			return;
+		}
+
+		// Admin awaiting inputs
+		if ($state === 'awaiting_setpoints' && $text !== '') {
+			if (!admin_is($pdo, (int)$from['id'])) { settings_set($pdo, $adminStateKey, ''); return; }
+			$parts = preg_split('/\s+/', $text);
+			if (count($parts) < 2) { tg_sendMessage(['chat_id' => $chatId, 'text' => 'فرمت نادرست. مثال: 123456789 100 یا @username 250']); return; }
+			$who = $parts[0]; $points = (int)$parts[1]; $target = null;
+			if (strpos($who, '@') === 0) { $u = db_fetch_one($pdo, 'SELECT * FROM users WHERE username = ?', [substr($who, 1)]); if ($u) $target = $u; }
+			elseif (ctype_digit($who)) { $u = user_by_tid($pdo, (int)$who); if ($u) $target = $u; }
+			if (!$target) { tg_sendMessage(['chat_id' => $chatId, 'text' => 'کاربر یافت نشد. کاربر باید یکبار استارت کند.']); return; }
+			set_points_absolute($pdo, (int)$target['id'], $points);
+			settings_set($pdo, $adminStateKey, '');
+			tg_sendMessage(['chat_id' => $chatId, 'text' => 'امتیاز کاربر تنظیم شد.']);
+			return;
+		}
+
+		if ($state === 'awaiting_additem' && $text !== '') {
+			if (!admin_is($pdo, (int)$from['id'])) { settings_set($pdo, $adminStateKey, ''); return; }
+			if (!preg_match('/^(.+?)\s*[|,\-]?\s*(\d+)$/u', $text, $m)) { tg_sendMessage(['chat_id' => $chatId, 'text' => 'فرمت: نام آیتم | امتیاز']); return; }
+			$name = trim($m[1]); $req = (int)$m[2];
+			$pdo->prepare('INSERT INTO items (name, required_points) VALUES (?, ?)')->execute([$name, $req]);
+			settings_set($pdo, $adminStateKey, '');
+			tg_sendMessage(['chat_id' => $chatId, 'text' => 'آیتم اضافه شد.']);
+			return;
+		}
+
+		if ($state === 'awaiting_addchannel' && $text !== '') {
+			if (!admin_is($pdo, (int)$from['id'])) { settings_set($pdo, $adminStateKey, ''); return; }
+			$parts = preg_split('/\s+/', $text, 2);
+			$chId = trim($parts[0]); $title = isset($parts[1]) ? trim($parts[1]) : null;
+			$pdo->prepare('INSERT INTO forced_channels (channel_id, title) VALUES (?, ?)')->execute([$chId, $title]);
+			settings_set($pdo, $adminStateKey, '');
+			tg_sendMessage(['chat_id' => $chatId, 'text' => 'کانال اضافه شد.']);
+			return;
+		}
+
+		if ($state === 'awaiting_setrefpoint' && $text !== '') {
+			if (!admin_is($pdo, (int)$from['id'])) { settings_set($pdo, $adminStateKey, ''); return; }
+			$val = (int)preg_replace('/[^\d]/', '', $text);
+			if ($val <= 0) { tg_sendMessage(['chat_id' => $chatId, 'text' => 'یک عدد معتبر وارد کنید.']); return; }
+			settings_set($pdo, 'points_per_referral', (string)$val);
+			settings_set($pdo, $adminStateKey, '');
+			tg_sendMessage(['chat_id' => $chatId, 'text' => 'امتیاز هر دعوت تنظیم شد.']);
+			return;
+		}
+
+		// Fallback help
+		tg_sendMessage(['chat_id' => $chatId, 'text' => 'برای شروع /start، فروشگاه /shop، مدیریت /panel']);
+		return;
+	}
+
+	if (isset($update['callback_query'])) {
+		log_info('onCallback', ['from' => $update['callback_query']['from']['id'] ?? null, 'data' => $update['callback_query']['data'] ?? '']);
+		$cb = $update['callback_query'];
+		$data = $cb['data'] ?? '';
+		$message = $cb['message'] ?? null;
+		$chatId = $message['chat']['id'] ?? null;
+		$from = $cb['from'];
+		$user = ensure_user($pdo, $from);
+
+		if ($data === 'check_join') {
+			list($ok, $missing) = check_all_joined($pdo, (int)$from['id']);
+			if ($ok) {
+				$pointsPerRef = (int)settings_get($pdo, 'points_per_referral', 10);
+				$ref = qualify_referral_if_pending($pdo, (int)$user['id']);
+				if ($ref) {
+					add_points($pdo, (int)$ref['inviter_user_id'], $pointsPerRef, 'referral_reward', (int)$ref['id'], 'Referral qualified');
+				}
+				tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'عضویت تایید شد.']);
+				if ($chatId) { tg_editMessageText(['chat_id' => $chatId, 'message_id' => $message['message_id'], 'text' => 'عضویت تایید شد. از /shop استفاده کنید.']); }
 			} else {
-				$data['step'] = "none";
-				file_put_contents("Data/$from_id/data.json",json_encode($data));
-				sendMessage($chat_id, "⛔️ این ربات از قبل به سرور ما متصل بود.", null, $message_id, $menu);
+				tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'عضویت ناقص است.']);
 			}
-		} else {
-			sendMessage($chat_id, "⛔️ توکن ارسالی نامعتبر است.", null, $message_id, $back);
+			return;
+		}
+
+		// Panel callbacks
+		$adminStateKey = 'admin_state_' . (int)$from['id'];
+		if ($data === 'panel_setpoints') {
+			if (!admin_is($pdo, (int)$from['id'])) { tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'دسترسی ندارید.']); return; }
+			settings_set($pdo, $adminStateKey, 'awaiting_setpoints');
+			tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'فرمت: آیدی/یوزرنیم و امتیاز']);
+			if ($chatId) { tg_sendMessage(['chat_id' => $chatId, 'text' => "لطفاً ارسال کنید: 123456789 100 یا @username 250"]); }
+			return;
+		}
+		if ($data === 'panel_additem') {
+			if (!admin_is($pdo, (int)$from['id'])) { tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'دسترسی ندارید.']); return; }
+			settings_set($pdo, $adminStateKey, 'awaiting_additem');
+			tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'نام آیتم و امتیاز لازم را وارد کنید.']);
+			if ($chatId) { tg_sendMessage(['chat_id' => $chatId, 'text' => 'مثال: استارز 100 | 150']); }
+			return;
+		}
+		if ($data === 'panel_listitems') {
+			if (!admin_is($pdo, (int)$from['id'])) { tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'دسترسی ندارید.']); return; }
+			$items = db_fetch_all($pdo, 'SELECT * FROM items ORDER BY is_active DESC, priority DESC, id ASC');
+			$text = $items ? "آیتم‌ها:\n" : 'آیتمی نیست.';
+			foreach ($items as $it) { $text .= sprintf("#%d %s | %d | %s\n", $it['id'], $it['name'], $it['required_points'], $it['is_active'] ? 'فعال' : 'غیرفعال'); }
+			if ($chatId) { tg_sendMessage(['chat_id' => $chatId, 'text' => $text]); }
+			tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'نمایش داده شد.']);
+			return;
+		}
+		if ($data === 'panel_addchannel') {
+			if (!admin_is($pdo, (int)$from['id'])) { tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'دسترسی ندارید.']); return; }
+			settings_set($pdo, $adminStateKey, 'awaiting_addchannel');
+			tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'آیدی یا @یوزرنیم کانال را وارد کنید.']);
+			if ($chatId) { tg_sendMessage(['chat_id' => $chatId, 'text' => 'مثال: @mychannel عنوان دلخواه']); }
+			return;
+		}
+		if ($data === 'panel_listchannels') {
+			if (!admin_is($pdo, (int)$from['id'])) { tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'دسترسی ندارید.']); return; }
+			$chs = db_fetch_all($pdo, 'SELECT * FROM forced_channels ORDER BY id DESC');
+			$text = $chs ? "کانال‌ها:\n" : 'کانالی ثبت نشده.';
+			foreach ($chs as $ch) { $text .= sprintf("#%d %s %s\n", $ch['id'], $ch['channel_id'], $ch['title'] ? '(' . $ch['title'] . ')' : ''); }
+			if ($chatId) { tg_sendMessage(['chat_id' => $chatId, 'text' => $text]); }
+			tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'نمایش داده شد.']);
+			return;
+		}
+		if ($data === 'panel_setrefpoint') {
+			if (!admin_is($pdo, (int)$from['id'])) { tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'دسترسی ندارید.']); return; }
+			settings_set($pdo, $adminStateKey, 'awaiting_setrefpoint');
+			tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'عدد امتیاز هر دعوت را ارسال کنید.']);
+			if ($chatId) { tg_sendMessage(['chat_id' => $chatId, 'text' => 'مثال: 15']); }
+			return;
+		}
+		if ($data === 'panel_cancel') {
+			settings_set($pdo, $adminStateKey, '');
+			tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'لغو شد.']);
+			return;
+		}
+
+		// Orders
+		if (strpos($data, 'order:') === 0) {
+			$parts = explode(':', $data, 2);
+			$itemId = (int)$parts[1];
+			list($ok, $missing) = check_all_joined($pdo, (int)$from['id']);
+			if (!$ok) { tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'ابتدا عضویت را تکمیل کنید.']); return; }
+			$item = db_fetch_one($pdo, 'SELECT * FROM items WHERE id = ? AND is_active = 1', [$itemId]);
+			if (!$item) { tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'آیتم موجود نیست.']); return; }
+			$u = user_by_tid($pdo, (int)$from['id']);
+			if (!$u) { tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'خطای کاربری.']); return; }
+			if ((int)$u['points'] < (int)$item['required_points']) { tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'امتیاز کافی نیست.']); return; }
+			$pdo->prepare('INSERT INTO orders (user_id, item_id, status) VALUES (?, ?, "pending")')->execute([(int)$u['id'], $itemId]);
+			$orderId = (int)$pdo->lastInsertId();
+
+			$adminGroupId = trim((string)($CONFIG['telegram']['admin_group_id'] ?? ''));
+			if ($adminGroupId !== '') {
+				$txt = "درخواست جدید:\nکاربر: " . ((string)($from['username'] ?? $from['id'])) . "\nآیتم: " . $item['name'] . "\nوضعیت: در حال بررسی";
+				try {
+					$msg = tg_sendMessage(['chat_id' => $adminGroupId, 'text' => $txt, 'reply_markup' => json_encode(kb_order_review($orderId), JSON_UNESCAPED_UNICODE)]);
+					$pdo->prepare('UPDATE orders SET status = "under_review", admin_message_id = ? WHERE id = ?')->execute([(int)$msg['message_id'], $orderId]);
+				} catch (Throwable $e) {
+					log_error('send to admin group failed', ['e' => $e->getMessage()]);
+				}
+			}
+			tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'درخواست ثبت شد.']);
+			if ($chatId) { tg_sendMessage(['chat_id' => $chatId, 'text' => 'درخواست شما ارسال شد. منتظر تایید ادمین باشید.']); }
+			return;
+		}
+
+		if (strpos($data, 'order_approve:') === 0 || strpos($data, 'order_reject:') === 0) {
+			$orderId = (int)substr($data, strpos($data, ':') + 1);
+			$isApprove = strpos($data, 'order_approve:') === 0;
+			if (!admin_is($pdo, (int)$from['id'])) { tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'دسترسی ندارید.']); return; }
+			$order = db_fetch_one($pdo, 'SELECT * FROM orders WHERE id = ?', [$orderId]);
+			if (!$order) { tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'سفارش یافت نشد.']); return; }
+			$u = db_fetch_one($pdo, 'SELECT * FROM users WHERE id = ?', [(int)$order['user_id']]);
+			$item = db_fetch_one($pdo, 'SELECT * FROM items WHERE id = ?', [(int)$order['item_id']]);
+			if ($isApprove) {
+				$need = (int)$item['required_points'];
+				$cur = (int)$u['points'];
+				if ($cur >= $need) { add_points($pdo, (int)$u['id'], -$need, 'spend', $orderId, 'Order approved'); }
+				$pdo->prepare('UPDATE orders SET status = "approved", admin_id = ? WHERE id = ?')->execute([(int)(user_by_tid($pdo, (int)$from['id'])['id'] ?? 0), $orderId]);
+				tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'تایید شد.']);
+				if ($message && isset($message['message_id'])) { tg_editMessageText(['chat_id' => $message['chat']['id'], 'message_id' => $message['message_id'], 'text' => 'درخواست تایید شد ✅']); }
+				try { tg_sendMessage(['chat_id' => (int)$u['telegram_id'], 'text' => 'درخواست شما تایید شد ✅']); } catch (Throwable $e) {}
+			} else {
+				$pdo->prepare('UPDATE orders SET status = "rejected", admin_id = ? WHERE id = ?')->execute([(int)(user_by_tid($pdo, (int)$from['id'])['id'] ?? 0), $orderId]);
+				tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'رد شد.']);
+				if ($message && isset($message['message_id'])) { tg_editMessageText(['chat_id' => $message['chat']['id'], 'message_id' => $message['message_id'], 'text' => 'درخواست رد شد ❌']); }
+				try { tg_sendMessage(['chat_id' => (int)$u['telegram_id'], 'text' => 'درخواست شما رد شد ❌']); } catch (Throwable $e) {}
+			}
+			return;
 		}
 	}
-	else {
-		if ($list['bot_count'] < 1) {
-			sendMessage($chat_id, "🎃 امکان ساخت ربات توسط مدیریت غیر فعال شده است.\n\n🤠 لطفا زمانی دیگر دوباره امتحان کنید.", 'markdown', $message_id, $menu);
-		}
-		else {
-			sendMessage($chat_id, "🎃 هر کاربر تنها می تواند *$list[bot_count]* ربات بسازد.\n\n🤖 شما اکنون *$count_bot* ربات دارید و امکان ساخت ربات های بیشتر از شما سلب شده است.\n\n🌈 برای ساخت رباتی جدید باید ربات های قدیمی خود را حذف کنید.", 'markdown', $message_id, $menu);
-		}
-	}
+} catch (Throwable $e) {
+	log_error('runtime', ['e' => $e->getMessage()]);
 }
-elseif ($text == '🤖 ربات های من' || $text == '🔙 بازگشت به ربات ها') {
-	sendAction($chat_id);
-	if (!empty($data['bots'])) {
-		$data['step'] = 'show_bot';
-		file_put_contents("Data/{$from_id}/data.json", json_encode($data));
 
-		$keyboard = [];
-		foreach ($data['bots'] as $user_bot) {
-			$keyboard[][] = ['text' => "👉🏻🤖 {$user_bot}"];
-		}
-
-		$keyboard[][] = ['text' => '🔙 بازگشت'];
-		$keyboard = json_encode([
-			'keyboard'=> $keyboard,
-			'resize_keyboard' => true
-		]);
-		sendMessage($chat_id, "🔰 ربات مورد نظرتان را از لیست زیر انتخاب کنید.", null, $message_id, $keyboard);
-	} else {
-		sendMessage($chat_id, "❌ شما هیچ رباتی نساخته اید.", null, $message_id);
-	}
-}
-elseif ($data['step'] == 'show_bot' && preg_match('#\@(?<bot>[a-zA-Z0-9\_]+bot)#usi', $text, $matches) || ($text == '🔙 بازگشت به ربات' && preg_match('#token\_(?<bot>.+)#', $data['step'], $matches))) {
-	sendAction($chat_id);
-	$bot = strtolower($matches['bot']);
-
-	if (in_array("@{$bot}", $data['bots'])) {
-		$data['step'] = "manage_{$bot}";
-		file_put_contents("Data/{$from_id}/data.json", json_encode($data));
-		bot('sendMessage', [
-			'chat_id'=>$chat_id,
-			'reply_to_message_id'=>$message_id,
-			'text'=>"🤖 ربات @{$bot} انتخاب شد.
-🔰 چه کاری می خواهید انجام دهید؟",
-			'reply_markup'=>json_encode(
-				[
-					'keyboard'=>[
-						[['text' => '💾 پشتیبان گیری'], ['text' => '🔰 اطلاعات']],
-						[['text' => '🗑 حذف ربات'], ['text' => '♻️ تغییر توکن']],
-						[['text' => '🔙 بازگشت به ربات ها']],
-					],
-					'resize_keyboard'=>true
-				]
-			)
-		]);
-	}
-	else {
-		sendMessage($chat_id, "❌ شما هیچ رباتی با نام کاربری @{$bot} ندارید.", null, $message_id);
-	}
-}
-elseif (isset($update->message) && preg_match('#manage\_(?<bot>.+)#', $data['step'], $matches) ) {
-	$bot = $matches['bot'];
-
-	if (in_array("@{$bot}", $data['bots'])) {
-		if ($text == '🔰 اطلاعات') {
-			sendAction($chat_id);
-			$bot_config = file_get_contents("Bots/{$bot}/config.php");
-			preg_match('/\$Token\s=\s"(.*?)";/', $bot_config, $match);
-			$bot_token = $match[1];
-			$folder_url = "{$host_folder}/Bots/{$bot}/";
-
-			$get_bot = json_decode(file_get_contents("https://api.telegram.org/bot{$bot_token}/getMe"), true);
-			if ($get_bot['ok'] == true) {
-				$can_join_groups = $get_bot['result']['can_join_groups'] == true ? '✅' : '❌';
-				$can_read_all_group_messages = $get_bot['result']['can_read_all_group_messages'] == true ? '✅' : '❌';
-				$supports_inline_queries = $get_bot['result']['supports_inline_queries'] == true ? '✅' : '❌';
-
-				$webhook_info = json_decode(file_get_contents("https://api.telegram.org/bot{$bot_token}/getWebhookInfo"), true);
-
-				if (isset($webhook_info['result']['pending_update_count'])) {
-					$pending_update_count = "\n♻️ پیام های در صف انتظار : {$webhook_info['result']['pending_update_count']}";
-				}
-				else {
-					$pending_update_count = '';
-				}
-				if (isset($webhook_info['result']['url']) && $webhook_info['result']['url'] != "{$folder_url}bot.php") {
-					file_get_contents("https://api.telegram.org/bot{$bot_token}/setWebhook?url={$folder_url}bot.php&max_connections=1&allowed_updates=[\"message\",\"callback_query\",\"inline_query\"]");
-
-					$answer_text = "✅ مشکل وبهوک ربات حل گردید.
-
-📎 توکن ربات : {$bot_token}
-🆔 شناسه عددی ربات : {$get_bot['result']['id']}
-🤖 نام ربات : {$get_bot['result']['first_name']}
-👤 نام کاربری ربات : @{$get_bot['result']['username']}
-👥 امکان عضویت در گروه : {$can_join_groups}
-🧐 امکان خواندن همه پیام های گروه : {$can_read_all_group_messages}
-📥 پشتیبانی از حالت درون خطی : {$supports_inline_queries}{$pending_update_count}";
-				}
-				else {
-					$answer_text = "📎 توکن ربات : {$bot_token}
-🆔 شناسه عددی ربات : {$get_bot['result']['id']}
-🤖 نام ربات : {$get_bot['result']['first_name']}
-👤 نام کاربری ربات : @{$get_bot['result']['username']}
-👥 امکان عضویت در گروه : {$can_join_groups}
-🧐 امکان خواندن همه پیام های گروه : {$can_read_all_group_messages}
-📥 پشتیبانی از حالت درون خطی : {$supports_inline_queries}{$pending_update_count}";
-				}
-
-				sendMessage($chat_id, $answer_text, null, $message_id);
-			}
-			else {
-				sendMessage($chat_id, "❌ توکن ثبت شده برای ربات @{$bot} از کار افتاده است.
-✅ لطفا توکن جدید رباتتان را از @BotFather دریافت کنید و با استفاده از دکمه «♻️ تغییر توکن» آنرا ثبت کنید.", null, $message_id);
-			}
-		}
-		elseif ($text == '💾 پشتیبان گیری') {
-			sendAction($chat_id, 'upload_document');
-			$prepared = $pdo->prepare("SELECT * FROM `{$bot}_members`;");
-			$prepared->execute();
-			$fetch = $prepared->fetchAll(PDO::FETCH_ASSOC);
-			file_put_contents("Bots/{$bot}/data/members.json", json_encode($fetch));
-			$file_to_zip = array(
-				"Bots/{$bot}/data/list.json",
-				"Bots/{$bot}/data/data.json",
-				"Bots/{$bot}/data/members.json"
-			);
-			$file_name = date('Y-m-d') . '_' . $bot . '_backup.zip';
-			CreateZip($file_to_zip, $file_name, "{$bot}_147852369");
-			$zipfile = new CURLFile($file_name);
-			$time = date('Y/m/d - H:i:s');
-			sendDocument($chat_id, $zipfile, "💾 نسخه پشتیبان\n\n🕰 <i>$time</i>");
-			unlink($file_name);
-			unlink("Bots/{$bot}/data/members.json");
-		}
-		elseif ($text == '♻️ تغییر توکن') {
-			sendAction($chat_id);
-
-			$bot_config = file_get_contents("Bots/{$bot}/config.php");
-			preg_match('/\$Token\s=\s"(.*?)";/', $bot_config, $match);
-			$bot_token = $match[1];
-
-			$get_bot = json_decode(file_get_contents("https://api.telegram.org/bot{$bot_token}/getMe"), true);
-
-			if ($get_bot['ok'] == true) {
-				sendMessage($chat_id, "❌ توکن ربات @{$bot} سالم است و نیاز به تغییر ندارد.", null, $message_id);
-			}
-			else {
-				$data['step'] = "token_{$bot}";
-				file_put_contents("Data/{$from_id}/data.json", json_encode($data));
-
-				bot('sendMessage', [
-					'chat_id'=>$chat_id,
-					'reply_to_message_id'=>$message_id,
-					'text'=>"🔰 لطفا توکن جدید ربات @{$bot} را ارسال کنید.",
-					'reply_markup'=>json_encode(
-						[
-							'keyboard'=>[
-								[['text' => '🔙 بازگشت به ربات']],
-							],
-							'resize_keyboard'=>true
-						]
-					)
-				]);
-			}
-		}
-		elseif ($text == '🗑 حذف ربات') {
-			$keyboard = json_encode([
-				'inline_keyboard' => [
-					[['text' => "❌ بله", 'callback_data' => "delete_{$bot}"]],
-					[['text' => "✅ خیر", 'callback_data' => "nodelete_{$bot}"]]
-				]
-			]);
-			sendMessage($chat_id, "❓ آیا می خواهید ربات @{$bot} را حذف کنید؟", null, $message_id, $keyboard);
-		}
-		else {
-			sendMessage($chat_id, "❌ دستور ناشناخته است.", null, $message_id);
-		}
-	}
-	else {
-		sendAction($chat_id);
-
-		if (!empty($data['bots'])) {
-			$data['step'] = 'show_bot';
-			file_put_contents("Data/{$from_id}/data.json", json_encode($data));
-	
-			$keyboard = [];
-			foreach ($data['bots'] as $user_bot) {
-				$keyboard[][] = ['text' => "👉🏻🤖 {$user_bot}"];
-			}
-	
-			$keyboard[][] = ['text' => '🔙 بازگشت'];
-			$keyboard = json_encode([
-				'keyboard'=> $keyboard,
-				'resize_keyboard' => true
-			]);
-			sendMessage($chat_id, "❌ ربات @{$bot} حذف شده است.", null, $message_id, $keyboard);
-		} else {
-			$data['step'] = '';
-			file_put_contents("Data/$from_id/data.json", json_encode($data));
-			sendMessage($chat_id, "❌ ربات @{$bot} حذف شده است.", null, $message_id, $menu);
-		}
-	}
-}
-elseif (isset($update->message) && preg_match('#token\_(?<bot>.+)#', $data['step'], $matches) ) {
-	sendAction($chat_id);
-	$bot = $matches['bot'];
-
-	if (in_array("@{$bot}", $data['bots'])) {
-		if (preg_match('|(?<token>[0-9]+\:[a-zA-Z0-9\-\_]+)|ius', $text, $matches)) {
-			$bot_token = $matches['token'];
-
-			$get_bot = json_decode(file_get_contents("https://api.telegram.org/bot{$bot_token}/getMe"), true);
-			if ($get_bot['ok'] == true) {
-				if (strtolower($get_bot['result']['username']) == $bot) {
-					$data['step'] = "manage_{$bot}";
-					file_put_contents("Data/{$from_id}/data.json", json_encode($data));
-
-					$folder_url = "{$host_folder}/Bots/{$bot}/";
-					$bot_config = file_get_contents("Bots/{$bot}/config.php");
-					$bot_config = file_get_contents('Source/config.php');
-					$bot_config = str_replace('**ADMIN**', $from_id, $bot_config);
-					$bot_config = str_replace('**TOKEN**', $bot_token, $bot_config);
-					$bot_config = str_replace('**URL**', $folder_url, $bot_config);
-					file_put_contents('Bots/' . $bot . '/config.php', $bot_config);
-
-					file_get_contents("https://api.telegram.org/bot{$bot_token}/setWebhook?url={$folder_url}bot.php&max_connections=1&allowed_updates=[\"message\",\"callback_query\",\"inline_query\"]");
-
-					bot('sendMessage', [
-						'chat_id'=>$chat_id,
-						'reply_to_message_id'=>$message_id,
-						'text'=>"✅ توکن ربات @{$bot} تغییر کرد.",
-						'reply_markup'=>json_encode(
-							[
-								'keyboard'=>[
-									[['text' => '💾 پشتیبان گیری'], ['text' => '🔰 اطلاعات']],
-									[['text' => '🗑 حذف ربات'], ['text' => '♻️ تغییر توکن']],
-									[['text' => '🔙 بازگشت به ربات ها']],
-								],
-								'resize_keyboard'=>true
-							]
-						)
-					]);
-				}
-				else {
-					sendMessage($chat_id, "❌ توکن باید مربوط به ربات @{$bot} باشد.
-🚫 این توکن مربوط به ربات @{$get_bot['result']['username']} است.", null, $message_id);
-				}
-			}
-			else {
-				sendMessage($chat_id, "⛔️ توکن ارسالی نامعتبر است.", null, $message_id);
-			}
-		}
-		else {
-			sendMessage($chat_id, "⛔️ توکن ارسالی نامعتبر است.", null, $message_id);
-		}
-	}
-	else {
-		if (!empty($data['bots'])) {
-			$data['step'] = 'show_bot';
-			file_put_contents("Data/{$from_id}/data.json", json_encode($data));
-	
-			$keyboard = [];
-
-			foreach ($data['bots'] as $user_bot) {
-				$keyboard[][] = ['text' => "👉🏻🤖 {$user_bot}"];
-			}
-	
-			$keyboard[][] = ['text' => '🔙 بازگشت'];
-			$keyboard = json_encode([
-				'keyboard'=> $keyboard,
-				'resize_keyboard' => true
-			]);
-			sendMessage($chat_id, "❌ ربات @{$bot} حذف شده است.", null, $message_id, $keyboard);
-		} else {
-			$data['step'] = '';
-			file_put_contents("Data/$from_id/data.json", json_encode($data));
-			sendMessage($chat_id, "❌ ربات @{$bot} حذف شده است.", null, $message_id, $menu);
-		}
-	}
-}
-elseif (preg_match('#^nodelete\_(?<bot>.+)$#', $update->callback_query->data, $matches)) {
-	bot('editMessagetext', [
-		'chat_id'=>$chatid,
-		'message_id'=>$messageid,
-		'parse_mode'=>'html',
-		'disable_web_page_preview'=>true,
-		'text'=>"✅ شما از حذف کردن ربات @{$matches['bot']} منصرف شدید."
-	]);
-}
-elseif (preg_match('#^delete\_(?<bot>.+)$#', $update->callback_query->data, $matches)) {
-	$rand = mt_rand(0, 4);
-	$i = 0;
-	$inline_keyboard = [];
-	while ($i < 5) {
-		if ($i == $rand) {
-			$inline_keyboard[] = [['text' => "❌ بله", 'callback_data' => "yesdelete_{$matches['bot']}"]];
-		}
-		else {
-			$inline_keyboard[] = [['text' => "✅ خیر", 'callback_data' => "nodelete_{$matches['bot']}"]];
-		} 
-		$i++;
-	}
-	$inline_keyboard = json_encode([
-		'inline_keyboard' => $inline_keyboard
-	]);
-
-	bot('editMessagetext', [
-		'chat_id'=>$chatid,
-		'message_id'=>$messageid,
-		'parse_mode'=>'html',
-		'disable_web_page_preview'=>true,
-		'reply_markup' => $inline_keyboard,
-		'text'=>"❓ آیا واقعا می خواهید ربات @{$matches['bot']} را حذف کنید؟"
-	]);
-	bot('AnswerCallbackQuery',
-	[
-		'callback_query_id'=>$update->callback_query->id,
-		'text'=>''
-	]);
-	
-}
-elseif (preg_match('#^yesdelete\_(?<bot>.+)$#', $update->callback_query->data, $matches)) {
-	$botid = $matches['bot'];
-
-	if (in_array('@' . $botid, $data['bots'])) {
-		sendAction($chat_id, 'upload_document');
-		$prepared = $pdo->prepare("SELECT * FROM `{$botid}_members`;");
-		$prepared->execute();
-		$fetch = $prepared->fetchAll(PDO::FETCH_ASSOC);
-		file_put_contents("Bots/{$botid}/data/members.json", json_encode($fetch));
-		$file_to_zip = array(
-			"Bots/{$botid}/data/list.json",
-			"Bots/{$botid}/data/data.json",
-			"Bots/{$botid}/data/members.json"
-		);
-		$file_name = date('Y-m-d') . '_' . $botid . '_backup.zip';
-		CreateZip($file_to_zip, $file_name, "{$botid}_147852369");
-		$time = date('Y/m/d - H:i:s');
-
-		if ((preg_match('#token\_(?<bot>.+)#', $data['step'], $matches) || preg_match('#manage\_(?<bot>.+)#', $data['step'], $matches) || $data['step'] == 'show_bot') && !empty( array_diff($data['bots'], ['@' . $botid]) )) {
-			$keyboard = [];
-			foreach (array_diff($data['bots'], ['@' . $botid]) as $user_bot) {
-				$keyboard[][] = ['text' => "👉🏻🤖 {$user_bot}"];
-			}
-	
-			$keyboard[][] = ['text' => '🔙 بازگشت'];
-			$keyboard = json_encode([
-				'keyboard'=> $keyboard,
-				'resize_keyboard' => true
-			]);
-
-			bot('sendDocument', [
-				'chat_id' => $chat_id,
-				'parse_mode' => 'html',
-				'document' => $zipfile = new CURLFile($file_name),
-				'caption' => "💾 نسخه پشتیبان\n\n🕰 <i>$time</i>\n\n👆🏻 این فایل شامل تمامی اطلاعات ربات @{$botid} است تا اگر دوباره خواستید رباتتان را به سرویس ما وصل کنید اطلاعات برگردانده شود.",
-				'reply_markup' => $keyboard
-			]);
-			$data['step'] = 'show_bot';
-		}
-		elseif (preg_match('#token\_(?<bot>.+)#', $data['step'], $matches) || preg_match('#manage\_(?<bot>.+)#', $data['step'], $matches) || $data['step'] == 'show_bot') {
-			bot('sendDocument', [
-				'chat_id' => $chat_id,
-				'parse_mode' => 'html',
-				'document' => $zipfile = new CURLFile($file_name),
-				'caption' => "💾 نسخه پشتیبان\n\n🕰 <i>$time</i>\n\n👆🏻 این فایل شامل تمامی اطلاعات ربات @{$botid} است تا اگر دوباره خواستید رباتتان را به سرویس ما وصل کنید اطلاعات برگردانده شود.",
-				'reply_markup' => $menu
-			]);
-			$data['step'] = 'none';
-		}
-
-		unlink($file_name);
-		unlink("Bots/{$botid}/data/members.json");
-
-		
-		$pdo->exec("DROP TABLE IF EXISTS `{$botid}_members`;");
-		$prepare = $pdo->prepare("DELETE FROM `bots` WHERE `username`='{$botid}';");
-		$prepare->execute();
-
-		$prepare = $pdo->prepare("DELETE FROM `bots_sendlist` WHERE `bot_username`='{$botid}';");
-		$prepare->execute();
-
-		$config = file_get_contents("Bots/".$botid."/config.php");
-		preg_match_all('/\$Token\s=\s"(.*?)";/', $config, $match);
-		file_get_contents("https://api.telegram.org/bot".$match[1][0]."/deleteWebHook");
-		deleteFolder("Bots/$botid");
-		$search = array_search("@".$botid, $data['bots']);
-		unset($data['bots'][$search]);
-		$data['bots'] = array_values($data['bots']);
-		file_put_contents("Data/$from_id/data.json",json_encode($data));
-
-		bot('editMessagetext', [
-			'chat_id'=>$chatid,
-			'message_id'=>$messageid,
-			'parse_mode'=>'html',
-			'disable_web_page_preview'=>true,
-			'text'=>"✅ ربات « @$botid » با موفقیت حذف گردید."
-		]);
-		bot('AnswerCallbackQuery',
-		[
-			'callback_query_id'=>$update->callback_query->id,
-			'text'=>''
-		]);
-
-		$first_name = str_replace(["<", ">"], null, $first_name);
-		sendMessage($logchannel, "id: <code>$from_id</code>\n👤 کاربر <a href='tg://user?id=$from_id'>$first_name</a>\nربات خود را با یوزرنیم « @$botid » از سرور حذف کرد.", 'html', null);
-	}
-	else {
-		bot('editMessagetext', [
-			'chat_id'=>$chatid,
-			'message_id'=>$messageid,
-			'parse_mode'=>'html',
-			'disable_web_page_preview'=>true,
-			'text'=>"❌ عملیات حذف ربات با مشکل مواجه شد."
-		]);
-	}
-}
-elseif ($text == "🌈 ثبت تبلیغ") {
-	sendAction($chat_id);
-	$inline_keyboard = json_encode(
-		[
-			'inline_keyboard' => [
-				[['text'=>"🌈 $support", 'url'=>'https://telegram.me/' . str_replace('@', '', $support)]]
-			]
-		]
-	);
-	sendMessage($chat_id, "👇🏻 برای ثبت تبلیغات خود برای نمایش در ربات های ساخته شده توسط این سرویس به ربات زیر مراجعه نمایید.", 'markdown', $message_id, $inline_keyboard);
-}
-##----------------------
-if ($from_id == $admin && $chat_id > 0) {
-	if ($text == "🔑 مدیریت" || $text == "🔙 بازگشت به مدیریت") {
-		sendAction($chat_id);
-		$data['step'] = "none";
-		file_put_contents("Data/$from_id/data.json",json_encode($data));
-		sendMessage($chat_id, "👇🏻یکی از دکمه های زیر را انتخاب کنید :", null, $message_id, $panel);
-	}
-	elseif ($text == '🤖 تعداد مجاز') {
-		sendAction($chat_id);
-		$data['step'] = "count_bots";
-		file_put_contents("Data/$from_id/data.json", json_encode($data));
-		sendMessage($chat_id, "🤖 هر کاربر می تواند چند ربات بسازد؟\n👀 تعداد : $list[bot_count]\n🎃 لطفا یک عدد ارسال کنید.", 'markdown', $message_id, $backpanel);
-	}
-	elseif ($step == 'count_bots') {
-		$number = convert($text);
-		if (!is_numeric($number)) {
-			sendMessage($chat_id, "🎃 لطفا یک عدد ارسال کنید.", 'markdown', $message_id, $backpanel);
-		}
-		else {
-			$data['step'] = "none";
-			file_put_contents("Data/$from_id/data.json",json_encode($data));
-			$list['bot_count'] = $number;
-			file_put_contents('Data/list.json', json_encode($list));
-			sendMessage($chat_id, "👈🏻 محدودیت ساخت ربات بر روی $number عدد تنظیم گردید.", null, $message_id, $panel);
-		}
-	}
-	elseif ($text == '💠 تبلیغات' || $text == '🔙 بازگشت به تبلیغات') {
-		sendAction($chat_id);
-		$data['step'] = "none";
-		file_put_contents("Data/$from_id/data.json",json_encode($data));
-		sendMessage($chat_id, "🧮 به بخش تبلیغات ربات خوش آمدید.\n✏️ لطفا یکی از دکمه های زیر را انتخاب کنید.", 'markdown', null, $ads_menu);
-	}
-	elseif ($text == '✏️ ثبت تبلیغ') {
-		sendAction($chat_id);
-		$ads = json_decode(file_get_contents('Data/ads.json'), true);
-		if (count($ads) > 5) {
-			sendMessage($chat_id, "🚨 امکان ثیت بیش از 5 تبلیغ وجود ندارد.\n🔰 لطفا ابتدا از بخش « 🗑 حذف تبلیغ » اقدام به حذف برخی تبلیغات قدیمی نمایید.", 'markdown', null, $ads_menu);
-		exit();
-		}
-		$data['step'] = "setads";
-		file_put_contents("Data/$from_id/data.json", json_encode($data));
-		sendMessage($chat_id, "🔰 لطفا تبلیغ مورد نظر خود را بفرستید.", null, $message_id, $backpanelads);
-	}
-	elseif ($step == 'setads') {
-		sendAction($chat_id);
-		$ad_code = time();
-		$ads = json_decode(file_get_contents('Data/ads.json'), true);
-		if (isset($message->video)) {
-			$type = 'video';
-			$file_id = bot('sendVideo', [
-				'chat_id' => $public_logchannel,
-				'video' => $message->video->file_id
-			])->result->message_id;
-		}
-		elseif (isset($message->photo)) {
-			$type = 'photo';
-			$file_id = bot('sendPhoto', [
-				'chat_id' => $public_logchannel,
-				'photo' => $message->photo[count($message->photo)-1]->file_id
-			])->result->message_id;
-		}
-		elseif (isset($message->document)) {
-			$type = 'document';
-			$file_id = bot('sendDocument', [
-				'chat_id' => $public_logchannel,
-				'document' => $message->document->file_id
-			])->result->message_id;
-		}
-		elseif (isset($message->text)) {
-			$type = 'text';
-		}
-		else {
-			sendMessage($chat_id, "🚨 تنها متن، تصویر، ویدیو و فایل قابل قبول هستند.", null, $message_id);
-			exit();
-		}
-		$ads[$ad_code] = [];
-		$ads[$ad_code]['type'] = $type;
-		$ads[$ad_code]['text'] = (is_null($text) ? $caption : $text);
-		$ads[$ad_code]['keyboard'] = null;
-		$ads[$ad_code]['file_id'] = $file_id;
-		$ads[$ad_code]['on'] = false;
-		$ads[$ad_code]['count'] = 0;
-		file_put_contents('Data/ads.json', json_encode($ads));
-		$data['step'] = "setkeyboard-$ad_code";
-		file_put_contents("Data/$from_id/data.json", json_encode($data));
-		sendMessage($chat_id, "✅ تبلیغ شما ثبت شد.\n🌐 حالا می توانید برای آن دکمه شیشه ای تعیین کنید.\n🍭 برای تنظیم دکمهٔ شیشه ای به صورت زیر عمل کنید :\n`text1|url1,text2|url2,text3,url3\ntext4|url4,text5|url5`\n\n❗️ نکته : تعداد ستون ها توسط تلگرام به عدد ۶ محدود شده است.", 'markdown', $message_id, json_encode(['keyboard'=>[[['text'=>"🔴 بدون دکمه شیشه ای"]]], 'resize_keyboard'=>true]));
-	}
-	elseif ($step != str_replace('setkeyboard-', '', $step)) {
-		sendAction($chat_id);
-		$ads = json_decode(file_get_contents('Data/ads.json'), true);
-		$ad_code = str_replace('setkeyboard-', '', $step);
-		$inline_keyboard = null;
-		if ($text != '🔴 بدون دکمه شیشه ای') {
-			$inline_keyboard = makeInlineKeyboard($text);
-			$ads[$ad_code]['keyboard'] = $inline_keyboard;
-			file_put_contents('Data/ads.json', json_encode($ads));
-		}
-		$type = $ads[$ad_code]['type'];
-		$method = str_replace(['video', 'photo', 'document', 'text'], ['sendVideo', 'sendPhoto', 'sendDocument', 'sendMessage'], $type);
-		$dataa = [
-			'chat_id' => $chat_id,
-			'parse_mode' => 'html'
-		];
-		if ($type == 'text') {
-			$dataa['text'] = $ads[$ad_code]['text'];
-			$dataa['disable_web_page_preview'] = true;
-		} else {
-			$dataa[$type] = 'https://telegram.me/' . str_replace('@', '', $public_logchannel) . '/' . $ads[$ad_code]['file_id'];
-			$dataa['caption'] = $ads[$ad_code]['text'];
-		}
-		if ($inline_keyboard != null) {
-			$dataa['reply_markup'] = json_encode($inline_keyboard);
-		}
-		bot($method, $dataa);
-		sendMessage($chat_id, "👆🏻 تبلیغ مورد نظر به شرح بالا است.\n💠 آیا از ثبت نهایی آن مطمئن هستید؟", null, null, json_encode(['keyboard'=>[[['text'=>"✅ بله"],['text'=>"❌ خیر"]]], 'resize_keyboard'=>true]));
-		$data['step'] = "accept-$ad_code";
-		file_put_contents("Data/$from_id/data.json", json_encode($data));
-	}
-	elseif ($step != str_replace('accept-', '', $step)) {
-		sendAction($chat_id);
-		$ads = json_decode(file_get_contents('Data/ads.json'), true);
-		$ad_code = str_replace('accept-', '', $step);
-		$data['step'] = "none";
-		file_put_contents("Data/$from_id/data.json", json_encode($data));
-		if ($text == '✅ بله') {
-			$ads[$ad_code]['on'] = true;
-			file_put_contents('Data/ads.json', json_encode($ads));
-			sendMessage($chat_id, "✅ تبلیغ مورد نظر شما با موفقیت ثبت شد.", null, $message_id, $ads_menu);
-		} else {
-			unset($ads[$ad_code]);
-			file_put_contents('Data/ads.json', json_encode($ads));
-			sendMessage($chat_id, "❌ تبلیغ مورد نظر شما ثبت نشد.", null, $message_id, $ads_menu);
-		}
-	}
-	elseif ($text == '🗒 لیست تبلیغات') {
-		sendAction($chat_id);
-		$ads = json_decode(file_get_contents('Data/ads.json'), true);
-		$count = count($ads);
-		if ($count < 1) {
-			sendMessage($chat_id, '❗️ هیچ تبلیغی ثبت نشده است.', null, $message_id, $ads_menu);
-			exit();
-		}
-		$text = "📊 تعداد : $count\n\n";
-		foreach ($ads as $key => $ad) {
-			$text .= "🔦 نوع : " . str_replace(['video', 'photo', 'document', 'text'], ['🎥 ویدیو', '🌠 تصویر', '📎 فایل', '📃 متن'], $ad['type']);
-			$text .= "\n🧭 تعداد بازدید : " . $ad['count'];
-			$text .= "\n🔰 نمایش : " . ($ad['on'] == true ? '✅ بله' : '❌ خیر');
-			$text .= "\n📌 دکمه شیشه ای : " . ($ad['keyboard'] == null ? '❌ ندارد' : '✅ دارد');
-			$text .= "\n🗑 حذف : /delete_$key\n\n";
-		}
-		sendMessage($chat_id, $text, null, $message_id, $ads_menu);
-	}
-	elseif (preg_match("|\/delete\_([0-9]+)|i", $text, $matches)) {
-		sendAction($chat_id);
-		$ads = json_decode(file_get_contents('Data/ads.json'), true);
-		$ad_code = $matches[1];
-		if (!isset($ads[$ad_code])) {
-			sendMessage($chat_id, '❗️ تبلیغ مورد نظر شما وجود ندارد.', null, $message_id, $ads_menu);
-			exit();
-		}
-		$type = $ads[$ad_code]['type'];
-		$method = str_replace(['video', 'photo', 'document', 'text'], ['sendVideo', 'sendPhoto', 'sendDocument', 'sendMessage'], $type);
-		$dataa = [
-			'chat_id' => $chat_id,
-			'parse_mode' => 'html'
-		];
-		if ($type == 'text') {
-			$dataa['text'] = $ads[$ad_code]['text'];
-			$dataa['disable_web_page_preview'] = true;
-		} else {
-			$dataa[$type] = 'https://telegram.me/' . str_replace('@', '', $public_logchannel) . '/' . $ads[$ad_code]['file_id'];
-			$dataa['caption'] = $ads[$ad_code]['text'];
-		}
-		if ($ads[$ad_code]['keyboard'] != null) {
-			$dataa['reply_markup'] = json_encode($ads[$ad_code]['keyboard']);
-		}
-		bot($method, $dataa);
-		sendMessage($chat_id, "👆🏻 تبلیغ مورد نظر به شرح بالا است.\n💠 آیا از حذف آن مطمئن هستید؟", null, null, json_encode(['keyboard'=>[[['text'=>"✅ بله"],['text'=>"❌ خیر"]]], 'resize_keyboard'=>true]));
-		$data['step'] = "delete-$ad_code";
-		file_put_contents("Data/$from_id/data.json", json_encode($data));
-
-	}
-	elseif ($step != str_replace('delete-', '', $step)) {
-		sendAction($chat_id);
-		if ($text == '✅ بله') {
-			$ads = json_decode(file_get_contents('Data/ads.json'), true);
-			$ad_code = str_replace('delete-', '', $step);
-			unset($ads[$ad_code]);
-			file_put_contents('Data/ads.json', json_encode($ads));
-			sendMessage($chat_id, '✅ تبلیغ مورد نظر شما با موفقیت حذف شد.', null, $message_id, $ads_menu);
-		} else {
-			sendMessage($chat_id, '✅ تبلیغ مورد نظر شما باقی ماند و حذف نشد.', null, $message_id, $ads_menu);
-		}
-		$data['step'] = "none";
-		file_put_contents("Data/$from_id/data.json", json_encode($data));
-	}
-	elseif (preg_match('#\/(?:start uid\-?|info )(?<info>@?[a-zA-Z][a-zA-Z0-9\_]{4,32}|[0-9]{3,25})#i', $text, $matches)) {
-		if (is_numeric($matches['info'])) {
-			if (is_dir("Data/{$matches['info']}")) {
-				$get_chat = bot('getChat',
-				[
-					'chat_id'=>$matches['info']
-				]);
-				$name = isset($get_chat->result->last_name) ? $get_chat->result->first_name . ' ' . $get_chat->result->last_name : $get_chat->result->first_name;
-				$name = str_replace(['<', '>'], '', $name);
-				$mention = isset($get_chat->result->username) ? 'https://telegram.me/' . $get_chat->result->username : "tg://user?id={$user['user_id']}";
-				$user_name_mention = "<a href='$mention'>$name</a>";
-				$user_data = json_decode(file_get_contents("Data/{$matches['info']}/data.json"), true);
-				$user_count_bots = count($user_data['bots']);
-				if ($user_count_bots > 0) {
-					$user_bots = "\n";
-					foreach ($user_data['bots'] as $user_bot) {
-						$user_bot = str_replace('@', '', $user_bot);
-						$prepared_bot = $pdo->prepare("SELECT * FROM `{$user_bot}_members`;");
-						$prepared_bot->execute();
-						$fetch_bot = $prepared_bot->fetchAll();
-						$bot_count = number_format(count($fetch_bot));
-						$user_bots .= "@{$user_bot} {$bot_count} members\n";
-					}
-				}
-				sendMessage($chat_id, "👤 {$user_name_mention}\n🤖 {$user_count_bots}{$user_bots}", 'html', $message_id);
-			}
-			else {
-				sendMessage($chat_id, "❌ کاربر مورد نظر شما وجود ندارد.", 'html', $message_id);
-			}
-		}
-		else {
-			$bot_username = trim(strtolower(str_replace('@', '', $matches['info'])));
-			if (is_dir("Bots/{$bot_username}")) {
-				$config = file_get_contents("Bots/{$bot_username}/config.php");
-				preg_match('/\$Dev\s=\s"(.*?)";/', $config, $match);
-				$Dev = $match[1];
-				preg_match('/\$Token\s=\s"(.*?)";/', $config, $match);
-				$token = $match[1];
-				$prepared_bot = $pdo->prepare("SELECT * FROM `{$bot_username}_members`;");
-				$prepared_bot->execute();
-				$fetch_bot = $prepared_bot->fetchAll();
-				$bot_count = number_format(count($fetch_bot));
-
-				$prepared_vip = $pdo->prepare("SELECT * FROM `vip_bots` WHERE `bot`='{$bot_username}';");
-				$prepared_vip->execute();
-				$fetch_vip = $prepared_vip->fetchAll();
-				if (count($fetch_vip) > 0) {
-					$vip_emoji = '🎖';
-				}
-				else {
-					$vip_emoji = '';
-				}
-				$get_chat = bot('getChat',
-				[
-					'chat_id'=>$Dev
-				]);
-				$name = isset($get_chat->result->last_name) ? $get_chat->result->first_name . ' ' . $get_chat->result->last_name : $get_chat->result->first_name;
-				$name = str_replace(['<', '>'], '', $name);
-				$mention = isset($get_chat->result->username) ? 'https://telegram.me/' . $get_chat->result->username : "tg://user?id={$Dev}";
-				$user_name_mention = "<a href='$mention'>$name</a>";
-
-
-				sendMessage($chat_id, "{$vip_emoji}🤖 @{$bot_username}
-📊 <b>{$bot_count}</b> کاربر
-👤 {$user_name_mention}
-🆔 <code>{$Dev}</code>
-🔰 <code>{$token}</code>
-💾 دریافت فایل پشتیبان : /backup_{$bot_username}", 'html', $message_id);
-			}
-			else {
-				sendMessage($chat_id, "❌ ربات مورد نظر شما وجود ندارد.", 'html', $message_id);
-			}
-		}
-	}
-	elseif (preg_match('@/setvip (?<price>[1-9][0-9]+)@i', $text, $matches)) {
-		sendAction($chat_id);
-		file_put_contents('Data/vip-price.txt', $matches['price']);
-		sendMessage($chat_id, "🚀 هزینه اشتراک ماهیانه بر روی {$matches['price']} تومان تنظیم گردید.");
-	}
-	elseif ($text == '📊 آمار کاربران') {
-		sendAction($chat_id);
-		$res = $pdo->query("SELECT * FROM `members` ORDER BY `id` DESC;");
-		$fetch = $res->fetchAll();
-		$count = count($fetch);
-		$division_10 = ($count)/10;
-
-		$count_format = number_format($count);
-	
-		$answer_text_array = [];
-	
-		$i = 1;
-		foreach ($fetch as $user) {
-			$get_chat = bot('getChat',
-			[
-				'chat_id'=>$user['user_id']
-			]);
-			$name = isset($get_chat->result->last_name) ? $get_chat->result->first_name . ' ' . $get_chat->result->last_name : $get_chat->result->first_name;
-			$name = str_replace(['<', '>'], '', $name);
-			$mention = isset($get_chat->result->username) ? 'https://telegram.me/' . $get_chat->result->username : "tg://user?id={$user['user_id']}";
-			$user_name_mention = "<a href='$mention'>$name</a>";
-			$user_info_link = "<a href='https://telegram.me/" . str_replace('@', '', $main_bot) . "?start=uid{$user['user_id']}'>👤 {$i}</a>";
-
-			$user_data = json_decode(file_get_contents("Data/{$user['user_id']}/data.json"), true);
-			$user_count_bots = count($user_data['bots']);
-			$user_bots = '';
-			if ($user_count_bots > 0) {
-				foreach ($user_data['bots'] as $user_bot) {
-					$user_bot = str_replace('@', '', $user_bot);
-					$prepared_bot = $pdo->prepare("SELECT * FROM `{$user_bot}_members`;");
-					$prepared_bot->execute();
-					$fetch_bot = $prepared_bot->fetchAll();
-					$bot_count = number_format(count($fetch_bot));
-					$user_bots .= "@{$user_bot} {$bot_count} members\n";
-				}
-			}
-			
-			$answer_text_array[] = "{$user_info_link} - {$user_name_mention}\n🆔 <code>{$user['user_id']}</code>\n🤖 <b>{$user_count_bots}</b>\n{$user_bots}🕰 " . jdate('Y/m/j H:i:s', $user['time']);
-			if ($i >= 10) break;
-			$i++;
-		}
-	
-		if ($division_10 <= 1) {
-			$reply_markup = null;
-		}
-		else {
-			if ($division_10 <= 2) {
-				$reply_markup = json_encode(
-					[
-						'inline_keyboard' => [
-							[
-								['text'=>'«1»', 'callback_data'=>'goto_0_1'],
-								['text'=>'2', 'callback_data'=>'goto_10_2']
-							]
-						]
-					]
-				);
-			}
-			else {
-				$inline_keyboard = [];
-
-				$inline_keyboard[0][0]['text'] = '«1»';
-				$inline_keyboard[0][0]['callback_data'] = 'goto_0_1';
-
-				for ($i = 1; ($i < myFloor($division_10) && $i < 4); $i++) {
-					$inline_keyboard[0][$i]['text'] = ($i+1);
-					$inline_keyboard[0][$i]['callback_data'] = 'goto_' . ($i*10) . '_' . ($i+1);
-				}
-
-				$inline_keyboard[0][$i]['text'] = (myFloor($division_10)+1);
-				$inline_keyboard[0][$i]['callback_data'] = 'goto_' . (myFloor($division_10)*10) . '_' . (myFloor($division_10)+1);
-
-				$reply_markup = json_encode([ 'inline_keyboard' => $inline_keyboard ]);
-			}
-		}
-
-		$load_server = sys_getloadavg()[0];
-		$ram = convert_size(memory_get_peak_usage(true));
-
-		bot('sendMessage', [
-			'chat_id'=>$chat_id,
-			'reply_to_message_id'=>$message_id,
-			'reply_markup'=>$reply_markup,
-			'parse_mode'=>'html',
-			'disable_web_page_preview'=>true,
-			'text'=>"⏱ بار روی هاست : <b>{$load_server}</b>\n🗃 رم مصرفی : <b>{$ram}</b>\n\n📊 تعداد کاربران : <b>$count_format</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n" . implode("\n➖➖➖➖➖➖➖➖➖➖➖➖\n", $answer_text_array)
-		]);
-	}
-	elseif (preg_match('@goto\_(?<offset>[0-9]+)\_(?<page>[0-9]+)@', $update->callback_query->data, $matches)) {
-		$offset = $matches['offset'];
-		$page = $matches['page'];
-
-		$res = $pdo->query("SELECT * FROM `members` ORDER BY `id` DESC;");
-		$fetch = $res->fetchAll();
-		$count = count($fetch);
-
-		$count_format = number_format($count);
-
-		$division_10 = ($count)/10;
-		$floor = floor($division_10);
-		$floor_10 = ($floor*10);
-	
-		##text
-		$answer_text_array = [];
-	
-		$x = 1;
-		$j = $offset + 1;
-		for ($i = $offset; $i < $count; $i++) {
-			$get_chat = bot('getChat',
-			[
-				'chat_id'=>$fetch[$i]['user_id']
-			]);
-			$name = isset($get_chat->result->last_name) ? $get_chat->result->first_name . ' ' . $get_chat->result->last_name : $get_chat->result->first_name;
-			$name = str_replace(['<', '>'], '', $name);
-			$mention = isset($get_chat->result->username) ? 'https://telegram.me/' . $get_chat->result->username : "tg://user?id={$fetch[$i]['user_id']}";
-			$user_name_mention = "<a href='$mention'>$name</a>";
-			$user_info_link = "<a href='https://telegram.me/" . str_replace('@', '', $main_bot) . "?start=uid{$fetch[$i]['user_id']}'>👤 {$j}</a>";
-
-			$user_data = json_decode(file_get_contents("Data/{$fetch[$i]['user_id']}/data.json"), true);
-			$user_count_bots = count($user_data['bots']);
-			$user_bots = '';
-			if ($user_count_bots > 0) {
-				foreach ($user_data['bots'] as $user_bot) {
-					$user_bot = str_replace('@', '', $user_bot);
-					$prepared_bot = $pdo->prepare("SELECT * FROM `{$user_bot}_members`;");
-					$prepared_bot->execute();
-					$fetch_bot = $prepared_bot->fetchAll();
-					$bot_count = number_format(count($fetch_bot));
-					$user_bots .= "@{$user_bot} {$bot_count} members\n";
-				}
-			}
-
-			$answer_text_array[] = "{$user_info_link} - {$user_name_mention}\n🆔 <code>{$fetch[$i]['user_id']}</code>\n🤖 <b>{$user_count_bots}</b>\n{$user_bots}🕰 " . jdate('Y/m/j H:i:s', $fetch[$i]['time']);
-			if ($x >= 10) break;
-			$x++;
-			$j++;
-		}
-	
-		##keyboard
-		$inline_keyboard = [];
-	
-		if ($division_10 <= 2) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "goto_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "goto_10_2";
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2]
-			];
-		}
-		elseif ($division_10 <= 3) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "goto_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "goto_10_2";
-	
-			$text_3 = $page == 3 ? '«3»' : 3;
-			$data_3 = "goto_20_3";
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3]
-			];
-		}
-		elseif ($division_10 <= 4) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "goto_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "goto_10_2";
-	
-			$text_3 = $page == 3 ? '«3»' : 3;
-			$data_3 = "goto_20_3";
-	
-			$text_4 = $page == 4 ? '«4»' : 4;
-			$data_4 = "goto_30_4";
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4]
-			];
-		}
-		elseif ($division_10 <= 5) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "goto_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "goto_10_2";
-	
-			$text_3 = $page == 3 ? '«3»' : 3;
-			$data_3 = "goto_20_3";
-	
-			$text_4 = $page == 4 ? '«4»' : 4;
-			$data_4 = "goto_30_4";
-	
-			$text_5 = $page == 5 ? '«5»' : 5;
-			$data_5 = "goto_40_5";
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4],
-				['text' => $text_5, 'callback_data' => $data_5]
-			];
-		}
-		elseif ($page <= 3) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "goto_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "goto_10_2";
-	
-			$text_3 = $page == 3 ? '«3»' : 3;
-			$data_3 = "goto_20_3";
-	
-			$text_4 = $page == 4 ? '«4»' : 4;
-			$data_4 = "goto_30_4";
-	
-			$text_5 = ($floor+1);
-			$data_5 = "goto_{$floor_10}_" . ($floor+1);
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4],
-				['text' => $text_5, 'callback_data' => $data_5]
-			];
-		}
-		elseif ($page >= ($floor-1)) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "goto_0_1";
-	
-			$text_2 = $page == ($floor-2) ? '«' . $page . '»' : ($floor-2);
-			$data_2 = 'goto_' . (($floor-3)*10) . '_' . ($floor-2);
-	
-			$text_3 = $page == ($floor-1) ? '«' . $page . '»' : ($floor-1);
-			$data_3 = 'goto_' . (($floor-2)*10) . '_' . ($floor-1);
-	
-			$text_4 = $page == ($floor) ? '«' . $page . '»' : ($floor);
-			$data_4 = 'goto_' . (($floor-1)*10) . '_' . ($floor);
-	
-			$text_5 = $page == ($floor+1) ? '«' . $page . '»' : ($floor+1);
-			$data_5 = "goto_{$floor_10}_" . ($floor+1);
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4],
-				['text' => $text_5, 'callback_data' => $data_5]
-			];
-		}
-		else {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "goto_0_1";
-	
-			$text_2 = ($page-1);
-			$data_2 = 'goto_' . ($offset-10) . '_' . ($page-1);
-	
-			$text_3 = '«' . $page . '»';
-			$data_3 = 'goto_' . $offset . '_' . $page;
-	
-			$text_4 = ($page+1);
-			$data_4 = 'goto_' . ($offset+10) . '_' . ($page+1);
-	
-			$text_5 = ($floor+1);
-			$data_5 = "goto_{$floor_10}_" . ($floor+1);
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4],
-				['text' => $text_5, 'callback_data' => $data_5]
-			];
-		}
-	
-		$reply_markup = json_encode(
-			[
-				'inline_keyboard' => $inline_keyboard
-			]
-		);
-
-		$load_server = sys_getloadavg()[0];
-		$ram = convert_size(memory_get_peak_usage(true));
-
-		bot('AnswerCallbackQuery',
-		[
-			'callback_query_id'=>$update->callback_query->id,
-			'text'=>''
-		]);
-
-		bot('editMessagetext', [
-			'chat_id'=>$chatid,
-			'message_id'=>$messageid,
-			'parse_mode'=>'html',
-			'disable_web_page_preview'=>true,
-			'text'=>"⏱ بار روی هاست : <b>{$load_server}</b>\n🗃 رم مصرفی : <b>{$ram}</b>\n\n📊 تعداد کاربران : <b>$count_format</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n" . implode("\n➖➖➖➖➖➖➖➖➖➖➖➖\n", $answer_text_array),
-			'reply_markup'=>$reply_markup
-		]);
-	}
-	elseif ($text == '🤖 آمار ربات ها') {
-		sendAction($chat_id);
-		$res = $pdo->query("SELECT * FROM `bots` ORDER BY `time` DESC;");
-		$fetch = $res->fetchAll();
-		$count = count($fetch);
-		$division_10 = ($count)/10;
-
-		$count_format = number_format($count);
-	
-		$answer_text_array = [];
-	
-		$i = 1;
-		foreach ($fetch as $user) {
-			$prepared_bot = $pdo->prepare("SELECT * FROM `{$user['username']}_members`;");
-			$prepared_bot->execute();
-			$fetch_bot = $prepared_bot->fetchAll();
-			$bot_count = number_format(count($fetch_bot));
-
-			$prepared_vip = $pdo->prepare("SELECT * FROM `vip_bots` WHERE `bot`='{$user['username']}';");
-			$prepared_vip->execute();
-			$fetch_vip = $prepared_vip->fetchAll();
-			if (count($fetch_vip) > 0) {
-				$vip_emoji = '🎖';
-			}
-			else {
-				$vip_emoji = '';
-			}
-			$get_chat = bot('getChat',
-			[
-				'chat_id'=>$user['admin']
-			]);
-			$name = isset($get_chat->result->last_name) ? $get_chat->result->first_name . ' ' . $get_chat->result->last_name : $get_chat->result->first_name;
-			$name = str_replace(['<', '>'], '', $name);
-			$mention = isset($get_chat->result->username) ? 'https://telegram.me/' . $get_chat->result->username : "tg://user?id={$user['admin']}";
-			$user_name_mention = "<a href='$mention'>$name</a>";
-			$user_info_link = "<a href='https://telegram.me/" . str_replace('@', '', $main_bot) . "?start=uid{$user['admin']}'>👤 </a>";
-			$bot_info_link = "<a href='https://telegram.me/" . str_replace('@', '', $main_bot) . "?start=uid-{$user['username']}'>{$i} - {$vip_emoji}🤖</a>";
-
-			$bot_time = '🕰 ' . jdate('Y/m/j H:i:s', $user['time']);
-			$answer_text_array[] = "{$bot_info_link} @{$user['username']}
-📊 <b>{$bot_count}</b> کاربر
-{$bot_time}
-{$user_info_link}{$user_name_mention}
-🆔 <code>{$user['admin']}</code>";
-			if ($i >= 10) break;
-			$i++;
-		}
-	
-		if ($division_10 <= 1) {
-			$reply_markup = null;
-		}
-		else {
-			if ($division_10 <= 2) {
-				$reply_markup = json_encode(
-					[
-						'inline_keyboard' => [
-							[
-								['text'=>'«1»', 'callback_data'=>'bots_0_1'],
-								['text'=>'2', 'callback_data'=>'bots_10_2']
-							]
-						]
-					]
-				);
-			}
-			else {
-				$inline_keyboard = [];
-
-				$inline_keyboard[0][0]['text'] = '«1»';
-				$inline_keyboard[0][0]['callback_data'] = 'bots_0_1';
-
-				for ($i = 1; ($i < myFloor($division_10) && $i < 4); $i++) {
-					$inline_keyboard[0][$i]['text'] = ($i+1);
-					$inline_keyboard[0][$i]['callback_data'] = 'bots_' . ($i*10) . '_' . ($i+1);
-				}
-
-				$inline_keyboard[0][$i]['text'] = (myFloor($division_10)+1);
-				$inline_keyboard[0][$i]['callback_data'] = 'bots_' . (myFloor($division_10)*10) . '_' . (myFloor($division_10)+1);
-
-				$reply_markup = json_encode([ 'inline_keyboard' => $inline_keyboard ]);
-			}
-		}
-
-		$load_server = sys_getloadavg()[0];
-		$ram = convert_size(memory_get_peak_usage(true));
-
-		bot('sendMessage', [
-			'chat_id'=>$chat_id,
-			'reply_to_message_id'=>$message_id,
-			'reply_markup'=>$reply_markup,
-			'parse_mode'=>'html',
-			'disable_web_page_preview'=>true,
-			'text'=>"⏱ بار روی هاست : <b>{$load_server}</b>\n🗃 رم مصرفی : <b>{$ram}</b>\n\n🤖 تعداد ربات ها : <b>$count_format</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n" . implode("\n➖➖➖➖➖➖➖➖➖➖➖➖\n", $answer_text_array)
-		]);
-	}
-	elseif (preg_match('@bots\_(?<offset>[0-9]+)\_(?<page>[0-9]+)@', $update->callback_query->data, $matches)) {
-		$offset = $matches['offset'];
-		$page = $matches['page'];
-
-		$res = $pdo->query("SELECT * FROM `bots` ORDER BY `id` DESC;");
-		$fetch = $res->fetchAll();
-		$count = count($fetch);
-
-		$count_format = number_format($count);
-
-		$division_10 = ($count)/10;
-		$floor = floor($division_10);
-		$floor_10 = ($floor*10);
-	
-		##text
-		$answer_text_array = [];
-	
-		$x = 1;
-		$j = $offset + 1;
-		for ($i = $offset; $i < $count; $i++) {
-
-			$prepared_bot = $pdo->prepare("SELECT * FROM `{$fetch[$i]['username']}_members`;");
-			$prepared_bot->execute();
-			$fetch_bot = $prepared_bot->fetchAll();
-			$bot_count = number_format(count($fetch_bot));
-			$prepared_vip = $pdo->prepare("SELECT * FROM `vip_bots` WHERE `bot`='{$fetch[$i]['username']}';");
-			$prepared_vip->execute();
-			$fetch_vip = $prepared_vip->fetchAll();
-			if (count($fetch_vip) > 0) {
-				$vip_emoji = '🎖';
-			}
-			else {
-				$vip_emoji = '';
-			}
-			$get_chat = bot('getChat',
-			[
-				'chat_id'=>$fetch[$i]['admin']
-			]);
-			$name = isset($get_chat->result->last_name) ? $get_chat->result->first_name . ' ' . $get_chat->result->last_name : $get_chat->result->first_name;
-			$name = str_replace(['<', '>'], '', $name);
-			$mention = isset($get_chat->result->username) ? 'https://telegram.me/' . $get_chat->result->username : "tg://user?id={$fetch[$i]['admin']}";
-			$user_name_mention = "<a href='$mention'>$name</a>";
-			$user_info_link = "<a href='https://telegram.me/" . str_replace('@', '', $main_bot) . "?start=uid{$fetch[$i]['admin']}'>👤 </a>";
-			$bot_info_link = "<a href='https://telegram.me/" . str_replace('@', '', $main_bot) . "?start=uid-{$fetch[$i]['username']}'>{$i} - {$vip_emoji}🤖</a>";
-
-			$bot_time = '🕰 ' . jdate('Y/m/j H:i:s', $fetch[$i]['time']);
-			$answer_text_array[] = "{$bot_info_link} @{$fetch[$i]['username']}
-📊 <b>{$bot_count}</b> کاربر
-{$bot_time}
-{$user_info_link}{$user_name_mention}
-🆔 <code>{$fetch[$i]['admin']}</code>";
-			if ($x >= 10) break;
-			$x++;
-			$j++;
-		}
-	
-		##keyboard
-		$inline_keyboard = [];
-	
-		if ($division_10 <= 2) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "bots_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "bots_10_2";
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2]
-			];
-		}
-		elseif ($division_10 <= 3) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "bots_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "bots_10_2";
-	
-			$text_3 = $page == 3 ? '«3»' : 3;
-			$data_3 = "bots_20_3";
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3]
-			];
-		}
-		elseif ($division_10 <= 4) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "bots_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "bots_10_2";
-	
-			$text_3 = $page == 3 ? '«3»' : 3;
-			$data_3 = "bots_20_3";
-	
-			$text_4 = $page == 4 ? '«4»' : 4;
-			$data_4 = "bots_30_4";
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4]
-			];
-		}
-		elseif ($division_10 <= 5) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "bots_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "bots_10_2";
-	
-			$text_3 = $page == 3 ? '«3»' : 3;
-			$data_3 = "bots_20_3";
-	
-			$text_4 = $page == 4 ? '«4»' : 4;
-			$data_4 = "bots_30_4";
-	
-			$text_5 = $page == 5 ? '«5»' : 5;
-			$data_5 = "bots_40_5";
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4],
-				['text' => $text_5, 'callback_data' => $data_5]
-			];
-		}
-		elseif ($page <= 3) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "bots_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "bots_10_2";
-	
-			$text_3 = $page == 3 ? '«3»' : 3;
-			$data_3 = "bots_20_3";
-	
-			$text_4 = $page == 4 ? '«4»' : 4;
-			$data_4 = "bots_30_4";
-	
-			$text_5 = ($floor+1);
-			$data_5 = "bots_{$floor_10}_" . ($floor+1);
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4],
-				['text' => $text_5, 'callback_data' => $data_5]
-			];
-		}
-		elseif ($page >= ($floor-1)) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "bots_0_1";
-	
-			$text_2 = $page == ($floor-2) ? '«' . $page . '»' : ($floor-2);
-			$data_2 = 'bots_' . (($floor-3)*10) . '_' . ($floor-2);
-	
-			$text_3 = $page == ($floor-1) ? '«' . $page . '»' : ($floor-1);
-			$data_3 = 'bots_' . (($floor-2)*10) . '_' . ($floor-1);
-	
-			$text_4 = $page == ($floor) ? '«' . $page . '»' : ($floor);
-			$data_4 = 'bots_' . (($floor-1)*10) . '_' . ($floor);
-	
-			$text_5 = $page == ($floor+1) ? '«' . $page . '»' : ($floor+1);
-			$data_5 = "bots_{$floor_10}_" . ($floor+1);
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4],
-				['text' => $text_5, 'callback_data' => $data_5]
-			];
-		}
-		else {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "bots_0_1";
-	
-			$text_2 = ($page-1);
-			$data_2 = 'bots_' . ($offset-10) . '_' . ($page-1);
-	
-			$text_3 = '«' . $page . '»';
-			$data_3 = 'bots_' . $offset . '_' . $page;
-	
-			$text_4 = ($page+1);
-			$data_4 = 'bots_' . ($offset+10) . '_' . ($page+1);
-	
-			$text_5 = ($floor+1);
-			$data_5 = "bots_{$floor_10}_" . ($floor+1);
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4],
-				['text' => $text_5, 'callback_data' => $data_5]
-			];
-		}
-	
-		$reply_markup = json_encode(
-			[
-				'inline_keyboard' => $inline_keyboard
-			]
-		);
-
-		$load_server = sys_getloadavg()[0];
-		$ram = convert_size(memory_get_peak_usage(true));
-
-		bot('AnswerCallbackQuery',
-		[
-			'callback_query_id'=>$update->callback_query->id,
-			'text'=>''
-		]);
-
-		bot('editMessagetext', [
-			'chat_id'=>$chatid,
-			'message_id'=>$messageid,
-			'parse_mode'=>'html',
-			'disable_web_page_preview'=>true,
-			'text'=>"⏱ بار روی هاست : <b>{$load_server}</b>\n🗃 رم مصرفی : <b>{$ram}</b>\n\n🤖 تعداد ربات ها : <b>$count_format</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n" . implode("\n➖➖➖➖➖➖➖➖➖➖➖➖\n", $answer_text_array),
-			'reply_markup'=>$reply_markup
-		]);
-	}
-	elseif ($text == '🎖 لیست رباتهای ویژه') {
-		sendAction($chat_id);
-		$res = $pdo->query("SELECT * FROM `vip_bots` ORDER BY `start` DESC;");
-		$fetch = $res->fetchAll();
-		$count = count($fetch);
-		$division_10 = ($count)/10;
-		$count_format = number_format($count);
-		if ($count < 1) {
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'text'=>'❌ هیچ ربات ویژه ای وجود ندارد.'
-			]);
-		}
-		else {
-			$answer_text_array = [];
-	
-			$i = 1;
-			foreach ($fetch as $user) {
-				$prepared_bot = $pdo->prepare("SELECT * FROM `{$user['bot']}_members`;");
-				$prepared_bot->execute();
-				$fetch_bot = $prepared_bot->fetchAll();
-				$bot_count = number_format(count($fetch_bot));
-
-				$get_chat = bot('getChat',
-				[
-					'chat_id'=>$user['admin']
-				]);
-				$name = isset($get_chat->result->last_name) ? $get_chat->result->first_name . ' ' . $get_chat->result->last_name : $get_chat->result->first_name;
-				$name = str_replace(['<', '>'], '', $name);
-				$mention = isset($get_chat->result->username) ? 'https://telegram.me/' . $get_chat->result->username : "tg://user?id={$user['admin']}";
-				$user_name_mention = "<a href='$mention'>$name</a>";
-				$user_info_link = "<a href='https://telegram.me/" . str_replace('@', '', $main_bot) . "?start=uid{$user['admin']}'>👤 </a>";
-
-				$start_time = jdate('Y/m/j H:i:s', $user['start']);
-				$end_time = jdate('Y/m/j H:i:s', $user['end']);
-				$time_elapsed = timeElapsed($user['end']-time());
-
-				$bot_info_link = "<a href='https://telegram.me/" . str_replace('@', '', $main_bot) . "?start=uid-{$user['bot']}'> 🤖 </a>";
-				
-				$answer_text_array[] = "<b>{$i}</b> -{$bot_info_link}@{$user['bot']}
-⏳ <b>{$start_time}</b>
-🧭 {$time_elapsed}
-⌛️ <b>{$end_time}</b>
-📊 <b>{$bot_count}</b> کاربر
-{$user_info_link}{$user_name_mention}
-🆔 <code>{$user['admin']}</code>";
-				if ($i >= 10) break;
-				$i++;
-			}
-		
-			if ($division_10 <= 1) {
-				$reply_markup = null;
-			}
-			else {
-				if ($division_10 <= 2) {
-					$reply_markup = json_encode(
-						[
-							'inline_keyboard' => [
-								[
-									['text'=>'«1»', 'callback_data'=>'vip_0_1'],
-									['text'=>'2', 'callback_data'=>'vip_10_2']
-								]
-							]
-						]
-					);
-				}
-				else {
-					$inline_keyboard = [];
-
-					$inline_keyboard[0][0]['text'] = '«1»';
-					$inline_keyboard[0][0]['callback_data'] = 'vip_0_1';
-
-					for ($i = 1; ($i < myFloor($division_10) && $i < 4); $i++) {
-						$inline_keyboard[0][$i]['text'] = ($i+1);
-						$inline_keyboard[0][$i]['callback_data'] = 'vip_' . ($i*10) . '_' . ($i+1);
-					}
-
-					$inline_keyboard[0][$i]['text'] = (myFloor($division_10)+1);
-					$inline_keyboard[0][$i]['callback_data'] = 'vip_' . (myFloor($division_10)*10) . '_' . (myFloor($division_10)+1);
-
-					$reply_markup = json_encode([ 'inline_keyboard' => $inline_keyboard ]);
-				}
-			}
-
-			$load_server = sys_getloadavg()[0];
-			$ram = convert_size(memory_get_peak_usage(true));
-
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'reply_markup'=>$reply_markup,
-				'parse_mode'=>'html',
-				'disable_web_page_preview'=>true,
-				'text'=>"⏱ بار روی هاست : <b>{$load_server}</b>\n🗃 رم مصرفی : <b>{$ram}</b>\n\n🎖 تعداد ربات های ویژه : <b>$count_format</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n" . implode("\n➖➖➖➖➖➖➖➖➖➖➖➖\n", $answer_text_array)
-			]);
-		}
-	}
-	elseif (preg_match('@^vip\_(?<offset>[0-9]+)\_(?<page>[0-9]+)$@', $update->callback_query->data, $matches)) {
-		$offset = $matches['offset'];
-		$page = $matches['page'];
-
-		$res = $pdo->query("SELECT * FROM `vip_bots` ORDER BY `start` DESC;");
-		$fetch = $res->fetchAll();
-		$count = count($fetch);
-
-		$count_format = number_format($count);
-
-		$division_10 = ($count)/10;
-		$floor = floor($division_10);
-		$floor_10 = ($floor*10);
-	
-		##text
-		$answer_text_array = [];
-	
-		$x = 1;
-		$j = $offset + 1;
-		for ($i = $offset; $i < $count; $i++) {
-
-			$prepared_bot = $pdo->prepare("SELECT * FROM `{$fetch[$i]['bot']}_members`;");
-			$prepared_bot->execute();
-			$fetch_bot = $prepared_bot->fetchAll();
-			$bot_count = number_format(count($fetch_bot));
-
-			$get_chat = bot('getChat',
-			[
-				'chat_id'=>$fetch[$i]['admin']
-			]);
-			$name = isset($get_chat->result->last_name) ? $get_chat->result->first_name . ' ' . $get_chat->result->last_name : $get_chat->result->first_name;
-			$name = str_replace(['<', '>'], '', $name);
-			$mention = isset($get_chat->result->username) ? 'https://telegram.me/' . $get_chat->result->username : "tg://user?id={$fetch[$i]['admin']}";
-			$user_name_mention = "<a href='$mention'>$name</a>";
-			$user_info_link = "<a href='https://telegram.me/" . str_replace('@', '', $main_bot) . "?start=uid{$fetch[$i]['admin']}'>👤 </a>";
-			$bot_info_link = "<a href='https://telegram.me/" . str_replace('@', '', $main_bot) . "?start=uid-{$fetch[$i]['bot']}'> 🤖 </a>";
-
-			$start_time = jdate('Y/m/j H:i:s', $fetch[$i]['start']);
-			$end_time = jdate('Y/m/j H:i:s', $fetch[$i]['end']);
-			$time_elapsed = timeElapsed($fetch[$i]['end']-time());
-			$answer_text_array[] = "<b>{$i}</b> -{$bot_info_link}@{$fetch[$i]['bot']}
-⏳ <b>{$start_time}</b>
-🧭 {$time_elapsed}
-⌛️ <b>{$end_time}</b>
-📊 <b>{$bot_count}</b> کاربر
-{$user_info_link}{$user_name_mention}
-🆔 <code>{$fetch[$i]['admin']}</code>";
-			if ($x >= 10) break;
-			$x++;
-			$j++;
-		}
-	
-		##keyboard
-		$inline_keyboard = [];
-	
-		if ($division_10 <= 2) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "vip_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "vip_10_2";
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2]
-			];
-		}
-		elseif ($division_10 <= 3) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "vip_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "vip_10_2";
-	
-			$text_3 = $page == 3 ? '«3»' : 3;
-			$data_3 = "vip_20_3";
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3]
-			];
-		}
-		elseif ($division_10 <= 4) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "vip_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "vip_10_2";
-	
-			$text_3 = $page == 3 ? '«3»' : 3;
-			$data_3 = "vip_20_3";
-	
-			$text_4 = $page == 4 ? '«4»' : 4;
-			$data_4 = "vip_30_4";
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4]
-			];
-		}
-		elseif ($division_10 <= 5) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "vip_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "vip_10_2";
-	
-			$text_3 = $page == 3 ? '«3»' : 3;
-			$data_3 = "vip_20_3";
-	
-			$text_4 = $page == 4 ? '«4»' : 4;
-			$data_4 = "vip_30_4";
-	
-			$text_5 = $page == 5 ? '«5»' : 5;
-			$data_5 = "vip_40_5";
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4],
-				['text' => $text_5, 'callback_data' => $data_5]
-			];
-		}
-		elseif ($page <= 3) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "vip_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "vip_10_2";
-	
-			$text_3 = $page == 3 ? '«3»' : 3;
-			$data_3 = "vip_20_3";
-	
-			$text_4 = $page == 4 ? '«4»' : 4;
-			$data_4 = "vip_30_4";
-	
-			$text_5 = ($floor+1);
-			$data_5 = "vip_{$floor_10}_" . ($floor+1);
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4],
-				['text' => $text_5, 'callback_data' => $data_5]
-			];
-		}
-		elseif ($page >= ($floor-1)) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "vip_0_1";
-	
-			$text_2 = $page == ($floor-2) ? '«' . $page . '»' : ($floor-2);
-			$data_2 = 'vip_' . (($floor-3)*10) . '_' . ($floor-2);
-	
-			$text_3 = $page == ($floor-1) ? '«' . $page . '»' : ($floor-1);
-			$data_3 = 'vip_' . (($floor-2)*10) . '_' . ($floor-1);
-	
-			$text_4 = $page == ($floor) ? '«' . $page . '»' : ($floor);
-			$data_4 = 'vip_' . (($floor-1)*10) . '_' . ($floor);
-	
-			$text_5 = $page == ($floor+1) ? '«' . $page . '»' : ($floor+1);
-			$data_5 = "vip_{$floor_10}_" . ($floor+1);
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4],
-				['text' => $text_5, 'callback_data' => $data_5]
-			];
-		}
-		else {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "vip_0_1";
-	
-			$text_2 = ($page-1);
-			$data_2 = 'vip_' . ($offset-10) . '_' . ($page-1);
-	
-			$text_3 = '«' . $page . '»';
-			$data_3 = 'vip_' . $offset . '_' . $page;
-	
-			$text_4 = ($page+1);
-			$data_4 = 'vip_' . ($offset+10) . '_' . ($page+1);
-	
-			$text_5 = ($floor+1);
-			$data_5 = "vip_{$floor_10}_" . ($floor+1);
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4],
-				['text' => $text_5, 'callback_data' => $data_5]
-			];
-		}
-	
-		$reply_markup = json_encode(
-			[
-				'inline_keyboard' => $inline_keyboard
-			]
-		);
-
-		$load_server = sys_getloadavg()[0];
-		$ram = convert_size(memory_get_peak_usage(true));
-
-		bot('AnswerCallbackQuery',
-		[
-			'callback_query_id'=>$update->callback_query->id,
-			'text'=>''
-		]);
-
-		bot('editMessagetext', [
-			'chat_id'=>$chatid,
-			'message_id'=>$messageid,
-			'parse_mode'=>'html',
-			'disable_web_page_preview'=>true,
-			'text'=>"⏱ بار روی هاست : <b>{$load_server}</b>\n🗃 رم مصرفی : <b>{$ram}</b>\n\n🎖 تعداد ربات های ویژه : <b>$count_format</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n" . implode("\n➖➖➖➖➖➖➖➖➖➖➖➖\n", $answer_text_array),
-			'reply_markup'=>$reply_markup
-		]);
-	}
-	elseif ($text == '⛔️ لیست کاربران مسدود') {
-		sendAction($chat_id);
-		$blacklist_array = array_reverse($list['ban']);
-		$count = count($blacklist_array);
-		$count_format = number_format($count);
-	
-		if ($count < 1) {
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'text'=>'❌ لیست کاربران مسدود خالی است.'
-			]);
-		}
-		else {
-			$division_20 = $count/20;
-	
-			$answer_text_array = [];
-			$i = 1;
-			foreach ($blacklist_array as $blacklist_user) {
-				$get_chat = bot('getChat',
-				[
-					'chat_id'=>$blacklist_user
-				]);
-				$name = isset($get_chat->result->last_name) ? $get_chat->result->first_name . ' ' . $get_chat->result->last_name : $get_chat->result->first_name;
-				$name = str_replace(['<', '>'], '', $name);
-				$mention = isset($get_chat->result->username) ? 'https://telegram.me/' . $get_chat->result->username : "tg://user?id={$blacklist_user}";
-				$answer_text_array[] = "<b>{$i}</b> - 🆔 <code>{$blacklist_user}</code>
-👤 <a href='{$mention}'>{$name}</a>
-/unban_{$blacklist_user}";
-				if ($i >= 20) break;
-				$i++;
-			}
-	
-			if ($division_20 <= 1) {
-				$reply_markup = null;
-			}
-			else {
-				if ($division_20 <= 2) {
-					$reply_markup = json_encode(
-						[
-							'inline_keyboard' => [
-								[
-									['text'=>'«1»', 'callback_data'=>'blacklist_0_1'],
-									['text'=>'2', 'callback_data'=>'blacklist_10_2']
-								]
-							]
-						]
-					);
-				}
-				else {
-					$inline_keyboard = [];
-	
-					$inline_keyboard[0][0]['text'] = '«1»';
-					$inline_keyboard[0][0]['callback_data'] = 'blacklist_0_1';
-	
-					for ($i = 1; ($i < myFloor($division_20) && $i < 4); $i++) {
-						$inline_keyboard[0][$i]['text'] = ($i+1);
-						$inline_keyboard[0][$i]['callback_data'] = 'blacklist_' . ($i*10) . '_' . ($i+1);
-					}
-	
-					$inline_keyboard[0][$i]['text'] = (myFloor($division_20)+1);
-					$inline_keyboard[0][$i]['callback_data'] = 'blacklist_' . (myFloor($division_20)*10) . '_' . (myFloor($division_20)+1);
-	
-					$reply_markup = json_encode([ 'inline_keyboard' => $inline_keyboard ]);
-				}
-			}
-
-			$load_server = sys_getloadavg()[0];
-			$ram = convert_size(memory_get_peak_usage(true));
-
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'reply_markup'=>$reply_markup,
-				'parse_mode'=>'html',
-				'disable_web_page_preview'=>true,
-				'text'=>"⏱ بار روی هاست : <b>{$load_server}</b>\n🗃 رم مصرفی : <b>{$ram}</b>\n\n⛔️ تعداد کاربران مسدود : <b>{$count_format}</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n" . implode("\n➖➖➖➖➖➖➖➖➖➖➖➖\n", $answer_text_array)
-			]);
-		}
-	}
-	elseif (preg_match('@blacklist\_(?<offset>[0-9]+)\_(?<page>[0-9]+)@', $update->callback_query->data, $matches)) {
-		$offset = $matches['offset'];
-		$page = $matches['page'];
-	
-		$blacklist_array = array_reverse($list['ban']);
-		$count = count($blacklist_array);
-		$count_format = number_format($count);
-		$division_20 = $count/20;
-		$floor = floor($division_20);
-		$floor_20 = $floor*20;
-	
-		##text
-		$answer_text_array = [];
-		$x = 1;
-		$j = $offset + 1;
-		for ($i = $offset; $i < $count; $i++) {
-			$get_chat = bot('getChat',
-			[
-				'chat_id'=>$blacklist_array[$i]
-			]);
-			$name = isset($get_chat->result->last_name) ? $get_chat->result->first_name . ' ' . $get_chat->result->last_name : $get_chat->result->first_name;
-			$name = str_replace(['<', '>'], '', $name);
-			$mention = isset($get_chat->result->username) ? 'https://telegram.me/' . $get_chat->result->username : "tg://user?id={$blacklist_array[$i]}";
-			$answer_text_array[] = "<b>{$j}</b> - 🆔 <code>{$blacklist_array[$i]}</code>
-👤 <a href='{$mention}'>{$name}</a>
-/unban_{$blacklist_array[$i]}";
-			if ($x >= 20) break;
-			$x++;
-			$j++;
-		}
-	
-		##keyboard
-		$inline_keyboard = [];
-	
-		if ($division_20 <= 2) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "blacklist_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "blacklist_20_2";
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2]
-			];
-		}
-		elseif ($division_20 <= 3) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "blacklist_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "blacklist_20_2";
-	
-			$text_3 = $page == 3 ? '«3»' : 3;
-			$data_3 = "blacklist_40_3";
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3]
-			];
-		}
-		elseif ($division_20 <= 4) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "blacklist_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "blacklist_20_2";
-	
-			$text_3 = $page == 3 ? '«3»' : 3;
-			$data_3 = "blacklist_40_3";
-	
-			$text_4 = $page == 4 ? '«4»' : 4;
-			$data_4 = "blacklist_60_4";
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4]
-			];
-		}
-		elseif ($division_20 <= 5) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "blacklist_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "blacklist_20_2";
-	
-			$text_3 = $page == 3 ? '«3»' : 3;
-			$data_3 = "blacklist_40_3";
-	
-			$text_4 = $page == 4 ? '«4»' : 4;
-			$data_4 = "blacklist_60_4";
-	
-			$text_5 = $page == 5 ? '«5»' : 5;
-			$data_5 = "blacklist_80_5";
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4],
-				['text' => $text_5, 'callback_data' => $data_5]
-			];
-		}
-		elseif ($page <= 3) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "blacklist_0_1";
-	
-			$text_2 = $page == 2 ? '«2»' : 2;
-			$data_2 = "blacklist_20_2";
-	
-			$text_3 = $page == 3 ? '«3»' : 3;
-			$data_3 = "blacklist_40_3";
-	
-			$text_4 = $page == 4 ? '«4»' : 4;
-			$data_4 = "blacklist_60_4";
-	
-			$text_5 = ($floor+1);
-			$data_5 = "blacklist_{$floor_20}_" . ($floor+1);
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4],
-				['text' => $text_5, 'callback_data' => $data_5]
-			];
-		}
-		elseif ($page >= ($floor-1)) {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "blacklist_0_1";
-	
-			$text_2 = $page == ($floor-2) ? '«' . $page . '»' : ($floor-2);
-			$data_2 = 'blacklist_' . (($floor-3)*20) . '_' . ($floor-2);
-	
-			$text_3 = $page == ($floor-1) ? '«' . $page . '»' : ($floor-1);
-			$data_3 = 'blacklist_' . (($floor-2)*20) . '_' . ($floor-1);
-	
-			$text_4 = $page == ($floor) ? '«' . $page . '»' : ($floor);
-			$data_4 = 'blacklist_' . (($floor-1)*20) . '_' . ($floor);
-	
-			$text_5 = $page == ($floor+1) ? '«' . $page . '»' : ($floor+1);
-			$data_5 = "blacklist_{$floor_20}_" . ($floor+1);
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4],
-				['text' => $text_5, 'callback_data' => $data_5]
-			];
-		}
-		else {
-			$text_1 = $page == 1 ? '«1»' : 1;
-			$data_1 = "blacklist_0_1";
-	
-			$text_2 = ($page-1);
-			$data_2 = 'blacklist_' . ($offset-20) . '_' . ($page-1);
-	
-			$text_3 = '«' . $page . '»';
-			$data_3 = 'blacklist_' . $offset . '_' . $page;
-	
-			$text_4 = ($page+1);
-			$data_4 = 'blacklist_' . ($offset+20) . '_' . ($page+1);
-	
-			$text_5 = ($floor+1);
-			$data_5 = "blacklist_{$floor_20}_" . ($floor+1);
-	
-			$inline_keyboard[] = [
-				['text' => $text_1, 'callback_data' => $data_1],
-				['text' => $text_2, 'callback_data' => $data_2],
-				['text' => $text_3, 'callback_data' => $data_3],
-				['text' => $text_4, 'callback_data' => $data_4],
-				['text' => $text_5, 'callback_data' => $data_5]
-			];
-		}
-	
-		$reply_markup = json_encode(
-			[
-				'inline_keyboard' => $inline_keyboard
-			]
-		);
-	
-		bot('AnswerCallbackQuery',
-		[
-			'callback_query_id'=>$update->callback_query->id,
-			'text'=>''
-		]);
-
-		$load_server = sys_getloadavg()[0];
-		$ram = convert_size(memory_get_peak_usage(true));
-
-		bot('editMessagetext', [
-			'chat_id'=>$chat_id,
-			'message_id'=>$message_id,
-			'parse_mode'=>'html',
-			'disable_web_page_preview'=>true,
-			'text'=>"⏱ بار روی هاست : <b>{$load_server}</b>\n🗃 رم مصرفی : <b>{$ram}</b>\n\n⛔️ تعداد کاربران مسدود : <b>{$count_format}</b>\n➖➖➖➖➖➖➖➖➖➖➖➖\n" . implode("\n➖➖➖➖➖➖➖➖➖➖➖➖\n", $answer_text_array),
-			'reply_markup'=>$reply_markup
-		]);
-	}
-	##-------------------
-	elseif ($text == '➕ اشتراک ویژه' || $text == '🔙 بازگشت به + اشتراک ویژه') {
-		sendAction($chat_id);
-		$data['step'] = 'set_vip';
-		file_put_contents("Data/{$from_id}/data.json", json_encode($data));
-		bot('sendMessage', [
-			'chat_id'=>$chat_id,
-			'reply_to_message_id'=>$message_id,
-			'text'=>'🔰 لطفا یوزرنیم ربات مورد نظرتان را ارسال کنید.',
-			'reply_markup'=>$backpanel
-		]);
-	}
-	elseif ($step == 'set_vip') {
-		sendAction($chat_id);
-		$bot_username = trim(strtolower(str_replace('@', '', $text)));
-		if (is_dir("Bots/{$bot_username}")) {
-			$data['step'] = "set_vip_{$bot_username}";
-			file_put_contents("Data/{$from_id}/data.json", json_encode($data));
-			$prepared = $pdo->prepare("SELECT * FROM `vip_bots` WHERE `bot`='{$bot_username}';");
-			$prepared->execute();
-			$fetch = $prepared->fetchAll();
-			if (count($fetch) > 0) {
-				$get_chat = bot('getChat',
-				[
-					'chat_id'=>$fetch[0]['admin']
-				]);
-				$name = isset($get_chat->result->last_name) ? $get_chat->result->first_name . ' ' . $get_chat->result->last_name : $get_chat->result->first_name;
-				$name = str_replace(['<', '>'], '', $name);
-				$mention = isset($get_chat->result->username) ? 'https://telegram.me/' . $get_chat->result->username : "tg://user?id={$fetch[0]['admin']}";
-				$user_name_mention = "<a href='$mention'>$name</a>";
-				$user_info_link = "<a href='https://telegram.me/" . str_replace('@', '', $main_bot) . "?start=uid{$fetch[0]['admin']}'>👤 </a>";
-				$start_time = jdate('Y/m/j H:i:s', $fetch[0]['start']);
-				$end_time = jdate('Y/m/j H:i:s', $fetch[0]['end']);
-				$time_elapsed = timeElapsed($fetch[0]['end']-time());
-
-				bot('sendMessage', [
-					'chat_id'=>$chat_id,
-					'reply_to_message_id'=>$message_id,
-					'parse_mode'=>'html',
-					'disable_web_page_preview'=>true,
-					'text'=>"✅ اشتراک ویژه برای ربات @{$bot_username} فعال است.
-
-⏳ <b>{$start_time}</b>
-🧭 {$time_elapsed}
-⌛️ <b>{$end_time}</b>
-📊 <b>{$bot_count}</b> کاربر
-{$user_info_link}{$user_name_mention}
-🆔 <code>{$fetch[0]['admin']}</code>
-
-🔰 می خواهید چند روز به آن اضافه کنید؟",
-					'reply_markup'=>json_encode([
-						'keyboard'=>[
-							[['text'=>'🔙 بازگشت به + اشتراک ویژه']],
-							[['text'=>'🔙 بازگشت به مدیریت']],
-						],
-						'resize_keyboard'=>true
-					])
-				]);
-			}
-			else {
-				bot('sendMessage', [
-					'chat_id'=>$chat_id,
-					'reply_to_message_id'=>$message_id,
-					'text'=>"🎖 اشتراک ویژه برای ربات @{$bot_username} فعال نیست.
-
-🔰 می خواهید اشتراک چند روزه برای آن فعال کنید؟",
-					'reply_markup'=>json_encode([
-						'keyboard'=>[
-							[['text'=>'🔙 بازگشت به + اشتراک ویژه']],
-							[['text'=>'🔙 بازگشت به مدیریت']],
-						],
-						'resize_keyboard'=>true
-					])
-				]);
-			}
-		}
-		else {
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'text'=>'❌ این ربات وجود ندارد.'
-			]);
-		}
-	}
-	elseif (preg_match('@^set\_vip\_(?<bot>.+)$@i', $step, $matches)) {
-		$text = convert($text);
-		$bot_username = $matches['bot'];
-		$prepared = $pdo->prepare("SELECT * FROM `vip_bots` WHERE `bot`='{$bot_username}';");
-		$prepared->execute();
-		$fetch = $prepared->fetchAll();
-		if (!is_numeric($text) || ((int) $text) < 1) {
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'text'=>'❌ لطفا یک مقدار معتبر وارد کنید.'
-			]);
-		}
-		elseif (count($fetch) > 0) {
-			$data['step'] = 'none';
-			file_put_contents("Data/{$from_id}/data.json", json_encode($data));
-			$config = file_get_contents("Bots/{$bot_username}/config.php");
-			preg_match('/\$Dev\s=\s"(.*?)";/', $config, $match);
-			$Dev = $match[1];
-			preg_match('/\$Token\s=\s"(.*?)";/', $config, $match);
-			$token = $match[1];
-
-			$days = (int) $text;
-			$second = $days*24*60*60;
-			$new_end_time = $fetch[0]['end']+$second;
-			$prepared = $pdo->prepare("UPDATE `vip_bots` SET `end`={$new_end_time}, alert=0 WHERE `bot`='{$bot_username}';");
-			$prepared->execute();
-			bot('sendMessage', [
-				'chat_id'=>$Dev,
-				'text'=>"✅ {$days} روز به زمان اشتراک ویژه ربات شما اضافه گردید."
-			], $token);
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'text'=>"✅ {$days} روز به زمان اشتراک ویژه ربات @{$bot_username} اضافه گردید.",
-				'reply_markup'=>$panel
-			]);
-		}
-		else {
-			$data['step'] = 'none';
-			file_put_contents("Data/{$from_id}/data.json", json_encode($data));
-			$config = file_get_contents("Bots/{$bot_username}/config.php");
-			preg_match('/\$Dev\s=\s"(.*?)";/', $config, $match);
-			$Dev = $match[1];
-			preg_match('/\$Token\s=\s"(.*?)";/', $config, $match);
-			$token = $match[1];
-
-			$days = (int) $text;
-			$second = $days*24*60*60;
-			$end_time = time()+$second;
-			$prepare = $pdo->prepare("INSERT INTO `vip_bots` (`admin`, `bot`, `start`, `end`, `alert`) VALUES ('{$Dev}', '{$bot_username}', UNIX_TIMESTAMP(), '{$end_time}', 0);");
-			$prepare->execute();
-
-			bot('sendMessage', [
-				'chat_id'=>$Dev,
-				'text'=>"✅ اشتراک ویژه {$days} روزه برای ربات شما فعال گردید."
-			], $token);
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'text'=>"✅ اشتراک ویژه {$days} روزه برای ربات @{$bot_username} فعال گردید.",
-				'reply_markup'=>$panel
-			]);
-		}
-	}
-	elseif ($text == '➖ اشتراک ویژه' || $text == '🔙 بازگشت به - اشتراک ویژه') {
-		sendAction($chat_id);
-		$data['step'] = 'del_vip';
-		file_put_contents("Data/{$from_id}/data.json", json_encode($data));
-		bot('sendMessage', [
-			'chat_id'=>$chat_id,
-			'reply_to_message_id'=>$message_id,
-			'text'=>'🔰 لطفا یوزرنیم ربات مورد نظرتان را ارسال کنید.',
-			'reply_markup'=>$backpanel
-		]);
-	}
-	elseif ($step == 'del_vip') {
-		sendAction($chat_id);
-		$bot_username = trim(str_replace('@', '', strtolower($text)));
-		if (is_dir("Bots/{$bot_username}")) {
-			$prepared = $pdo->prepare("SELECT * FROM `vip_bots` WHERE `bot`='{$bot_username}';");
-			$prepared->execute();
-			$fetch = $prepared->fetchAll();
-			if (count($fetch) > 0) {
-				$data['step'] = "del_vip_{$bot_username}";
-				file_put_contents("Data/{$from_id}/data.json", json_encode($data));
-				$get_chat = bot('getChat',
-				[
-					'chat_id'=>$fetch[0]['admin']
-				]);
-				$name = isset($get_chat->result->last_name) ? $get_chat->result->first_name . ' ' . $get_chat->result->last_name : $get_chat->result->first_name;
-				$name = str_replace(['<', '>'], '', $name);
-				$mention = isset($get_chat->result->username) ? 'https://telegram.me/' . $get_chat->result->username : "tg://user?id={$fetch[0]['admin']}";
-				$user_name_mention = "<a href='$mention'>$name</a>";
-				$user_info_link = "<a href='https://telegram.me/" . str_replace('@', '', $main_bot) . "?start=uid{$fetch[0]['admin']}'>👤 </a>";
-				$start_time = jdate('Y/m/j H:i:s', $fetch[0]['start']);
-				$end_time = jdate('Y/m/j H:i:s', $fetch[0]['end']);
-				$time_elapsed = timeElapsed($fetch[0]['end']-time());
-
-				bot('sendMessage', [
-					'chat_id'=>$chat_id,
-					'reply_to_message_id'=>$message_id,
-					'parse_mode'=>'html',
-					'disable_web_page_preview'=>true,
-					'text'=>"✅ اشتراک ویژه برای ربات @{$bot_username} فعال است.
-
-⏳ <b>{$start_time}</b>
-🧭 {$time_elapsed}
-⌛️ <b>{$end_time}</b>
-📊 <b>{$bot_count}</b> کاربر
-{$user_info_link}{$user_name_mention}
-🆔 <code>{$fetch[0]['admin']}</code>
-
-🔰 می خواهید چند روز از آن کم کنید؟",
-					'reply_markup'=>json_encode([
-						'keyboard'=>[
-							[['text'=>'🔙 بازگشت به - اشتراک ویژه']],
-							[['text'=>'🔙 بازگشت به مدیریت']],
-						],
-						'resize_keyboard'=>true
-					])
-				]);
-			}
-			else {
-				bot('sendMessage', [
-					'chat_id'=>$chat_id,
-					'reply_to_message_id'=>$message_id,
-					'text'=>"❌ اشتراک ویژه برای ربات @{$bot_username} فعال نیست."
-				]);
-			}
-		}
-		else {
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'text'=>'❌ این ربات وجود ندارد.'
-			]);
-		}
-	}
-	elseif (preg_match('@^del\_vip\_(?<bot>.+)$@i', $step, $matches)) {
-		$text = convert($text);
-		$bot_username = $matches['bot'];
-		$prepared = $pdo->prepare("SELECT * FROM `vip_bots` WHERE `bot`='{$bot_username}';");
-		$prepared->execute();
-		$fetch = $prepared->fetchAll();
-		if (!is_numeric($text) || ((int) $text) < 1) {
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'text'=>'❌ لطفا یک مقدار معتبر وارد کنید.'
-			]);
-		}
-		elseif (count($fetch) > 0) {
-			$data['step'] = 'none';
-			file_put_contents("Data/{$from_id}/data.json", json_encode($data));
-			$days = (int) $text;
-			$second = $days*24*60*60;
-			$new_end_time = $fetch[0]['end']-$second;
-			if ($new_end_time <= time()) {
-				$config = file_get_contents("Bots/{$bot_username}/config.php");
-				preg_match('/\$Token\s=\s"(.*?)";/', $config, $match);
-				$token = $match[1];
-				$prepare = $pdo->prepare("DELETE FROM `vip_bots` WHERE `bot`='{$bot_username}';");
-				$prepare->execute();
-				bot('sendMessage', [
-					'chat_id'=>$fetch[0]['admin'],
-					'text'=>"⚠️ اشتراک ویژه ربات شما حذف گردید."
-				], $token);
-				bot('sendMessage', [
-					'chat_id'=>$chat_id,
-					'reply_to_message_id'=>$message_id,
-					'text'=>"⚠️ اشتراک ویژه ربات @{$bot_username} حذف گردید.",
-					'reply_markup'=>$panel
-				]);
-			}
-			else {
-				$data['step'] = 'none';
-				file_put_contents("Data/{$from_id}/data.json", json_encode($data));
-				$config = file_get_contents("Bots/{$bot_username}/config.php");
-				preg_match('/\$Token\s=\s"(.*?)";/', $config, $match);
-				$token = $match[1];
-				$prepared = $pdo->prepare("UPDATE `vip_bots` SET `end`={$new_end_time}, alert=0 WHERE `bot`='{$bot_username}';");
-				$prepared->execute();
-				bot('sendMessage', [
-					'chat_id'=>$fetch[0]['admin'],
-					'text'=>"⚠️ {$days} روز از زمان اشتراک ویژه ربات شما کسر گردید."
-				], $token);
-				bot('sendMessage', [
-					'chat_id'=>$chat_id,
-					'reply_to_message_id'=>$message_id,
-					'text'=>"⚠️ {$days} روز از زمان اشتراک ویژه ربات @{$bot_username} کسر گردید.",
-					'reply_markup'=>$panel
-				]);
-			}
-		}
-		else {
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'text'=>"❌ اشتراک ویژه برای ربات @{$bot_username} فعال نیست."
-			]);
-		}
-	}
-	##-------------------
-	elseif ($text == '🔖 پیام همگانی') {
-		sendAction($chat_id);
-		$prepared = $pdo->prepare("SELECT * FROM `sendlist` WHERE `type`!='f2a';");
-		$prepared->execute();
-		$fetch = $prepared->fetchAll();
-		if (count($fetch) > 0) {
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'text'=>"❌ هنوز پیام قبلی شما در صف ارسال همگانی قرار دارد و برای کاربران ربات ارسال نشده است.
-	
-👇🏻 برای ثبت پیام همگانی جدید، ابتدا پیام همگانی قبلی را با استفاده از دستور زیر لغو کنید و یا اینکه منتظر بمانید تا پیام ارسال شدن آنرا دریافت نمایید.
-	
-/determents2a_{$fetch[0]['time']}"
-			]);
-		}
-		else {
-			$user_data = json_decode(file_get_contents("Data/$from_id/data.json"), true);
-			$user_data['step'] = 's2a';
-			file_put_contents("Data/{$from_id}/data.json", json_encode($user_data));
-	
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'parse_mode'=>'markdown',
-				'text'=>'📩 پیام مورد نظرتان را برای ارسال همگانی بفرستید.
-🔴 شما می توانید از متغیر های زیر استفاده کنید.
-
-▪️`FULL-NAME` 👉🏻 نام کامل کاربر
-▫️`F-NAME` 👉🏻 نام کاربر
-▪️`L-NAME` 👉🏻 نام خانوادگی کاربر
-▫️`U-NAME` 👉🏻 نام کاربری کاربر 
-▪️`TIME` 👉🏻 زمان به وقت ایران
-▫️`DATE` 👉🏻 تاریخ
-▪️`TODAY` 👉🏻 روز هفته',
-				'reply_markup'=>$backpanel
-			]);
-		}
-	}
-	elseif ($step == 's2a') {
-		sendAction($chat_id);
-		$prepared = $pdo->prepare("SELECT * FROM `sendlist` WHERE `type`!='f2a';");
-		$prepared->execute();
-		$fetch = $prepared->fetchAll();
-		if (count($fetch) > 0) {
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'text'=>"❌ هنوز پیام قبلی شما در صف ارسال همگانی قرار دارد و برای کاربران ربات ارسال نشده است.
-	
-👇🏻 برای ثبت پیام همگانی جدید، ابتدا پیام همگانی قبلی را با استفاده از دستور زیر لغو کنید و یا اینکه منتظر بمانید تا پیام ارسال شدن آنرا دریافت نمایید.
-	
-/determents2a_{$fetch[0]['time']}"
-			]);
-		}
-		else {
-			if (isset($update->message->media_group_id)) {
-				$is_file = is_file('Data/album-' . $update->message->media_group_id . '.json');
-				$media_group = json_decode(@file_get_contents('Data/album-' . $update->message->media_group_id . '.json'), true);
-		
-				$media_type = isset($update->message->video) ? 'video' : 'photo';
-				$media_file_id = isset($update->message->video) ? $update->message->video->file_id : $update->message->photo[count($update->message->photo)-1]->file_id;
-				$media_group[] = [
-					'type' => $media_type,
-					'media' => $media_file_id,
-					'caption' => isset($update->message->caption) ? $update->message->caption : ''
-				];
-		
-				file_put_contents('Data/album-' . $update->message->media_group_id . '.json', json_encode($media_group));
-		
-				$data = [
-					'media_group_id'=>$update->message->media_group_id
-				];
-		
-				$type = 'media_group';
-				if ($is_file) exit();
-		
-			}
-			elseif (isset($update->message->photo)) {
-				$data = [
-					'file_id'=>$update->message->photo[count($update->message->photo)-1]->file_id
-				];
-				$type = 'photo';
-			}
-			elseif (isset($update->message->video)) {
-				$data = [
-					'file_id'=>$update->message->video->file_id
-				];
-				$type = 'video';
-			}
-			elseif (isset($update->message->animation)) {
-				$data = [
-					'file_id'=>$update->message->animation->file_id
-				];
-				$type = 'animation';
-			}
-			elseif (isset($update->message->audio)) {
-				$data = [
-					'file_id'=>$update->message->audio->file_id
-				];
-				$type = 'audio';
-			}
-			elseif (isset($update->message->document)) {
-				$data = [
-					'file_id'=>$update->message->document->file_id
-				];
-				$type = 'document';
-			}
-			elseif (isset($update->message->video_note)) {
-				$data = [
-					'file_id'=>$update->message->video_note->file_id
-				];
-				$type = 'video_note';
-			}
-			elseif (isset($update->message->voice)) {
-				$data = [
-					'file_id'=>$update->message->voice->file_id
-				];
-				$type = 'voice';
-			}
-			elseif (isset($update->message->sticker)) {
-				$data = [
-					'file_id' => $update->message->sticker->file_id
-				];
-				$type = 'sticker';
-			}
-			elseif (isset($update->message->contact)) {
-				$data = [
-					'phone_number' => $update->message->contact->phone_number,
-					'phone_first' => $update->message->contact->first_name,
-					'phone_last' => $update->message->contact->last_name
-				];
-				$type = 'contact';
-			}
-			elseif (isset($update->message->location)) {
-				$data = [
-					'longitude' => $update->message->location->longitude,
-					'latitude' => $update->message->location->latitude
-				];
-				$type = 'location';
-			}
-			elseif (isset($update->message->text)) {
-				$data = [
-					'text' => utf8_encode($update->message->text)
-				];
-				$type = 'text';
-			}
-			else {
-				bot('sendMessage', [
-					'chat_id'=>$chat_id,
-					'reply_to_message_id'=>$message_id,
-					'text'=>'❌ این پیام پشتیبانی نمی شود.
-🔰 لطفا یک چیز دیگر ارسال نمایید.'
-				]);
-				exit();
-			}
-			$user_data = json_decode(file_get_contents("Data/$from_id/data.json"), true);
-			$user_data['step'] = '';
-			file_put_contents("Data/{$from_id}/data.json", json_encode($user_data));
-
-			$caption = ( isset($update->caption) ? $update->caption : (isset($update->message->caption) ? $update->message->caption : '') );
-			$data['caption'] = utf8_encode($caption);
-			$data = json_encode($data);
-			$time = time();
-		
-			$sql = "INSERT INTO `sendlist` (`user_id`, `offset`, `time`, `type`, `data`, `caption`) VALUES (:user_id, :offset, :time, :type, :data, :caption);";
-			$prepare = $pdo->prepare($sql);
-			$prepare->execute(['user_id'=>$user_id, 'offset'=>0, 'time'=>$time, 'type'=>$type, 'data'=>$data, 'caption'=>$caption]);
-		
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'text'=>"✅ پیام مورد نظر شما در صف ارسال همگانی قرار گرفت.
-				
-👇🏻 برای لغو ارسالی همگانی این پیام دستور زیر را بفرستید.
-/determents2a_{$time}",
-				'reply_markup'=>$panel
-			]);
-		}
-	}
-	elseif (isset($update->message->media_group_id) && is_file('Data/album-' . $update->message->media_group_id . '.json')) {
-		$media_group = json_decode(@file_get_contents('Data/album-' . $update->message->media_group_id . '.json'), true);
-	
-		$media_type = isset($update->message->video) ? 'video' : 'photo';
-		$media_file_id = isset($update->message->video) ? $update->message->video->file_id : $update->message->photo[count($update->message->photo)-1]->file_id;
-		$media_group[] = [
-			'type' => $media_type,
-			'media' => $media_file_id,
-			'caption' => isset($update->message->caption) ? $update->message->caption : ''
-		];
-	
-		file_put_contents('Data/album-' . $update->message->media_group_id . '.json', json_encode($media_group));
-	}
-	elseif ($text == '🚀 هدایت همگانی') {
-		sendAction($chat_id);
-		$prepared = $pdo->prepare("SELECT * FROM `sendlist` WHERE `type`='f2a';");
-		$prepared->execute();
-		$fetch = $prepared->fetchAll();
-		if (count($fetch) > 0) {
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'text'=>"❌ هنوز پیام قبلی شما در صف هدایت همگانی قرار دارد و برای کاربران ربات هدایت نشده است.
-	
-👇🏻 برای ثبت هدایت همگانی جدید، ابتدا هدایت همگانی قبلی را با استفاده از دستور زیر لغو کنید و یا اینکه منتظر بمانید تا پیام هدایت شدن آنرا دریافت نمایید.
-
-/determentf2a_{$fetch[0]['time']}"
-			]);
-		}
-		else {
-			$user_data = json_decode(file_get_contents("Data/$from_id/data.json"), true);
-			$user_data['step'] = 'f2a';
-			file_put_contents("Data/{$from_id}/data.json", json_encode($user_data));
-	
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'text'=>'🚀 پیام مورد نظرتان را برای هدایت همگانی بفرستید.',
-				'reply_markup'=>$backpanel
-			]);
-		}
-	}
-	elseif ($step == 'f2a') {
-		sendAction($chat_id);
-		$prepared = $pdo->prepare("SELECT * FROM `sendlist` WHERE `type`='f2a';");
-		$prepared->execute();
-		$fetch = $prepared->fetchAll();
-		if (count($fetch) > 0) {
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'text'=>"❌ هنوز پیام قبلی شما در صف هدایت همگانی قرار دارد و برای کاربران ربات هدایت نشده است.
-	
-👇🏻 برای ثبت هدایت همگانی جدید، ابتدا هدایت همگانی قبلی را با استفاده از دستور زیر لغو کنید و یا اینکه منتظر بمانید تا پیام هدایت شدن آنرا دریافت نمایید.
-
-/determentf2a_{$fetch[0]['time']}"
-			]);
-		}
-		else {
-			$user_data = json_decode(file_get_contents("Data/$from_id/data.json"), true);
-			$user_data['step'] = '';
-			file_put_contents("Data/{$from_id}/data.json", json_encode($user_data));
-	
-			$sql = "INSERT INTO `sendlist` (`user_id`, `offset`, `time`, `type`, `data`, `caption`) VALUES (:user_id, :offset, :time, :type, :data, :caption);";
-			$prepare = $pdo->prepare($sql);
-	
-			$data = [
-				'message_id' => $message_id,
-				'from_chat_id' => $chat_id
-			];
-			$time = time();
-			$prepare->execute(['user_id'=>$user_id, 'offset'=>0, 'time'=>$time, 'type'=>'f2a', 'data'=>json_encode($data), 'caption'=>'']);
-			
-			bot('sendMessage', [
-				'chat_id'=>$chat_id,
-				'reply_to_message_id'=>$message_id,
-				'text'=>"✅ پیام مورد نظر شما در صف هدایت همگانی قرار گرفت.
-	
-👇🏻 برای لغو هدایت همگانی این پیام دستور زیر را بفرستید.
-/determentf2a_{$time}",
-				'reply_markup'=>$panel
-			]);
-		}
-	}
-	elseif (preg_match('@\/determent(?<type>f2a|s2a|gift)\_(?<time>[0-9]+)@i', $text, $matches)) {
-		sendAction($chat_id);
-		$type = $matches['type'];
-		$time = $matches['time'];
-		if ($type == 's2a') {
-			$prepared = $pdo->prepare("SELECT * FROM `sendlist` WHERE `type`!='f2a' AND `time`=:time;");
-			$prepared->execute(['time' => $time]);
-			$fetch = $prepared->fetchAll();
-			if (count($fetch) > 0) {
-				$prepare = $pdo->prepare("DELETE FROM `sendlist` WHERE `user_id`={$user_id} AND `time`=:time;");
-				$prepare->execute(['time' => $time]);
-				bot('sendMessage', [
-					'chat_id'=>$chat_id,
-					'reply_to_message_id'=>$message_id,
-					'text'=>'✅ پیام مورد نظر شما از صف ارسال همگانی خارج شد.'
-				]);
-			}
-			else {
-				bot('sendMessage', [
-					'chat_id'=>$chat_id,
-					'reply_to_message_id'=>$message_id,
-					'text'=>'❌ هیچ پیامی با این شناسه وجود ندارد.'
-				]);
-			}
-		}
-		elseif ($type == 'f2a') {
-			$prepared = $pdo->prepare("SELECT * FROM `sendlist` WHERE `type`='f2a' AND `time`=:time;");
-			$prepared->execute(['time' => $time]);
-			$fetch = $prepared->fetchAll();
-			if (count($fetch) > 0) {
-				$prepare = $pdo->prepare("DELETE FROM `sendlist` WHERE `user_id`={$user_id} AND `time`=:time;");
-				$prepare->execute(['time' => $time]);
-				bot('sendMessage', [
-					'chat_id'=>$chat_id,
-					'reply_to_message_id'=>$message_id,
-					'text'=>'✅ پیام مورد نظر شما از صف هدایت همگانی خارج شد.'
-				]);
-			}
-			else {
-				bot('sendMessage', [
-					'chat_id'=>$chat_id,
-					'reply_to_message_id'=>$message_id,
-					'text'=>'❌ هیچ پیامی با این شناسه وجود ندارد.'
-				]);
-			}
-		}
-	}
-	##-------------------
-	elseif (preg_match('|/backup\s?\_?@?(?<bot>[a-zA-Z0-9\_]+bot)|ius', $text, $matches)) {
-		$botid = strtolower($matches['bot']);
-		if (is_dir("Bots/$botid/")) {
-			sendAction($chat_id, 'upload_document');
-			$prepared = $pdo->prepare("SELECT * FROM `{$botid}_members`;");
-			$prepared->execute();
-			$fetch = $prepared->fetchAll(PDO::FETCH_ASSOC);
-			file_put_contents("Bots/{$botid}/data/members.json", json_encode($fetch));
-			$file_to_zip = array(
-				"Bots/{$botid}/data/list.json",
-				"Bots/{$botid}/data/data.json",
-				"Bots/{$botid}/data/members.json"
-			);
-			$file_name = date('Y-m-d') . '_' . $botid . '_backup.zip';
-			CreateZip($file_to_zip, $file_name, "{$botid}_147852369");
-			$time = date('Y/m/d - H:i:s');
-			bot('sendDocument', [
-				'chat_id' => $chat_id,
-				'parse_mode' => 'html',
-				'document' => $zipfile = new CURLFile($file_name),
-				'caption' => "💾 نسخه پشتیبان\n\n🕰 <i>$time</i>\n\n👆🏻 این فایل شامل تمامی اطلاعات ربات @{$botid} است.",
-				'reply_markup' => $keyboard
-			]);
-			unlink($file_name);
-			unlink("Bots/{$botid}/data/members.json");
-		}
-		else {
-			sendAction($chat_id);
-			sendMessage($chat_id, "❌ هیچ رباتی با یوزرنیم @$botid وجود ندارد.", 'markdown', $message_id, $backpanel);
-		}
-	}
-	elseif ($text == "✖️ حذف ربات") {
-		sendAction($chat_id);
-		$data['step'] = "deletebot";
-		file_put_contents("Data/$from_id/data.json",json_encode($data));
-		sendMessage($chat_id, "🤖 یوزرنیم ربات مورد نظر خود را ارسال نمایید.", 'markdown', $message_id, $backpanel);
-	}
-	elseif ($step == "deletebot" and isset($text)) {
-		sendAction($chat_id);
-		$data['step'] = "none";
-		file_put_contents("Data/$from_id/data.json",json_encode($data));
-		$id = strtolower(trim(str_replace("@", null, $text)));
-		$botid = $id;
-		if (is_dir("Bots/$id/")) {
-			sendAction($chat_id, 'upload_document');
-			$prepared = $pdo->prepare("SELECT * FROM `{$botid}_members`;");
-			$prepared->execute();
-			$fetch = $prepared->fetchAll(PDO::FETCH_ASSOC);
-			file_put_contents("Bots/{$botid}/data/members.json", json_encode($fetch));
-			$file_to_zip = array(
-				"Bots/{$botid}/data/list.json",
-				"Bots/{$botid}/data/data.json",
-				"Bots/{$botid}/data/members.json"
-			);
-			$file_name = date('Y-m-d') . '_' . $botid . '_backup.zip';
-			CreateZip($file_to_zip, $file_name, "{$botid}_147852369");
-			$time = date('Y/m/d - H:i:s');
-			bot('sendDocument', [
-				'chat_id' => $chat_id,
-				'parse_mode' => 'html',
-				'document' => $zipfile = new CURLFile($file_name),
-				'caption' => "💾 نسخه پشتیبان\n\n🕰 <i>$time</i>\n\n👆🏻 این فایل شامل تمامی اطلاعات ربات @{$botid} است.",
-				'reply_markup' => $keyboard
-			]);
-			unlink($file_name);
-			unlink("Bots/{$botid}/data/members.json");
-
-			$config = file_get_contents('Bots/' . $id . '/config.php');
-			preg_match_all('/\$Dev\s=\s"(.*?)";/', $config, $match);
-			preg_match_all('/\$Token\s=\s"(.*?)";/', $config, $matchh);
-			file_get_contents("https://api.telegram.org/bot".$matchh[1][0]."/deleteWebHook");
-			$sdminn = $match[1][0];
-			$data = json_decode(file_get_contents('Data/' . $sdminn . '/data.json'), true);
-			$search = array_search('@' . $id, $data['bots']);
-			unset($data['bots'][$search]);
-			$data['bots'] = array_values($data['bots']);
-			file_put_contents('Data/' . $sdminn . '/data.json', json_encode($data));
-			sendMessage($sdminn, "🤖 ربات شما « @{$id} » توسط مدیریت حذف گردید.", null, $message_id, $panel);
-			deleteFolder('Bots/' . $id . '/');
-			sendMessage($chat_id, "🤖 ربات « @{$id} » با موفقیت حذف گردید.", null, $message_id, $panel);
-
-			$pdo->exec("DROP TABLE IF EXISTS `{$id}_members`;");
-			$prepare = $pdo->prepare("DELETE FROM `bots` WHERE `username`='{$id}';");
-			$prepare->execute();
-
-			$prepare = $pdo->prepare("DELETE FROM `bots_sendlist` WHERE `bot_username`='{$id}';");
-			$prepare->execute();
-		} else {
-			sendMessage($chat_id, "❌ هیچ رباتی با یوزرنیم « @{$id} » یافت نشد.", null, $message_id, $panel);
-		}
-	}
-	elseif ($text == "🔒 مسدود کردن") {
-		sendAction($chat_id);
-		$data['step'] = "banuser";
-		file_put_contents("Data/$from_id/data.json",json_encode($data));
-		sendMessage($chat_id, "👤 شناسه تلگرامی کاربر مورد نظر خود را ارسال نمایید.", 'markdown', $message_id, $backpanel);
-	}
-	elseif ($step == "banuser" and is_numeric($text)) {
-		sendAction($chat_id);
-		$data['step'] = '';
-		file_put_contents("Data/$from_id/data.json", json_encode($data));
-		if ($text == $from_id) {
-			sendMessage($chat_id, "⛔️ شما نمی توانید خودتان را مسدود کنید.", 'markdown', null, $panel);
-		}
-		elseif (!in_array($text, $list['ban'])) {
-			$user_bots = json_decode(file_get_contents('Data/' . $text . '/data.json'), true)['bots'];
-			if (count($user_bots) > 0) {
-				foreach ($user_bots as $bot) {
-					sendAction($chat_id, 'upload_document');
-					$bot = str_replace('@', '', $bot);
-					$botid = $bot;
-					$prepared = $pdo->prepare("SELECT * FROM `{$botid}_members`;");
-					$prepared->execute();
-					$fetch = $prepared->fetchAll(PDO::FETCH_ASSOC);
-					file_put_contents("Bots/{$botid}/data/members.json", json_encode($fetch));
-					$file_to_zip = array(
-						"Bots/{$botid}/data/list.json",
-						"Bots/{$botid}/data/data.json",
-						"Bots/{$botid}/data/members.json"
-					);
-					$file_name = date('Y-m-d') . '_' . $botid . '_backup.zip';
-					CreateZip($file_to_zip, $file_name, "{$botid}_147852369");
-					$time = date('Y/m/d - H:i:s');
-					bot('sendDocument', [
-						'chat_id' => $chat_id,
-						'parse_mode' => 'html',
-						'document' => $zipfile = new CURLFile($file_name),
-						'caption' => "💾 نسخه پشتیبان\n\n🕰 <i>$time</i>\n\n👆🏻 این فایل شامل تمامی اطلاعات ربات @{$botid} است.",
-						'reply_markup' => $keyboard
-					]);
-					unlink($file_name);
-					unlink("Bots/{$bot}/data/members.json");
-
-					sendMessage($text, "🤖 ربات « @{$bot} » توسط مدیریت حذف گردید.");
-					deleteFolder('Bots/' . $bot . '/');
-					$config = file_get_contents('Bots/' . $bot . '/config.php');
-					preg_match('/\$Token\s=\s"(.*?)";/', $config, $matches);
-					file_get_contents('https://api.telegram.org/bot' . $matches[1] . '/deleteWebhook');
-
-					$pdo->exec("DROP TABLE IF EXISTS `{$bot}_members`;");
-					$prepare = $pdo->prepare("DELETE FROM `bots` WHERE `username`='{$bot}';");
-					$prepare->execute();
-
-					$prepare = $pdo->prepare("DELETE FROM `bots_sendlist` WHERE `bot_username`='{$bot}';");
-					$prepare->execute();
-				}
-			}
-			deleteFolder('Data/' . $text . '/');
-
-			$list['ban'][] = $text;
-			file_put_contents('Data/list.json', json_encode($list));
-			sendMessage($text, "❌ شما مسدود شدید و دیگر ربات به پیام های شما جواب نخواهد داد.", null, null, $remove);
-			sendMessage($chat_id, "⛔️ کاربر « [$text](tg://user?id=$text) » با موفقیت مسدود شد.", 'markdown', null, $panel);
-		}
-		else {
-			sendMessage($chat_id, "⛔️ کاربر « [$text](tg://user?id=$text) » از قبل مسدود است.", 'markdown', null, $panel);
-		}
-	}
-	elseif ($text == "🔓 آزاد کردن") {
-		sendAction($chat_id);
-		$data['step'] = "unbanuser";
-		file_put_contents("Data/$from_id/data.json",json_encode($data));
-		sendMessage($chat_id, "👤 شناسه تلگرامی کاربر مورد نظر خود را ارسال نمایید.", 'markdown', $message_id, $backpanel);
-	}
-	elseif ($step == "unbanuser" and is_numeric($text)) {
-		sendAction($chat_id);
-		$data['step'] = "none";
-		file_put_contents("Data/$from_id/data.json",json_encode($data));
-		if (in_array($text, $list['ban'])) {
-			$search = array_search($text, $list['ban']);
-			unset($list['ban'][$search]);
-			$list['ban'] = array_values($list['ban']);
-			file_put_contents("Data/list.json",json_encode($list, true));
-			sendMessage($chat_id, "✅ کاربر « [$text](tg://user?id=$text) » با موفقیت آزاد شد.", 'markdown', null, $panel);
-			sendMessage($text, "✅ شما آزاد شدید.\n\n💠 دستور /start را ارسال نمایید.", 'markdown', null);
-		}
-		else
-		sendMessage($text, '❌ این کاربر در لیست سیاه نیست.', 'markdown', null);
-	}
-	elseif (preg_match("|\/unban([\_\s])([0-9]+)|i", $text, $match)) {
-		sendAction($chat_id);
-		if (in_array($match[2], $list['ban'])) {
-			$search = array_search($match[2], $list['ban']);
-			unset($list['ban'][$search]);
-			$list['ban'] = array_values($list['ban']);
-			file_put_contents("Data/list.json",json_encode($list, true));
-			sendMessage($chat_id, "✅ کاربر « [$match[2]](tg://user?id=$match[2]) » با موفقیت آزاد شد.", 'markdown', null, $panel);
-			$menu = json_encode(['keyboard'=>[
-				[['text'=>'🤖 ربات های من'],['text'=>'🔰 ساخت ربات']],
-				[['text'=>'🌈 ثبت تبلیغ']],
-				[['text'=>'📕 قوانین'],['text'=>'📖 راهنما']]
-			], 'resize_keyboard'=>true]);
-			sendMessage($match[2], "✅ شما آزاد شدید.\n\n💠 دستور /start را ارسال نمایید.", 'markdown', null, $menu);
-		}
-		else
-		sendMessage($chat_id, '❌ این کاربر در لیست سیاه نیست.', 'markdown', null);
-	}
-}
-@unlink('error_log');
+http_response_code(200);
+echo 'ok';
