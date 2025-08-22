@@ -4,6 +4,32 @@
 // Encoding: UTF-8
 // Minimum PHP: 7.4
 
+// Optional dotenv loader for local/server env files
+$__env = __DIR__ . '/.env';
+if (is_file($__env)) {
+    $lines = @file($__env, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    if (is_array($lines)) {
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '' || $line[0] === '#') continue;
+            if (strpos($line, '=') !== false) {
+                [$k, $v] = explode('=', $line, 2);
+                $k = trim($k);
+                $v = trim($v);
+                if ($v !== '' && $v[0] === '"' && substr($v, -1) === '"') {
+                    $v = substr($v, 1, -1);
+                }
+                if ($k !== '') {
+                    $current = getenv($k);
+                    if ($current === false || $current === '') {
+                        putenv($k . '=' . $v);
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ==========================
 // Configuration
 // ==========================
