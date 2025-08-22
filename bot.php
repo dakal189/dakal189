@@ -59,7 +59,6 @@ define('PUBLIC_ANNOUNCE_CHANNEL_ID', -1002798392543); // Optional public channel
 
 define('REFERRAL_REWARD_POINTS', 10);
 
-define('DAILY_BONUS_POINTS', 5);
 
 define('LOTTERY_TICKET_COST', 10);
 
@@ -360,8 +359,8 @@ function buildMainMenuKeyboard(bool $isAdmin): array {
     $keyboard = [
         ['📊 امتیاز من', '📎 لینک دعوت من'],
         ['🛒 فروشگاه آیتم‌ها', '📤 درخواست‌های من'],
-        ['🎁 جایزه روزانه', '👤 پروفایل'],
-        ['🏆 برترین‌ها', '🎲 قرعه‌کشی'],
+        ['👤 پروفایل', '🏆 برترین‌ها'],
+        ['🎲 قرعه‌کشی'],
     ];
     if ($isAdmin) {
         $keyboard[] = ['🛠 پنل ادمین'];
@@ -747,22 +746,8 @@ function listUserRequests(int $userId, int $limit = 10): array {
 }
 
 // ==========================
-// Business Logic: Daily Bonus
+// Business Logic: Weekly Top Referrals
 // ==========================
-
-function tryGrantDailyBonus(int $userId): array {
-    $stmt = pdo()->prepare('SELECT last_bonus_date FROM users WHERE user_id = ?');
-    $stmt->execute([$userId]);
-    $row = $stmt->fetch();
-    $today = todayUtc();
-    if ($row && $row['last_bonus_date'] === $today) {
-        return [false, 'شما امروز جایزه روزانه را دریافت کرده‌اید.'];
-    }
-    $stmt = pdo()->prepare('UPDATE users SET points = points + ?, last_bonus_date = ? WHERE user_id = ?');
-    $stmt->execute([DAILY_BONUS_POINTS, $today, $userId]);
-    updateUserLevel($userId);
-    return [true, '🎁 جایزه روزانه شما (' . DAILY_BONUS_POINTS . ' امتیاز) واریز شد.'];
-}
 
 // ==========================
 // Business Logic: Weekly Top Referrals
@@ -1560,10 +1545,6 @@ if ($messageText !== null) {
                 $lines[] = '#' . $r['id'] . ' | ' . $r['item_name'] . ' | ' . $r['cost_points'] . ' امتیاز | ' . ($r['status'] === 'pending' ? 'در حال بررسی' : ($r['status'] === 'approved' ? 'تایید شده' : 'رد شده'));
             }
             tgSendMessage($chatId, implode("\n", $lines));
-            break;
-        case '🎁 جایزه روزانه':
-            [$ok, $msg] = tryGrantDailyBonus($userId);
-            tgSendMessage($chatId, $msg);
             break;
         case '👤 پروفایل':
             $u = getUser($userId);
