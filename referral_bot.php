@@ -15,17 +15,17 @@ $CONFIG = [
 		'webhook_secret' => getenv('WEBHOOK_SECRET') ?: 'change-me-secret',
 	],
 	'db' => [
-		'host' => getenv('DB_HOST') ?: '127.0.0.1',
+		'host' => getenv('DB_HOST') ?: 'localhost',
 		'port' => (int)(getenv('DB_PORT') ?: 3306),
-		'database' => getenv('DB_DATABASE') ?: 'referral_bot',
-		'username' => getenv('DB_USERNAME') ?: 'root',
-		'password' => getenv('DB_PASSWORD') ?: '',
+		'database' => getenv('DB_DATABASE') ?: 'dakallli_Test2',
+		'username' => getenv('DB_USERNAME') ?: 'dakallli_Test2',
+		'password' => getenv('DB_PASSWORD') ?: 'hosyarww123',
 		'charset' => getenv('DB_CHARSET') ?: 'utf8mb4',
 	],
 	'telegram' => [
-		'token' => getenv('TELEGRAM_BOT_TOKEN') ?: '',
-		'admin_id' => (int)(getenv('TELEGRAM_ADMIN_ID') ?: 0), // telegram user id
-		'admin_group_id' => getenv('TELEGRAM_ADMIN_GROUP_ID') ?: '', // e.g. -100123...
+		'token' => getenv('TELEGRAM_BOT_TOKEN') ?: '7657246591:AAF9b-UEuyypu5tIhQ-KrMvqnxn56vIxIXQ',
+		'admin_id' => (int)(getenv('TELEGRAM_ADMIN_ID') ?: 5641303137), // telegram user id
+		'admin_group_id' => getenv('TELEGRAM_ADMIN_GROUP_ID') ?: '-1002987179440', // e.g. -100123...
 		'api_base' => 'https://api.telegram.org',
 	],
 	'settings' => [
@@ -36,6 +36,11 @@ $CONFIG = [
 ];
 
 date_default_timezone_set($CONFIG['app']['timezone']);
+
+// ====== PHP ERROR LOGGING ======
+error_reporting(E_ALL);
+ini_set('log_errors', '1');
+ini_set('display_errors', '0');
 
 // ====== LOGGING ======
 $LOG_FILE = __DIR__ . '/storage/logs/referral_single.log';
@@ -52,8 +57,11 @@ function log_error(string $msg, array $ctx = []): void {
 }
 
 // ====== SECURITY (webhook secret) ======
-$secret = $_GET['secret'] ?? '';
-if (!empty($CONFIG['app']['webhook_secret']) && $secret !== $CONFIG['app']['webhook_secret']) {
+$secretHeader = $_SERVER['HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN'] ?? '';
+$secretQuery = $_GET['secret'] ?? '';
+$expectedSecret = (string)($CONFIG['app']['webhook_secret'] ?? '');
+if (!empty($expectedSecret) && ($secretHeader !== $expectedSecret && $secretQuery !== $expectedSecret)) {
+	log_error('Forbidden webhook secret mismatch', ['ip' => $_SERVER['REMOTE_ADDR'] ?? '']);
 	http_response_code(403);
 	echo 'forbidden';
 	exit;
@@ -62,6 +70,7 @@ if (!empty($CONFIG['app']['webhook_secret']) && $secret !== $CONFIG['app']['webh
 // ====== INPUT ======
 $raw = file_get_contents('php://input');
 if (!$raw) {
+	log_info('Empty body');
 	echo 'ok';
 	exit;
 }
@@ -80,6 +89,7 @@ try {
 		PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
 		PDO::ATTR_EMULATE_PREPARES => false,
 	]);
+	log_info('DB connected');
 } catch (Throwable $e) {
 	log_error('DB connect failed', ['e' => $e->getMessage()]);
 	echo 'ok';
@@ -87,108 +97,139 @@ try {
 }
 
 // Ensure tables exist (minimal schema)
-$pdo->exec("CREATE TABLE IF NOT EXISTS users (
-	id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-	telegram_id BIGINT NOT NULL UNIQUE,
-	username VARCHAR(64) NULL,
-	first_name VARCHAR(128) NULL,
-	last_name VARCHAR(128) NULL,
-	language_code VARCHAR(8) NULL,
-	points INT NOT NULL DEFAULT 0,
-	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-$pdo->exec("CREATE TABLE IF NOT EXISTS referrals (
-	id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-	inviter_user_id BIGINT UNSIGNED NOT NULL,
-	invitee_user_id BIGINT UNSIGNED NOT NULL,
-	status ENUM('pending','qualified','revoked') NOT NULL DEFAULT 'pending',
-	qualified_at TIMESTAMP NULL,
-	revoked_at TIMESTAMP NULL,
-	UNIQUE KEY uniq_ref_pair (inviter_user_id, invitee_user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-$pdo->exec("CREATE TABLE IF NOT EXISTS points_transactions (
-	id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-	user_id BIGINT UNSIGNED NOT NULL,
-	amount INT NOT NULL,
-	type ENUM('referral_reward','spend','revoke','adjust') NOT NULL,
-	reference_id BIGINT NULL,
-	description VARCHAR(255) NULL,
-	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	INDEX idx_user_created (user_id, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-$pdo->exec("CREATE TABLE IF NOT EXISTS items (
-	id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-	name VARCHAR(128) NOT NULL,
-	required_points INT NOT NULL,
-	is_active TINYINT(1) NOT NULL DEFAULT 1,
-	priority INT NOT NULL DEFAULT 0,
-	stock INT NULL,
-	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-$pdo->exec("CREATE TABLE IF NOT EXISTS orders (
-	id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-	user_id BIGINT UNSIGNED NOT NULL,
-	item_id BIGINT UNSIGNED NOT NULL,
-	status ENUM('pending','under_review','approved','rejected') NOT NULL DEFAULT 'pending',
-	note VARCHAR(255) NULL,
-	admin_id BIGINT UNSIGNED NULL,
-	admin_message_id BIGINT NULL,
-	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-$pdo->exec("CREATE TABLE IF NOT EXISTS admins (
-	user_id BIGINT UNSIGNED PRIMARY KEY,
-	role ENUM('owner','admin') NOT NULL DEFAULT 'admin',
-	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-$pdo->exec("CREATE TABLE IF NOT EXISTS forced_channels (
-	id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-	channel_id VARCHAR(64) NOT NULL,
-	title VARCHAR(128) NULL,
-	is_required TINYINT(1) NOT NULL DEFAULT 1,
-	created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-$pdo->exec("CREATE TABLE IF NOT EXISTS settings (
-	`key` VARCHAR(64) PRIMARY KEY,
-	`value` VARCHAR(255) NOT NULL,
-	updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+try {
+	$pdo->exec("CREATE TABLE IF NOT EXISTS users (
+		id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+		telegram_id BIGINT NOT NULL UNIQUE,
+		username VARCHAR(64) NULL,
+		first_name VARCHAR(128) NULL,
+		last_name VARCHAR(128) NULL,
+		language_code VARCHAR(8) NULL,
+		points INT NOT NULL DEFAULT 0,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+	$pdo->exec("CREATE TABLE IF NOT EXISTS referrals (
+		id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+		inviter_user_id BIGINT UNSIGNED NOT NULL,
+		invitee_user_id BIGINT UNSIGNED NOT NULL,
+		status ENUM('pending','qualified','revoked') NOT NULL DEFAULT 'pending',
+		qualified_at TIMESTAMP NULL,
+		revoked_at TIMESTAMP NULL,
+		UNIQUE KEY uniq_ref_pair (inviter_user_id, invitee_user_id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+	$pdo->exec("CREATE TABLE IF NOT EXISTS points_transactions (
+		id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+		user_id BIGINT UNSIGNED NOT NULL,
+		amount INT NOT NULL,
+		type ENUM('referral_reward','spend','revoke','adjust') NOT NULL,
+		reference_id BIGINT NULL,
+		description VARCHAR(255) NULL,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_user_created (user_id, created_at)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+	$pdo->exec("CREATE TABLE IF NOT EXISTS items (
+		id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+		name VARCHAR(128) NOT NULL,
+		required_points INT NOT NULL,
+		is_active TINYINT(1) NOT NULL DEFAULT 1,
+		priority INT NOT NULL DEFAULT 0,
+		stock INT NULL,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+	$pdo->exec("CREATE TABLE IF NOT EXISTS orders (
+		id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+		user_id BIGINT UNSIGNED NOT NULL,
+		item_id BIGINT UNSIGNED NOT NULL,
+		status ENUM('pending','under_review','approved','rejected') NOT NULL DEFAULT 'pending',
+		note VARCHAR(255) NULL,
+		admin_id BIGINT UNSIGNED NULL,
+		admin_message_id BIGINT NULL,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+	$pdo->exec("CREATE TABLE IF NOT EXISTS admins (
+		user_id BIGINT UNSIGNED PRIMARY KEY,
+		role ENUM('owner','admin') NOT NULL DEFAULT 'admin',
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+	$pdo->exec("CREATE TABLE IF NOT EXISTS forced_channels (
+		id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+		channel_id VARCHAR(64) NOT NULL,
+		title VARCHAR(128) NULL,
+		is_required TINYINT(1) NOT NULL DEFAULT 1,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+	$pdo->exec("CREATE TABLE IF NOT EXISTS settings (
+		`key` VARCHAR(64) PRIMARY KEY,
+		`value` VARCHAR(255) NOT NULL,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+} catch (Throwable $e) {
+	log_error('Schema create failed', ['e' => $e->getMessage()]);
+	echo 'ok';
+	exit;
+}
 
 // Seed owner admin from env (telegram id)
-if (!empty($CONFIG['telegram']['admin_id'])) {
-	$tgAdminId = (int)$CONFIG['telegram']['admin_id'];
-	$user = $pdo->prepare('SELECT * FROM users WHERE telegram_id = ?');
-	$user->execute([$tgAdminId]);
-	$u = $user->fetch();
-	if (!$u) {
-		$pdo->prepare('INSERT INTO users (telegram_id, username) VALUES (?, ?)')->execute([$tgAdminId, null]);
-		$uId = (int)$pdo->lastInsertId();
-		$pdo->prepare('INSERT INTO admins (user_id, role) VALUES (?, ?) ON DUPLICATE KEY UPDATE role = VALUES(role)')->execute([$uId, 'owner']);
-	} else {
-		$pdo->prepare('INSERT INTO admins (user_id, role) VALUES (?, ?) ON DUPLICATE KEY UPDATE role = VALUES(role)')->execute([(int)$u['id'], 'owner']);
+try {
+	if (!empty($CONFIG['telegram']['admin_id'])) {
+		$tgAdminId = (int)$CONFIG['telegram']['admin_id'];
+		$user = $pdo->prepare('SELECT * FROM users WHERE telegram_id = ?');
+		$user->execute([$tgAdminId]);
+		$u = $user->fetch();
+		if (!$u) {
+			$pdo->prepare('INSERT INTO users (telegram_id, username) VALUES (?, ?)')->execute([$tgAdminId, null]);
+			$uId = (int)$pdo->lastInsertId();
+			$pdo->prepare('INSERT INTO admins (user_id, role) VALUES (?, ?) ON DUPLICATE KEY UPDATE role = VALUES(role)')->execute([$uId, 'owner']);
+		} else {
+			$pdo->prepare('INSERT INTO admins (user_id, role) VALUES (?, ?) ON DUPLICATE KEY UPDATE role = VALUES(role)')->execute([(int)$u['id'], 'owner']);
+		}
 	}
+} catch (Throwable $e) {
+	log_error('Admin seed failed', ['e' => $e->getMessage()]);
 }
 
 // ====== TELEGRAM CLIENT ======
 function tg_call(string $method, array $params = []) {
 	global $CONFIG;
 	$url = rtrim($CONFIG['telegram']['api_base'], '/') . '/bot' . $CONFIG['telegram']['token'] . '/' . $method;
-	$ch = curl_init($url);
-	curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-	curl_setopt($ch, CURLOPT_POST, true);
-	curl_setopt($ch, CURLOPT_POSTFIELDS, $params);
-	curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
-	curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-	$res = curl_exec($ch);
-	if ($res === false) {
-		$err = curl_error($ch);
+	$useCurl = function_exists('curl_init');
+	if ($useCurl) {
+		$ch = curl_init($url);
+		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+		curl_setopt($ch, CURLOPT_POST, true);
+		curl_setopt($ch, CURLOPT_POSTFIELDS, $params);
+		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+		curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+		$res = curl_exec($ch);
+		if ($res === false) {
+			$err = curl_error($ch);
+			curl_close($ch);
+			throw new RuntimeException('Telegram request failed: ' . $err);
+		}
+		$code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 		curl_close($ch);
-		throw new RuntimeException('Telegram request failed: ' . $err);
+	} else {
+		$opts = [
+			'http' => [
+				'method' => 'POST',
+				'header' => "Content-Type: application/x-www-form-urlencoded\r\n",
+				'content' => http_build_query($params),
+				'timeout' => 30,
+			]
+		];
+		$context = stream_context_create($opts);
+		$res = @file_get_contents($url, false, $context);
+		$code = 0;
+		if (isset($http_response_header) && preg_match('#\s(\d{3})\s#', $http_response_header[0], $m)) {
+			$code = (int)$m[1];
+		}
+		if ($res === false) {
+			throw new RuntimeException('Telegram request failed (no curl)');
+		}
 	}
-	$code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-	curl_close($ch);
 	$data = json_decode($res, true) ?: [];
 	if ($code !== 200 || !($data['ok'] ?? false)) {
 		throw new RuntimeException('Telegram API error: ' . ($data['description'] ?? 'unknown'));
@@ -244,7 +285,7 @@ function admin_is(PDO $pdo, int $telegramId): bool {
 	$adm = db_fetch_one($pdo, 'SELECT * FROM admins WHERE user_id = ?', [(int)$u['id']]);
 	if ($adm) return true;
 	global $CONFIG;
-	if (!empty($CONFIG['telegram']['admin_id']) && $CONFIG['telegram']['admin_id'] == $telegramId) {
+	if (!empty($CONFIG['telegram']['admin_id']) && (int)$CONFIG['telegram']['admin_id'] === $telegramId) {
 		$pdo->prepare('INSERT INTO admins (user_id, role) VALUES (?, ?) ON DUPLICATE KEY UPDATE role = VALUES(role)')->execute([(int)$u['id'], 'owner']);
 		return true;
 	}
@@ -306,6 +347,7 @@ function qualify_referral_if_pending(PDO $pdo, int $inviteeUserId): ?array {
 // ====== ROUTER ======
 try {
 	if (isset($update['message'])) {
+		log_info('onMessage', ['from' => $update['message']['from']['id'] ?? null]);
 		$chatId = $update['message']['chat']['id'];
 		$from = $update['message']['from'] ?? $update['message']['chat'];
 		$user = ensure_user($pdo, $from);
@@ -414,6 +456,7 @@ try {
 	}
 
 	if (isset($update['callback_query'])) {
+		log_info('onCallback', ['from' => $update['callback_query']['from']['id'] ?? null, 'data' => $update['callback_query']['data'] ?? '']);
 		$cb = $update['callback_query'];
 		$data = $cb['data'] ?? '';
 		$message = $cb['message'] ?? null;
@@ -494,7 +537,7 @@ try {
 
 		if (strpos($data, 'order_approve:') === 0 || strpos($data, 'order_reject:') === 0) {
 			$orderId = (int)substr($data, strpos($data, ':') + 1);
-			$isApprove = str_starts_with($data, 'order_approve:');
+			$isApprove = strpos($data, 'order_approve:') === 0;
 			if (!admin_is($pdo, (int)$from['id'])) {
 				tg_answerCallbackQuery(['callback_query_id' => $cb['id'], 'text' => 'دسترسی ندارید.']);
 				return;
