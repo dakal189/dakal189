@@ -416,8 +416,7 @@ function buildMainMenuKeyboard(bool $isAdmin): array {
     $keyboard = [
         ['📊 امتیاز من', '📎 لینک دعوت من'],
         ['🛒 فروشگاه آیتم‌ها', '📤 درخواست‌های من'],
-        ['👤 پروفایل', '🏆 برترین‌ها'],
-        ['🎲 قرعه‌کشی'],
+        ['👤 پروفایل', '🎲 قرعه‌کشی'],
     ];
     if ($isAdmin) {
         $keyboard[] = ['🛠 پنل ادمین'];
@@ -807,62 +806,8 @@ function listUserRequests(int $userId, int $limit = 10): array {
 // ==========================
 
 // ==========================
-// Business Logic: Weekly Top Referrals
+// Weekly Top Referrals feature removed per requirements
 // ==========================
-
-function computeTopReferrersForWeek(string $weekStartDate, int $limit = 10): array {
-    $weekEndDate = weekEndSundayUtcByStart($weekStartDate);
-    $stmt = pdo()->prepare('SELECT inviter_id, COUNT(*) as invites FROM referrals WHERE created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY) + INTERVAL 6 DAY + INTERVAL 1 SECOND GROUP BY inviter_id ORDER BY invites DESC, inviter_id ASC LIMIT ?');
-    // Using date range: [weekStart 00:00:00, weekEnd 23:59:59]
-    $stmt->bindValue(1, $weekStartDate . ' 00:00:00');
-    $stmt->bindValue(2, $weekStartDate . ' 00:00:00');
-    $stmt->bindValue(3, $limit, PDO::PARAM_INT);
-    $stmt->execute();
-    return $stmt->fetchAll();
-}
-
-function runWeeklyReferralRewardsCron(): string {
-    $weekStartPrev = previousWeekStartMondayUtc();
-    // Check if rewarded already
-    $stmt = pdo()->prepare('SELECT 1 FROM weekly_referral_rewards WHERE week_start_date = ?');
-    $stmt->execute([$weekStartPrev]);
-    if ($stmt->fetch()) {
-        return 'پاداش‌های هفتگی قبلاً برای این هفته پرداخت شده است.';
-    }
-
-    $top = computeTopReferrersForWeek($weekStartPrev, 10);
-    if (empty($top)) {
-        // Record to avoid repeat checks
-        $stmt = pdo()->prepare('INSERT INTO weekly_referral_rewards (week_start_date, rewarded_at) VALUES (?, ?)');
-        $stmt->execute([$weekStartPrev, nowUtc()]);
-        return 'هیچ دعوتی برای هفته قبل ثبت نشده است.';
-    }
-
-    $rewardsText = [];
-    $pos = 1;
-    foreach ($top as $row) {
-        if (!isset(WEEKLY_TOP_REWARDS[$pos])) break;
-        $userId = (int) $row['inviter_id'];
-        $prize = (int) WEEKLY_TOP_REWARDS[$pos];
-        addUserPoints($userId, $prize);
-        $rewardsText[] = "#{$pos}) {$userId} ➜ +{$prize} امتیاز";
-        $pos++;
-    }
-
-    $stmt = pdo()->prepare('INSERT INTO weekly_referral_rewards (week_start_date, rewarded_at) VALUES (?, ?)');
-    $stmt->execute([$weekStartPrev, nowUtc()]);
-
-    $announce = '🏆 نتایج مسابقه هفتگی (شروع: ' . $weekStartPrev . ")\n" . implode("\n", $rewardsText);
-
-    if (PUBLIC_ANNOUNCE_CHANNEL_ID) {
-        tgSendMessage(PUBLIC_ANNOUNCE_CHANNEL_ID, $announce);
-    }
-    if (ADMIN_GROUP_ID) {
-        tgSendMessage(ADMIN_GROUP_ID, $announce);
-    }
-
-    return 'پاداش‌های هفتگی پرداخت شد.\n' . $announce;
-}
 
 // ==========================
 // Business Logic: Lottery
@@ -1087,7 +1032,6 @@ function adminHelpText(): string {
         '/sub_points user_id amount',
         '/ban user_id',
         '/unban user_id',
-        '/cron_weekly  (پاداش تاپ رفرال هفته قبل)',
         '/cron_lottery (قرعه‌کشی هفته قبل)',
         '/lottery_create عنوان | cost=10|ref | prize=200 | bonus=0',
         '/lottery_list',
@@ -1598,8 +1542,6 @@ if ($messageText !== null) {
             $reply = adminBanUser((int) $m[1]);
         } elseif (preg_match('/^\/unban\s+(\d+)/', $messageText, $m)) {
             $reply = adminUnbanUser((int) $m[1]);
-        } elseif (preg_match('/^\/cron_weekly$/', $messageText)) {
-            $reply = runWeeklyReferralRewardsCron();
         } elseif (preg_match('/^\/cron_lottery$/', $messageText)) {
             $reply = runWeeklyLotteryDrawCron();
         } elseif (preg_match('/^\/lottery_create\s+(.+)\|\s*cost=(ref|\d+)\s*\|\s*prize=(\d+)\s*(?:\|\s*bonus=(\d+))?$/u', $messageText, $m)) {
