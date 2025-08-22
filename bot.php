@@ -1422,62 +1422,74 @@ if ($callbackId && $data !== null) {
         exit;
     }
 
-    // Top menus
-    if ($data === 'top_ref') {
-        $stmt = pdo()->prepare('SELECT user_id, username, referrals_count FROM users ORDER BY referrals_count DESC, user_id ASC LIMIT 10');
-        $stmt->execute();
-        $rows = $stmt->fetchAll();
-        if (empty($rows)) { tgAnswerCallbackQuery($callbackId, 'داده‌ای نیست'); exit; }
-        $lines = ['👥 برترین‌های رفرال (همیشگی):'];
-        $rank = 1;
-        foreach ($rows as $r) {
-            $uname = $r['username'] ? '@' . $r['username'] : (string)$r['user_id'];
-            $lines[] = $rank . ' - ' . $uname . ' : ' . $r['referrals_count'] . ' 👤';
-            $rank++;
+    // Admin nested menus and actions
+    if ($isAdminUser) {
+        if ($data === 'admin_items') {
+            tgAnswerCallbackQuery($callbackId, '');
+            tgEditMessageText($chatId, $messageId, '🎁 مدیریت آیتم‌ها', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '➕ افزودن آیتم', 'callback_data' => 'admin_items_add' ], [ 'text' => '❌ حذف آیتم', 'callback_data' => 'admin_items_del' ] ], [ [ 'text' => '📋 لیست آیتم‌ها', 'callback_data' => 'admin_items_list' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
+            exit;
         }
-        tgEditMessageText($chatId, $messageId, implode("\n", $lines), [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '⬅️ بازگشت', 'callback_data' => 'top_back' ] ] ] ] ]);
-        exit;
-    }
-    if ($data === 'top_pts') {
-        $stmt = pdo()->prepare('SELECT user_id, username, points FROM users ORDER BY points DESC, user_id ASC LIMIT 10');
-        $stmt->execute();
-        $rows = $stmt->fetchAll();
-        if (empty($rows)) { tgAnswerCallbackQuery($callbackId, 'داده‌ای نیست'); exit; }
-        $lines = ['⭐ برترین‌های امتیاز (همیشگی):'];
-        $rank = 1;
-        foreach ($rows as $r) {
-            $uname = $r['username'] ? '@' . $r['username'] : (string)$r['user_id'];
-            $lines[] = $rank . ' - ' . $uname . ' : ' . $r['points'] . ' ⭐';
-            $rank++;
+        if ($data === 'admin_channels') {
+            tgAnswerCallbackQuery($callbackId, '');
+            tgEditMessageText($chatId, $messageId, '📢 مدیریت کانال‌ها', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '➕ افزودن کانال اجباری', 'callback_data' => 'admin_channels_add' ], [ 'text' => '❌ حذف کانال', 'callback_data' => 'admin_channels_del' ] ], [ [ 'text' => '📋 لیست کانال‌ها', 'callback_data' => 'admin_channels_list' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
+            exit;
         }
-        tgEditMessageText($chatId, $messageId, implode("\n", $lines), [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '⬅️ بازگشت', 'callback_data' => 'top_back' ] ] ] ] ]);
-        exit;
-    }
-    if ($data === 'top_back') {
-        tgEditMessageText($chatId, $messageId, 'یک گزینه را انتخاب کنید:', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '👥 برترین‌های رفرال', 'callback_data' => 'top_ref' ], [ 'text' => '⭐ برترین‌های امتیاز', 'callback_data' => 'top_pts' ] ] ] ] ]);
-        exit;
-    }
+        if ($data === 'admin_users') {
+            tgAnswerCallbackQuery($callbackId, '');
+            tgEditMessageText($chatId, $messageId, '👥 مدیریت کاربران', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '📋 لیست کاربران', 'callback_data' => 'admin_users_list' ], [ 'text' => '🔍 جستجوی user_id', 'callback_data' => 'admin_users_search' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
+            exit;
+        }
+        if ($data === 'admin_points') {
+            tgAnswerCallbackQuery($callbackId, '');
+            tgEditMessageText($chatId, $messageId, '💰 مدیریت امتیاز', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '📝 تنظیم امتیاز', 'callback_data' => 'admin_points_set' ], [ 'text' => '➕ افزودن', 'callback_data' => 'admin_points_add' ], [ 'text' => '➖ کم کردن', 'callback_data' => 'admin_points_sub' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
+            exit;
+        }
+        if ($data === 'admin_ban') {
+            tgAnswerCallbackQuery($callbackId, '');
+            tgEditMessageText($chatId, $messageId, '🚫 مدیریت بن', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '🚷 بن کردن', 'callback_data' => 'admin_ban_user' ], [ 'text' => '✅ آزاد کردن', 'callback_data' => 'admin_unban_user' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
+            exit;
+        }
+        if ($data === 'admin_lottery') {
+            tgAnswerCallbackQuery($callbackId, '');
+            tgEditMessageText($chatId, $messageId, '🎲 مدیریت قرعه‌کشی', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '🎯 ساخت جدید', 'callback_data' => 'admin_lottery_new' ], [ 'text' => '📋 لیست', 'callback_data' => 'admin_lottery_list' ] ], [ [ 'text' => '⛔ بستن', 'callback_data' => 'admin_lottery_close' ], [ 'text' => '🎟 انجام قرعه‌کشی', 'callback_data' => 'admin_lottery_draw' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
+            exit;
+        }
+        if ($data === 'admin_reports') {
+            tgAnswerCallbackQuery($callbackId, '');
+            tgEditMessageText($chatId, $messageId, '🏆 گزارش‌ها و کرون‌جاب', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '🎰 قرعه‌کشی هفتگی', 'callback_data' => 'admin_cron_lottery' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
+            exit;
+        }
+        if ($data === 'admin_main') {
+            tgAnswerCallbackQuery($callbackId, '');
+            tgEditMessageText($chatId, $messageId, 'انتخاب کنید:', [ 'reply_markup' => buildAdminMainMenuKeyboard() ]);
+            exit;
+        }
 
-    // Custom lottery callbacks
-    if (strpos($data, 'lot_buy_') === 0) {
-        $lotId = (int) substr($data, strlen('lot_buy_'));
-        $lot = getCustomLottery($lotId);
-        if (!$lot) { tgAnswerCallbackQuery($callbackId, 'قرعه‌کشی یافت نشد.', true); exit; }
-        [$ok, $msg] = buyCustomLotteryTicket($userId, $lot);
-        tgAnswerCallbackQuery($callbackId, $ok ? 'انجام شد' : $msg, !$ok);
-        if ($ok) tgSendMessage($chatId, $msg);
-        exit;
-    }
-    if (strpos($data, 'lot_info_') === 0) {
-        $lotId = (int) substr($data, strlen('lot_info_'));
-        $lot = getCustomLottery($lotId);
-        if (!$lot) { tgAnswerCallbackQuery($callbackId, 'قرعه‌کشی یافت نشد.', true); exit; }
-        $cost = is_null($lot['entry_cost_points']) ? 'ورود با رفرال' : ('هزینه: ' . $lot['entry_cost_points']);
-        $bonus = (int)$lot['referral_bonus_per_invite'];
-        $txt = '🎲 ' . $lot['title'] . "\n" . $cost . "\n" . 'جایزه: ' . $lot['prize_points'] . ' امتیاز' . ($bonus > 0 ? "\n" . '🎁 بلیط اضافه به ازای هر دعوت: ' . $bonus : '');
-        tgAnswerCallbackQuery($callbackId, '');
-        tgSendMessage($chatId, $txt);
-        exit;
+        // Prompt states
+        if ($data === 'admin_items_add') { setAdminState($userId, 'await_item_add'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '➕ لطفاً به صورت «نام | هزینه» ارسال کنید.'); exit; }
+        if ($data === 'admin_items_del') { setAdminState($userId, 'await_item_del'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '❌ لطفاً ID آیتم را ارسال کنید.'); exit; }
+        if ($data === 'admin_items_list') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, adminItemsList()); exit; }
+
+        if ($data === 'admin_channels_add') { setAdminState($userId, 'await_channel_add'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '➕ شناسه کانال (مثل @username یا -100...) را بفرستید.'); exit; }
+        if ($data === 'admin_channels_del') { setAdminState($userId, 'await_channel_del'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '❌ chat_id کانال را بفرستید.'); exit; }
+        if ($data === 'admin_channels_list') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, adminChannelsList()); exit; }
+
+        if ($data === 'admin_users_list') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, adminUsersList(1)); exit; }
+        if ($data === 'admin_users_search') { setAdminState($userId, 'await_users_search'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '🔍 user_id را بفرستید.'); exit; }
+
+        if ($data === 'admin_points_set') { setAdminState($userId, 'await_points_set'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '📝 به صورت «user_id amount» ارسال کنید.'); exit; }
+        if ($data === 'admin_points_add') { setAdminState($userId, 'await_points_add'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '➕ به صورت «user_id amount» ارسال کنید.'); exit; }
+        if ($data === 'admin_points_sub') { setAdminState($userId, 'await_points_sub'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '➖ به صورت «user_id amount» ارسال کنید.'); exit; }
+
+        if ($data === 'admin_ban_user') { setAdminState($userId, 'await_ban'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '🚷 user_id کاربر برای بن کردن؟'); exit; }
+        if ($data === 'admin_unban_user') { setAdminState($userId, 'await_unban'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '✅ user_id کاربر برای آزاد کردن؟'); exit; }
+
+        if ($data === 'admin_lottery_new') { setAdminState($userId, 'await_lottery_new'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '🎯 فرمت: عنوان | cost=10|ref | prize=200 | bonus=0'); exit; }
+        if ($data === 'admin_lottery_list') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, adminLotteryList()); exit; }
+        if ($data === 'admin_lottery_close') { setAdminState($userId, 'await_lottery_close'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '⛔ ID قرعه‌کشی برای بستن؟'); exit; }
+        if ($data === 'admin_lottery_draw') { setAdminState($userId, 'await_lottery_draw'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '🎟 ID قرعه‌کشی برای انجام قرعه‌کشی؟'); exit; }
+
+        if ($data === 'admin_cron_lottery') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, runWeeklyLotteryDrawCron()); exit; }
     }
 
     // Unknown callback
@@ -1512,7 +1524,7 @@ if ($messageText !== null) {
         exit;
     }
 
-    // Admin commands
+    // Admin commands (legacy)
     if ($isAdminUser && substr($messageText, 0, 1) === '/') {
         $reply = null;
         if (preg_match('/^\/add_item\s+(.+)\|(\s*\d+)$/u', $messageText, $m)) {
@@ -1565,6 +1577,30 @@ if ($messageText !== null) {
         if ($messageText[0] === '/') {
             tgSendMessage($chatId, adminHelpText());
             exit;
+        }
+    }
+
+    // Admin state inputs
+    if ($isAdminUser) {
+        $st = getAdminState($userId);
+        if ($st && isset($st['state'])) {
+            $s = $st['state'];
+            if ($s === 'await_item_add') {
+                if (preg_match('/^(.+)\|(\s*\d+)$/u', $messageText, $m)) { tgSendMessage($chatId, adminAddItem(trim($m[1]), (int)trim($m[2]))); clearAdminState($userId); } else { tgSendMessage($chatId, 'فرمت نامعتبر. «نام | هزینه»'); }
+                exit;
+            }
+            if ($s === 'await_item_del') { if (preg_match('/^(\d+)$/', $messageText)) { tgSendMessage($chatId, adminDeleteItem((int)$messageText)); clearAdminState($userId); } else { tgSendMessage($chatId, 'ID نامعتبر'); } exit; }
+            if ($s === 'await_channel_add') { tgSendMessage($chatId, adminChannelsAdd(trim($messageText))); clearAdminState($userId); exit; }
+            if ($s === 'await_channel_del') { tgSendMessage($chatId, adminChannelsDel(trim($messageText))); clearAdminState($userId); exit; }
+            if ($s === 'await_users_search') { if (preg_match('/^-?\d+$/', $messageText)) { tgSendMessage($chatId, adminUsersList(1)); } else { tgSendMessage($chatId, 'user_id نامعتبر'); } clearAdminState($userId); exit; }
+            if ($s === 'await_points_set') { if (preg_match('/^(\d+)\s+(-?\d+)$/', $messageText, $m)) { tgSendMessage($chatId, adminSetPoints((int)$m[1], (int)$m[2])); clearAdminState($userId); } else { tgSendMessage($chatId, 'فرمت نامعتبر. «user_id amount»'); } exit; }
+            if ($s === 'await_points_add') { if (preg_match('/^(\d+)\s+(-?\d+)$/', $messageText, $m)) { tgSendMessage($chatId, adminAddPoints((int)$m[1], (int)$m[2])); clearAdminState($userId); } else { tgSendMessage($chatId, 'فرمت نامعتبر. «user_id amount»'); } exit; }
+            if ($s === 'await_points_sub') { if (preg_match('/^(\d+)\s+(-?\d+)$/', $messageText, $m)) { tgSendMessage($chatId, adminSubPoints((int)$m[1], (int)$m[2])); clearAdminState($userId); } else { tgSendMessage($chatId, 'فرمت نامعتبر. «user_id amount»'); } exit; }
+            if ($s === 'await_ban') { if (preg_match('/^(\d+)$/', $messageText)) { tgSendMessage($chatId, adminBanUser((int)$messageText)); clearAdminState($userId); } else { tgSendMessage($chatId, 'user_id نامعتبر'); } exit; }
+            if ($s === 'await_unban') { if (preg_match('/^(\d+)$/', $messageText)) { tgSendMessage($chatId, adminUnbanUser((int)$messageText)); clearAdminState($userId); } else { tgSendMessage($chatId, 'user_id نامعتبر'); } exit; }
+            if ($s === 'await_lottery_new') { if (preg_match('/^(.+)\|\s*cost=(ref|\d+)\s*\|\s*prize=(\d+)\s*(?:\|\s*bonus=(\d+))?$/u', $messageText, $m)) { $title = trim($m[1]); $costSpec = $m[2] === 'ref' ? 'ref' : (int)$m[2]; $prize = (int)$m[3]; $bonus = isset($m[4]) ? (int)$m[4] : 0; tgSendMessage($chatId, adminLotteryCreate($title, $costSpec, $prize, $bonus)); clearAdminState($userId); } else { tgSendMessage($chatId, 'فرمت نامعتبر. عنوان | cost=10|ref | prize=200 | bonus=0'); } exit; }
+            if ($s === 'await_lottery_close') { if (preg_match('/^(\d+)$/', $messageText)) { tgSendMessage($chatId, adminLotteryClose((int)$messageText)); clearAdminState($userId); } else { tgSendMessage($chatId, 'ID نامعتبر'); } exit; }
+            if ($s === 'await_lottery_draw') { if (preg_match('/^(\d+)$/', $messageText)) { tgSendMessage($chatId, adminLotteryDraw((int)$messageText)); clearAdminState($userId); } else { tgSendMessage($chatId, 'ID نامعتبر'); } exit; }
         }
     }
 
