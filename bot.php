@@ -270,6 +270,12 @@ function ensureTables(): void {
             INDEX idx_inviter_invited (inviter_id, invited_id),
             FOREIGN KEY (lottery_id) REFERENCES custom_lotteries(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+
+        // Key-Value settings
+        "CREATE TABLE IF NOT EXISTS settings (
+            `key` VARCHAR(64) PRIMARY KEY,
+            `value` VARCHAR(255) NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
     ];
 
     $pdo = pdo();
@@ -279,6 +285,45 @@ function ensureTables(): void {
 
     // Attempt to add revoked_at to referrals if missing
     try { $pdo->exec("ALTER TABLE referrals ADD COLUMN IF NOT EXISTS revoked_at DATETIME NULL"); } catch (Throwable $e) { /* ignore */ }
+}
+
+function getSetting(string $key, ?string $default = null): ?string {
+    $stmt = pdo()->prepare('SELECT `value` FROM settings WHERE `key` = ?');
+    $stmt->execute([$key]);
+    $row = $stmt->fetch();
+    if ($row && isset($row['value'])) return (string)$row['value'];
+    return $default;
+}
+
+function setSetting(string $key, string $value): void {
+    $stmt = pdo()->prepare('INSERT INTO settings (`key`, `value`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)');
+    $stmt->execute([$key, $value]);
+}
+
+function getBotEnabled(): bool {
+    return getSetting('bot_enabled', '1') === '1';
+}
+
+function setBotEnabled(bool $enabled): void {
+    setSetting('bot_enabled', $enabled ? '1' : '0');
+}
+
+function buildAdminPanelInlineKeyboard(bool $enabled): array {
+    $toggleText = $enabled ? '🔴 خاموش کردن ربات' : '🟢 روشن کردن ربات';
+    $toggleCb = $enabled ? 'bot_off' : 'bot_on';
+    return [
+        'inline_keyboard' => [
+            [ [ 'text' => $toggleText, 'callback_data' => $toggleCb ] ],
+            [ [ 'text' => '🛒 لیست آیتم‌ها', 'callback_data' => 'admin_items_list' ] ],
+            [ [ 'text' => '📢 کانال‌های اجباری', 'callback_data' => 'admin_channels_list' ] ],
+            [ [ 'text' => '📝 راهنمای ادمین', 'callback_data' => 'admin_help' ] ],
+        ],
+    ];
+}
+
+function showAdminPanel(int $chatId): void {
+    $enabled = getBotEnabled();
+    tgSendMessage($chatId, '🛠 پنل ادمین', [ 'reply_markup' => buildAdminPanelInlineKeyboard($enabled) ]);
 }
 
 // ==========================
@@ -1194,6 +1239,9 @@ function lotteryInfoText(): string {
 
 ensureTables();
 
+// Ensure bot_enabled default
+if (getSetting('bot_enabled', null) === null) { setBotEnabled(true); }
+
 // Seed initial required channel if not present
 (function () {
     $chatId = -1002798392543; // required channel/group
@@ -1288,6 +1336,7 @@ if ($callbackId && $data !== null) {
     // Gating for user callbacks in private chat (except verify/noop)
     if ($chatId === $userId && !$isAdminUser && $data !== 'verify_sub' && $data !== 'noop') {
         if (!enforceMembershipGate($chatId, $userId, false)) { echo 'OK'; exit; }
+        if (!getBotEnabled()) { tgAnswerCallbackQuery($callbackId, 'ربات توسط مدیریت خاموش شده است.', true); echo 'OK'; exit; }
     }
     if ($data === 'verify_sub') {
         if (isMemberAllRequiredChannels($userId)) {
@@ -1302,6 +1351,26 @@ if ($callbackId && $data !== null) {
         echo 'OK';
         exit;
     }
+
+    // Admin inline: show help/items/channels
+    if ($isAdminUser && $data === 'admin_help') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, adminHelpText(), [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
+    if ($isAdminUser && $data === 'admin_items_list') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, adminItemsList(), [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
+    if ($isAdminUser && $data === 'admin_channels_list') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, adminChannelsList(), [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
+
+    // Admin: bot on/off confirmations
+    if ($isAdminUser && $data === 'bot_off') {
+        tgAnswerCallbackQuery($callbackId, '');
+        tgEditMessageText($chatId, $messageId, 'آیا مطمئنید می‌خواهید ربات را خاموش کنید؟', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '✅ بله', 'callback_data' => 'bot_off_yes' ], [ 'text' => '❌ خیر', 'callback_data' => 'admin_back' ] ] ] ] ]);
+        exit;
+    }
+    if ($isAdminUser && $data === 'bot_on') {
+        tgAnswerCallbackQuery($callbackId, '');
+        tgEditMessageText($chatId, $messageId, 'آیا مطمئنید می‌خواهید ربات را روشن کنید؟', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '✅ بله', 'callback_data' => 'bot_on_yes' ], [ 'text' => '❌ خیر', 'callback_data' => 'admin_back' ] ] ] ] ]);
+        exit;
+    }
+    if ($isAdminUser && $data === 'bot_off_yes') { setBotEnabled(false); tgAnswerCallbackQuery($callbackId, 'ربات خاموش شد'); tgEditMessageText($chatId, $messageId, 'ربات خاموش شد.', [ 'reply_markup' => buildAdminPanelInlineKeyboard(false) ]); exit; }
+    if ($isAdminUser && $data === 'bot_on_yes') { setBotEnabled(true); tgAnswerCallbackQuery($callbackId, 'ربات روشن شد'); tgEditMessageText($chatId, $messageId, 'ربات روشن شد.', [ 'reply_markup' => buildAdminPanelInlineKeyboard(true) ]); exit; }
+    if ($isAdminUser && $data === 'admin_back') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, '🛠 پنل ادمین', [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
 
     if (strpos($data, 'req_item_') === 0) {
         $itemId = (int) substr($data, strlen('req_item_'));
@@ -1459,7 +1528,7 @@ if ($messageText !== null) {
 
     // Admin panel
     if ($messageText === '🛠 پنل ادمین' && $isAdminUser) {
-        tgSendMessage($chatId, adminHelpText());
+        showAdminPanel($chatId);
         exit;
     }
 
@@ -1523,6 +1592,7 @@ if ($messageText !== null) {
 
     // For non-admin users, enforce membership before using the bot
     if (!$isAdminUser) {
+        if (!getBotEnabled()) { tgSendMessage($chatId, '⛔️ ربات توسط مدیریت خاموش شده است.'); exit; }
         if (!enforceMembershipGate($chatId, $userId, false)) exit;
     }
 
