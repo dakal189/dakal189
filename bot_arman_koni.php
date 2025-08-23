@@ -1207,15 +1207,40 @@ function adminLotteryDraw(int $lotteryId): string {
     $stmt->execute([$lotteryId]);
     $rows = $stmt->fetchAll();
     if (empty($rows)) return 'هیچ بلیتی برای این قرعه‌کشی ثبت نشده است.';
+    // Load prize tiers
+    $pstmt = pdo()->prepare('SELECT * FROM custom_lottery_prizes WHERE lottery_id = ? ORDER BY rank ASC');
+    $pstmt->execute([$lotteryId]);
+    $prizes = $pstmt->fetchAll();
     $total = 0; foreach ($rows as $r) { $total += (int)$r['t']; }
-    $rand = random_int(1, $total);
-    $acc = 0; $winner = 0;
-    foreach ($rows as $r) { $acc += (int)$r['t']; if ($acc >= $rand) { $winner = (int)$r['user_id']; break; } }
-    if ($winner <= 0) return 'خطا در انتخاب برنده.';
-    // Prize points
-    if ((int)$lot['prize_points'] > 0) { addUserPoints($winner, (int)$lot['prize_points']); }
-    pdo()->prepare('UPDATE custom_lotteries SET drawn_at = ?, winner_user_id = ?, total_tickets = ? WHERE id = ?')->execute([nowUtc(), $winner, $total, $lotteryId]);
-    $msg = '🎲 برنده قرعه‌کشی #' . $lotteryId . ' («' . $lot['title'] . '») کاربر ' . $winner . ' است.';
+    $winners = [];
+    $usedUserIds = [];
+    if (!empty($prizes)) {
+        foreach ($prizes as $pz) {
+            if ($total <= 0) break;
+            $rand = random_int(1, $total);
+            $acc = 0; $winner = 0; $winIdx = -1;
+            foreach ($rows as $idx => $r) { $acc += (int)$r['t']; if ($acc >= $rand) { $winner = (int)$r['user_id']; $winIdx = $idx; break; } }
+            if ($winner <= 0) continue;
+            if (in_array($winner, $usedUserIds, true)) { continue; }
+            $usedUserIds[] = $winner;
+            $winners[] = [ 'user_id' => $winner, 'rank' => (int)$pz['rank'], 'prize_points' => $pz['prize_points'], 'prize_text' => $pz['prize_text'] ];
+            $total -= (int)$rows[$winIdx]['t'];
+            array_splice($rows, $winIdx, 1);
+        }
+    } else {
+        $rand = random_int(1, $total);
+        $acc = 0; $winner = 0;
+        foreach ($rows as $r) { $acc += (int)$r['t']; if ($acc >= $rand) { $winner = (int)$r['user_id']; break; } }
+        if ($winner <= 0) return 'خطا در انتخاب برنده.';
+        $winners[] = [ 'user_id' => $winner, 'rank' => 1, 'prize_points' => (int)$lot['prize_points'], 'prize_text' => $lot['prize_text'] ?? null ];
+    }
+    // Award and record
+    $pdo = pdo();
+    foreach ($winners as $w) { if (!empty($w['prize_points'])) { addUserPoints((int)$w['user_id'], (int)$w['prize_points']); } }
+    $pdo->prepare('UPDATE custom_lotteries SET drawn_at = ?, total_tickets = ? WHERE id = ?')->execute([nowUtc(), $total, $lotteryId]);
+    $lines = [ '🎲 نتایج قرعه‌کشی #' . $lotteryId . ' («' . $lot['title'] . '»):' ];
+    foreach ($winners as $w) { $lines[] = '#' . $w['rank'] . ' — ' . $w['user_id'] . (!empty($w['prize_points']) ? (' | +' . $w['prize_points'] . ' امتیاز') : '') . (!empty($w['prize_text']) ? (' | ' . $w['prize_text']) : ''); }
+    $msg = implode("\n", $lines);
     if (PUBLIC_ANNOUNCE_CHANNEL_ID) tgSendMessage(PUBLIC_ANNOUNCE_CHANNEL_ID, $msg);
     if (ADMIN_GROUP_ID) tgSendMessage(ADMIN_GROUP_ID, $msg);
     return $msg;
