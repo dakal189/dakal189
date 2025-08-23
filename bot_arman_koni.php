@@ -519,6 +519,13 @@ function tgAnswerCallbackQuery(string $callbackId, string $text = '', bool $show
     ]);
 }
 
+function tgDeleteMessage(int $chatId, int $messageId): array {
+    return apiRequest('deleteMessage', [
+        'chat_id' => $chatId,
+        'message_id' => $messageId,
+    ]);
+}
+
 function tgGetChatMember($chatId, int $userId): array {
     return apiRequest('getChatMember', [
         'chat_id' => $chatId,
@@ -1778,28 +1785,28 @@ if ($callbackId && $data !== null) {
         if ($data === 'admin_close') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, 'پنل بسته شد.', []); exit; }
 
         // Prompt states
-        if ($data === 'admin_items_add') { setAdminState($userId, 'await_item_add_name'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '➕ نام آیتم را بفرستید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
-        if ($data === 'admin_items_del') { setAdminState($userId, 'await_item_del'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '❌ لطفاً ID آیتم را ارسال کنید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
+        if ($data === 'admin_items_add') { setAdminState($userId, 'await_item_add_name'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '➕ نام آیتم را بفرستید.', buildAdminPromptKeyboard()); exit; }
+        if ($data === 'admin_items_del') { setAdminState($userId, 'await_item_del'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '❌ لطفاً ID آیتم را ارسال کنید.', buildAdminPromptKeyboard()); exit; }
         if ($data === 'admin_items_list') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, adminItemsList()); exit; }
 
-        if ($data === 'admin_channels_add') { setAdminState($userId, 'await_channel_add'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '➕ شناسه کانال (مثل @username یا -100...) را بفرستید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
-        if ($data === 'admin_channels_del') { setAdminState($userId, 'await_channel_del'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '❌ chat_id کانال را بفرستید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
+        if ($data === 'admin_channels_add') { setAdminState($userId, 'await_channel_add'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '➕ شناسه کانال (مثل @username یا -100...) را بفرستید.', buildAdminPromptKeyboard()); exit; }
+        if ($data === 'admin_channels_del') { setAdminState($userId, 'await_channel_del'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '❌ chat_id کانال را بفرستید.', buildAdminPromptKeyboard()); exit; }
         if ($data === 'admin_channels_list') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, adminChannelsList(), [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
 
         if ($data === 'admin_users_list') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, adminUsersList(1)); exit; }
-        if ($data === 'admin_users_search') { setAdminState($userId, 'await_users_search'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '🔍 user_id را بفرستید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
+        if ($data === 'admin_users_search') { setAdminState($userId, 'await_users_search'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '🔍 user_id را بفرستید.', buildAdminPromptKeyboard()); exit; }
 
-        if ($data === 'admin_points_set') { setAdminState($userId, 'await_points_set'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '📝 به صورت «user_id amount» ارسال کنید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
-        if ($data === 'admin_points_add') { setAdminState($userId, 'await_points_add'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '➕ به صورت «user_id amount» ارسال کنید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
-        if ($data === 'admin_points_sub') { setAdminState($userId, 'await_points_sub'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '➖ به صورت «user_id amount» ارسال کنید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
+        if ($data === 'admin_points_set') { setAdminState($userId, 'await_points_set'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '📝 به صورت «user_id amount» ارسال کنید.', buildAdminPromptKeyboard()); exit; }
+        if ($data === 'admin_points_add') { setAdminState($userId, 'await_points_add'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '➕ به صورت «user_id amount» ارسال کنید.', buildAdminPromptKeyboard()); exit; }
+        if ($data === 'admin_points_sub') { setAdminState($userId, 'await_points_sub'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '➖ به صورت «user_id amount» ارسال کنید.', buildAdminPromptKeyboard()); exit; }
 
-        if ($data === 'admin_ban_user') { setAdminState($userId, 'await_ban'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '🚷 user_id کاربر برای بن کردن؟', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
-        if ($data === 'admin_unban_user') { setAdminState($userId, 'await_unban'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '✅ user_id کاربر برای آزاد کردن؟', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
+        if ($data === 'admin_ban_user') { setAdminState($userId, 'await_ban'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '🚷 user_id کاربر برای بن کردن؟', buildAdminPromptKeyboard()); exit; }
+        if ($data === 'admin_unban_user') { setAdminState($userId, 'await_unban'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '✅ user_id کاربر برای آزاد کردن؟', buildAdminPromptKeyboard()); exit; }
 
-        if ($data === 'admin_lottery_new') { setAdminState($userId, 'lot_w_title'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '📝 عنوان قرعه‌کشی را بفرستید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
+        if ($data === 'admin_lottery_new') { setAdminState($userId, 'lot_w_title'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '📝 عنوان قرعه‌کشی را بفرستید.', buildAdminPromptKeyboard()); exit; }
         if ($data === 'admin_lottery_list') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, adminLotteryList()); exit; }
-        if ($data === 'admin_lottery_close') { setAdminState($userId, 'await_lottery_close'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '⛔ ID قرعه‌کشی برای بستن؟', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
-        if ($data === 'admin_lottery_draw') { setAdminState($userId, 'await_lottery_draw'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '🎟 ID قرعه‌کشی برای انجام قرعه‌کشی؟', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
+        if ($data === 'admin_lottery_close') { setAdminState($userId, 'await_lottery_close'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '⛔ ID قرعه‌کشی برای بستن؟', buildAdminPromptKeyboard()); exit; }
+        if ($data === 'admin_lottery_draw') { setAdminState($userId, 'await_lottery_draw'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '🎟 ID قرعه‌کشی برای انجام قرعه‌کشی؟', buildAdminPromptKeyboard()); exit; }
 
         if ($data === 'admin_cron_lottery') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, runWeeklyLotteryDrawCron()); exit; }
 
@@ -1942,13 +1949,13 @@ if ($messageText !== null) {
             }
             if ($s === 'await_item_add_name') {
                 $name = trim($messageText);
-                if ($name === '') { tgSendMessage($chatId, 'نام آیتم نامعتبر است.', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
+                if ($name === '') { adminPrompt($chatId, $userId, 'نام آیتم نامعتبر است.', buildAdminPromptKeyboard()); exit; }
                 setAdminState($userId, 'await_item_add_cost', [ 'name' => $name ]);
-                tgSendMessage($chatId, 'مقدار امتیاز مورد نیاز را بفرستید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]);
+                adminPrompt($chatId, $userId, 'مقدار امتیاز مورد نیاز را بفرستید.', buildAdminPromptKeyboard());
                 exit;
             }
             if ($s === 'await_item_add_cost') {
-                if (!preg_match('/^\d+$/', $messageText)) { tgSendMessage($chatId, 'عدد معتبر بفرستید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
+                if (!preg_match('/^\d+$/', $messageText)) { adminPrompt($chatId, $userId, 'عدد معتبر بفرستید.', buildAdminPromptKeyboard()); exit; }
                 $cost = (int) $messageText;
                 $data = $st['data'] ?? [];
                 $name = $data['name'] ?? '';
@@ -1960,13 +1967,13 @@ if ($messageText !== null) {
             // Lottery wizard
             if ($s === 'lot_w_title') {
                 $title = trim($messageText);
-                if ($title === '') { tgSendMessage($chatId, 'عنوان نامعتبر است.', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
+                if ($title === '') { adminPrompt($chatId, $userId, 'عنوان نامعتبر است.', buildAdminPromptKeyboard()); exit; }
                 setAdminState($userId, 'lot_w_entry_type', [ 'title' => $title ]);
-                tgSendMessage($chatId, 'نوع ورود را انتخاب کنید:', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => 'با امتیاز', 'callback_data' => 'lotw_entry_points' ], [ 'text' => 'با رفرال', 'callback_data' => 'lotw_entry_ref' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_back' ], [ 'text' => '❌ انصراف', 'callback_data' => 'admin_cancel' ] ] ] ] ]);
+                adminPrompt($chatId, $userId, 'نوع ورود را انتخاب کنید:', [ 'inline_keyboard' => [ [ [ 'text' => 'با امتیاز', 'callback_data' => 'lotw_entry_points' ], [ 'text' => 'با رفرال', 'callback_data' => 'lotw_entry_ref' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_back' ], [ 'text' => '❌ انصراف', 'callback_data' => 'admin_cancel' ] ] ] ]);
                 exit;
             }
             if ($s === 'lot_w_entry_points') {
-                if (!preg_match('/^\d+$/', $messageText)) { tgSendMessage($chatId, 'عدد امتیاز ورود را بفرستید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
+                if (!preg_match('/^\d+$/', $messageText)) { adminPrompt($chatId, $userId, 'عدد امتیاز ورود را بفرستید.', buildAdminPromptKeyboard()); exit; }
                 $data = $st['data'] ?? [];
                 $data['entry_cost_points'] = (int)$messageText;
                 setAdminState($userId, 'lot_w_prize_type', $data);
@@ -1974,7 +1981,7 @@ if ($messageText !== null) {
                 exit;
             }
             if ($s === 'lot_w_entry_ref') {
-                if (!preg_match('/^\d+$/', $messageText)) { tgSendMessage($chatId, 'تعداد رفرال موردنیاز را بفرستید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
+                if (!preg_match('/^\d+$/', $messageText)) { adminPrompt($chatId, $userId, 'تعداد رفرال موردنیاز را بفرستید.', buildAdminPromptKeyboard()); exit; }
                 $data = $st['data'] ?? [];
                 $data['entry_cost_points'] = null;
                 $data['referral_required_count'] = (int)$messageText;
@@ -2184,4 +2191,20 @@ function isUserEligibleForLottery(array $lottery, int $userId): array {
         }
     }
     return [true, ''];
+}
+
+function adminPrompt(int $chatId, int $userId, string $text, array $replyMarkup = null): void {
+    $st = getAdminState($userId);
+    $data = $st['data'] ?? [];
+    if (isset($data['last_msg_id'])) {
+        try { tgDeleteMessage($chatId, (int)$data['last_msg_id']); } catch (Throwable $e) { /* ignore */ }
+        unset($data['last_msg_id']);
+    }
+    $opts = [];
+    if ($replyMarkup !== null) { $opts['reply_markup'] = $replyMarkup; }
+    $sent = tgSendMessage($chatId, $text, $opts);
+    if (($sent['ok'] ?? false) && isset($sent['result']['message_id']) && $st && isset($st['state'])) {
+        $data['last_msg_id'] = (int)$sent['result']['message_id'];
+        setAdminState($userId, $st['state'], $data);
+    }
 }
