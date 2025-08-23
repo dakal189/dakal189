@@ -359,6 +359,7 @@ function buildAdminPanelInlineKeyboard(bool $enabled): array {
             [ [ 'text' => '💰 مدیریت امتیاز', 'callback_data' => 'admin_points' ] ],
             [ [ 'text' => '🚫 مدیریت بن', 'callback_data' => 'admin_ban' ] ],
             [ [ 'text' => '🎲 مدیریت قرعه‌کشی', 'callback_data' => 'admin_lottery' ] ],
+            [ [ 'text' => '⚙️ تنظیمات', 'callback_data' => 'admin_settings' ] ],
             [ [ 'text' => '🏆 گزارش‌ها و کرون‌جاب', 'callback_data' => 'admin_reports' ] ],
             [ [ 'text' => '❎ بستن پنل', 'callback_data' => 'admin_close' ] ],
         ],
@@ -1681,6 +1682,8 @@ if ($callbackId && $data !== null) {
     if ($isAdminUser && $data === 'bot_on_yes') { setBotEnabled(true); resetAllUserPointsAndReferrals(); tgAnswerCallbackQuery($callbackId, 'ربات روشن شد'); tgEditMessageText($chatId, $messageId, 'ربات روشن شد.', [ 'reply_markup' => buildAdminPanelInlineKeyboard(true) ]); exit; }
     if ($isAdminUser && $data === 'admin_back') { tgAnswerCallbackQuery($callbackId, ''); handleAdminBack($chatId, $messageId, $userId); exit; }
     if ($isAdminUser && $data === 'admin_cancel') { clearAdminState($userId); tgAnswerCallbackQuery($callbackId, 'انصراف'); tgEditMessageText($chatId, $messageId, '🛠 پنل ادمین', [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
+    if ($isAdminUser && $data === 'admin_settings') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, '⚙️ تنظیمات قابلیت‌ها', [ 'reply_markup' => buildAdminSettingsKeyboard() ]); exit; }
+    if ($isAdminUser && strpos($data, 'f_tog_') === 0) { $k = substr($data, strlen('f_tog_')); $new = isFeatureEnabled($k) ? '0' : '1'; setSetting('feature_' . $k, $new); tgAnswerCallbackQuery($callbackId, 'به‌روزرسانی شد'); tgEditMessageText($chatId, $messageId, '⚙️ تنظیمات قابلیت‌ها', [ 'reply_markup' => buildAdminSettingsKeyboard() ]); exit; }
 
     if (strpos($data, 'req_item_') === 0) {
         $itemId = (int) substr($data, strlen('req_item_'));
@@ -2107,16 +2110,20 @@ if ($messageText !== null) {
 
     switch ($messageText) {
         case '📊 امتیاز من':
+            if (!isFeatureEnabled('points')) { tgSendMessage($chatId, 'این بخش غیرفعال است.'); break; }
             tgSendMessage($chatId, 'امتیاز شما: ' . getUserPoints($userId));
             break;
         case '📎 لینک دعوت من':
+            if (!isFeatureEnabled('invite')) { tgSendMessage($chatId, 'این بخش غیرفعال است.'); break; }
             tgSendMessage($chatId, myInviteLink($userId));
             break;
         case '🛒 فروشگاه آیتم‌ها':
+            if (!isFeatureEnabled('shop')) { tgSendMessage($chatId, 'این بخش غیرفعال است.'); break; }
             $items = listActiveItems();
             tgSendMessage($chatId, shopText(), [ 'reply_markup' => buildShopItemKeyboard($items) ]);
             break;
         case '📤 درخواست‌های من':
+            if (!isFeatureEnabled('requests')) { tgSendMessage($chatId, 'این بخش غیرفعال است.'); break; }
             $reqs = listUserRequests($userId, 10);
             if (empty($reqs)) { tgSendMessage($chatId, 'درخواستی ثبت نکرده‌اید.'); break; }
             $lines = ['📤 درخواست‌های شما:'];
@@ -2126,6 +2133,7 @@ if ($messageText !== null) {
             tgSendMessage($chatId, implode("\n", $lines));
             break;
         case '👤 پروفایل':
+            if (!isFeatureEnabled('profile')) { tgSendMessage($chatId, 'این بخش غیرفعال است.'); break; }
             $u = getUser($userId);
             $photos = tgGetUserProfilePhotos($userId, 1);
             $caption = userProfileText($u);
@@ -2140,6 +2148,7 @@ if ($messageText !== null) {
             tgSendMessage($chatId, 'یک گزینه را انتخاب کنید:', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '👥 برترین‌های رفرال', 'callback_data' => 'top_ref' ], [ 'text' => '⭐ برترین‌های امتیاز', 'callback_data' => 'top_pts' ] ] ] ] ]);
             break;
         case '🎲 قرعه‌کشی':
+            if (!isFeatureEnabled('lottery')) { tgSendMessage($chatId, 'این بخش غیرفعال است.'); break; }
             $lots = listActiveCustomLotteries();
             tgSendMessage($chatId, 'قرعه‌کشی‌های فعال:', [ 'reply_markup' => buildLotteriesKeyboard($lots) ]);
             break;
@@ -2233,4 +2242,27 @@ function resetAllUserPointsAndReferrals(): void {
     } catch (Throwable $e) {
         if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) $pdo->rollBack();
     }
+}
+
+function isFeatureEnabled(string $feature): bool {
+    return getSetting('feature_' . $feature, '1') === '1';
+}
+
+function buildAdminSettingsKeyboard(): array {
+    $features = [
+        'points' => '📊 امتیاز من',
+        'invite' => '📎 لینک دعوت من',
+        'shop' => '🛒 فروشگاه',
+        'requests' => '📤 درخواست‌ها',
+        'profile' => '👤 پروفایل',
+        'lottery' => '🎲 قرعه‌کشی',
+    ];
+    $rows = [];
+    foreach ($features as $k => $label) {
+        $on = isFeatureEnabled($k);
+        $txt = ($on ? '🔵 روشن' : '⚪ خاموش') . ' — ' . $label;
+        $rows[] = [ [ 'text' => $txt, 'callback_data' => 'f_tog_' . $k ] ];
+    }
+    $rows[] = [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ];
+    return [ 'inline_keyboard' => $rows ];
 }
