@@ -413,6 +413,26 @@ function tgGetChat($chatIdOrUsername): array {
     ]);
 }
 
+function tgExportChatInviteLink(int $chatId): array {
+    return apiRequest('exportChatInviteLink', [
+        'chat_id' => $chatId,
+    ]);
+}
+
+function getBotUserId(): ?int {
+    $cached = getSetting('bot_user_id', null);
+    if ($cached !== null && $cached !== '') {
+        return (int) $cached;
+    }
+    $res = apiRequest('getMe');
+    if (($res['ok'] ?? false) && isset($res['result']['id'])) {
+        $botId = (int) $res['result']['id'];
+        setSetting('bot_user_id', (string) $botId);
+        return $botId;
+    }
+    return null;
+}
+
 function buildMainMenuKeyboard(bool $isAdmin): array {
     $keyboard = [
         ['📊 امتیاز من', '📎 لینک دعوت من'],
@@ -718,6 +738,58 @@ function tryRevokeReferralIfNecessary(int $invitedUserId): void {
         tgSendMessage($inviterId, '⚠️ کاربر ' . $uname . ' عضویت خود را در کانال‌ها لغو کرد. امتیاز رفرال شما (' . REFERRAL_REWARD_POINTS . ' امتیاز) کسر شد.');
     } catch (Throwable $e) {
         if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) $pdo->rollBack();
+    }
+}
+
+function getChannelById(int $id): ?array {
+    $stmt = pdo()->prepare('SELECT * FROM channels WHERE id = ?');
+    $stmt->execute([$id]);
+    $row = $stmt->fetch();
+    return $row ?: null;
+}
+
+function buildAdminChannelsDeleteKeyboard(): array {
+    $chs = listRequiredChannels();
+    $rows = [];
+    foreach ($chs as $c) {
+        $label = ($c['title'] ?: ($c['username'] ? '@' . $c['username'] : (string)$c['chat_id'])) . ' [' . $c['chat_id'] . ']';
+        $rows[] = [ [ 'text' => '🗑 ' . $label, 'callback_data' => 'ch_del_' . $c['id'] ] ];
+    }
+    if (empty($rows)) {
+        $rows[] = [ [ 'text' => 'لیستی تنظیم نشده است.', 'callback_data' => 'noop' ] ];
+    }
+    $rows[] = [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_channels' ] ];
+    return [ 'inline_keyboard' => $rows ];
+}
+
+function cleanupChannelsIfBotRemoved(): void {
+    $botId = getBotUserId();
+    if (!$botId) return;
+    $channels = listRequiredChannels();
+    if (empty($channels)) return;
+    $removed = [];
+    foreach ($channels as $ch) {
+        $chatId = (int) $ch['chat_id'];
+        $res = tgGetChatMember($chatId, $botId);
+        $shouldRemove = false;
+        if (!($res['ok'] ?? false)) {
+            $shouldRemove = true;
+        } else {
+            $status = $res['result']['status'] ?? '';
+            if (!in_array($status, ['administrator', 'creator'], true)) {
+                $shouldRemove = true;
+            }
+        }
+        if ($shouldRemove) {
+            pdo()->prepare('DELETE FROM channels WHERE id = ?')->execute([$ch['id']]);
+            $label = $ch['title'] ?: ($ch['username'] ? '@' . $ch['username'] : (string)$chatId);
+            $removed[] = $label . ' [' . $chatId . ']';
+        }
+    }
+    if (!empty($removed)) {
+        $msg = '⚠️ کانال/گروه‌های زیر به دلیل عدم ادمین بودن یا حذف ربات پاک شدند:' . "\n" . implode("\n", array_map(function($x){ return '• ' . $x; }, $removed));
+        if (defined('ADMIN_GROUP_ID') && ADMIN_GROUP_ID) { tgSendMessage(ADMIN_GROUP_ID, $msg); }
+        foreach (ADMIN_IDS as $aid) { tgSendMessage($aid, $msg); }
     }
 }
 
@@ -1067,6 +1139,9 @@ function adminChannelsAdd(string $identifier): string {
     $identifier = trim($identifier);
     if ($identifier === '') return 'ورودی نامعتبر.';
 
+    $botId = getBotUserId();
+    if (!$botId) return 'خطا در دریافت آیدی ربات. لطفاً بعداً تلاش کنید.';
+
     // If username like @channel
     if ($identifier[0] === '@') {
         $username = ltrim($identifier, '@');
@@ -1075,6 +1150,13 @@ function adminChannelsAdd(string $identifier): string {
         $chat = $res['result'];
         $chatId = (int) ($chat['id'] ?? 0);
         $title = $chat['title'] ?? $username;
+
+        $mem = tgGetChatMember($chatId, $botId);
+        $status = $mem['result']['status'] ?? '';
+        if (!($mem['ok'] ?? false) || !in_array($status, ['administrator','creator'], true)) {
+            return '❌ ربات در این چت ادمین نیست. ابتدا ربات را ادمین کنید سپس دوباره تلاش کنید.';
+        }
+
         $stmt = pdo()->prepare('INSERT INTO channels (chat_id, username, title, added_at) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE username = VALUES(username), title = VALUES(title)');
         $stmt->execute([$chatId, $username, $title, nowUtc()]);
         return 'کانال افزوده شد: ' . $title . ' (' . $chatId . ')';
@@ -1088,6 +1170,13 @@ function adminChannelsAdd(string $identifier): string {
         if ($res['ok'] ?? false) {
             $title = $res['result']['title'] ?? null;
         }
+
+        $mem = tgGetChatMember($chatId, $botId);
+        $status = $mem['result']['status'] ?? '';
+        if (!($mem['ok'] ?? false) || !in_array($status, ['administrator','creator'], true)) {
+            return '❌ ربات در این چت ادمین نیست. ابتدا ربات را ادمین کنید سپس دوباره تلاش کنید.';
+        }
+
         $stmt = pdo()->prepare('INSERT INTO channels (chat_id, username, title, added_at) VALUES (?, NULL, ?, ?) ON DUPLICATE KEY UPDATE title = VALUES(title)');
         $stmt->execute([$chatId, $title, nowUtc()]);
         return 'کانال/گروه افزوده شد: ' . ($title ?: $chatId) . ' (' . $chatId . ')';
@@ -1336,7 +1425,7 @@ if ($callbackId && $data !== null) {
     // Admin inline: show help/items/channels
     if ($isAdminUser && $data === 'admin_help') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, adminHelpText(), [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
     if ($isAdminUser && $data === 'admin_items_list') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, adminItemsList(), [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
-    if ($isAdminUser && $data === 'admin_channels_list') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, adminChannelsList(), [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
+    if ($isAdminUser && $data === 'admin_channels_list') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, adminChannelsList(), [ 'reply_markup' => buildAdminChannelsDeleteKeyboard() ]); exit; }
 
     // Admin: bot on/off confirmations
     if ($isAdminUser && $data === 'bot_off') {
@@ -1435,6 +1524,30 @@ if ($callbackId && $data !== null) {
             tgEditMessageText($chatId, $messageId, '📢 مدیریت کانال‌ها', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '➕ افزودن کانال اجباری', 'callback_data' => 'admin_channels_add' ], [ 'text' => '❌ حذف کانال', 'callback_data' => 'admin_channels_del' ] ], [ [ 'text' => '📋 لیست کانال‌ها', 'callback_data' => 'admin_channels_list' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
             exit;
         }
+        
+        // Channels delete inline callbacks
+        if (strpos($data, 'ch_del_confirm_') === 0) {
+            $cid = (int) substr($data, strlen('ch_del_confirm_'));
+            $ch = getChannelById($cid);
+            pdo()->prepare('DELETE FROM channels WHERE id = ?')->execute([$cid]);
+            tgAnswerCallbackQuery($callbackId, 'حذف شد.');
+            $label = $ch ? ($ch['title'] ?: ($ch['username'] ? '@' . $ch['username'] : (string)$ch['chat_id'])) : ('#' . $cid);
+            tgEditMessageText($chatId, $messageId, '✅ کانال حذف شد: ' . $label, [ 'reply_markup' => buildAdminChannelsDeleteKeyboard() ]);
+            exit;
+        }
+        if (strpos($data, 'ch_del_') === 0) {
+            $cid = (int) substr($data, strlen('ch_del_'));
+            $ch = getChannelById($cid);
+            $label = $ch ? ($ch['title'] ?: ($ch['username'] ? '@' . $ch['username'] : (string)$ch['chat_id'])) : ('#' . $cid);
+            tgAnswerCallbackQuery($callbackId, '');
+            tgEditMessageText($chatId, $messageId, 'آیا مطمئنید برای حذف «' . $label . '»؟', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '✅ بله', 'callback_data' => 'ch_del_confirm_' . $cid ], [ 'text' => '❌ خیر', 'callback_data' => 'ch_del_cancel' ] ] ] ] ]);
+            exit;
+        }
+        if ($data === 'ch_del_cancel') {
+            tgAnswerCallbackQuery($callbackId, 'انصراف');
+            tgEditMessageText($chatId, $messageId, adminChannelsList(), [ 'reply_markup' => buildAdminChannelsDeleteKeyboard() ]);
+            exit;
+        }
         if ($data === 'admin_users') {
             tgAnswerCallbackQuery($callbackId, '');
             tgEditMessageText($chatId, $messageId, '👥 مدیریت کاربران', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '📋 لیست کاربران', 'callback_data' => 'admin_users_list' ], [ 'text' => '🔍 جستجوی user_id', 'callback_data' => 'admin_users_search' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
@@ -1470,7 +1583,7 @@ if ($callbackId && $data !== null) {
 
         if ($data === 'admin_channels_add') { setAdminState($userId, 'await_channel_add'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '➕ شناسه کانال (مثل @username یا -100...) را بفرستید.'); exit; }
         if ($data === 'admin_channels_del') { setAdminState($userId, 'await_channel_del'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '❌ chat_id کانال را بفرستید.'); exit; }
-        if ($data === 'admin_channels_list') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, adminChannelsList()); exit; }
+        if ($data === 'admin_channels_list') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, adminChannelsList(), [ 'reply_markup' => buildAdminChannelsDeleteKeyboard() ]); exit; }
 
         if ($data === 'admin_users_list') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, adminUsersList(1)); exit; }
         if ($data === 'admin_users_search') { setAdminState($userId, 'await_users_search'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '🔍 user_id را بفرستید.'); exit; }
@@ -1497,6 +1610,7 @@ if ($callbackId && $data !== null) {
 
 // Process text messages
 if ($messageText !== null) {
+    cleanupChannelsIfBotRemoved();
     // Handle /start with optional parameter
     if (strpos($messageText, '/start') === 0) {
         $parts = explode(' ', $messageText, 2);
@@ -1507,12 +1621,9 @@ if ($messageText !== null) {
             }
         }
 
-        if (!isMemberAllRequiredChannels($userId)) {
-            tgSendMessage($chatId, formatChannelsJoinMessage(), [ 'reply_markup' => buildVerifyChannelsInlineKeyboard() ]);
-        } else {
-            recordReferralIfEligibleAfterVerification($userId);
-            tgSendMessage($chatId, 'به ربات خوش آمدید! از منو انتخاب کنید.', [ 'reply_markup' => buildMainMenuKeyboard($isAdminUser) ]);
-        }
+        if (!enforceMembershipGate($chatId, $userId, $isAdminUser)) { exit; }
+        recordReferralIfEligibleAfterVerification($userId);
+        tgSendMessage($chatId, 'به ربات خوش آمدید! از منو انتخاب کنید.', [ 'reply_markup' => buildMainMenuKeyboard($isAdminUser) ]);
         exit;
     }
 
