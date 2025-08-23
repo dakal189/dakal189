@@ -484,6 +484,19 @@ function tgSendMessage(int $chatId, string $text, array $opts = []): array {
     return apiRequest('sendMessage', $params);
 }
 
+function tgSendPhoto(int $chatId, string $fileIdOrUrl, string $caption = '', array $opts = []): array {
+    $params = array_merge([
+        'chat_id' => $chatId,
+        'photo' => $fileIdOrUrl,
+        'caption' => $caption,
+        'parse_mode' => 'HTML',
+    ], $opts);
+    if (isset($params['reply_markup']) && is_array($params['reply_markup'])) {
+        $params['reply_markup'] = json_encode($params['reply_markup']);
+    }
+    return apiRequest('sendPhoto', $params);
+}
+
 function tgEditMessageText(int $chatId, int $messageId, string $text, array $opts = []): array {
     $params = array_merge([
         'chat_id' => $chatId,
@@ -1789,6 +1802,50 @@ if ($callbackId && $data !== null) {
         if ($data === 'admin_lottery_draw') { setAdminState($userId, 'await_lottery_draw'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '🎟 ID قرعه‌کشی برای انجام قرعه‌کشی؟', [ 'reply_markup' => buildAdminPromptKeyboard() ]); exit; }
 
         if ($data === 'admin_cron_lottery') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, runWeeklyLotteryDrawCron()); exit; }
+
+        // Wizard callbacks
+        if ($isAdminUser && $data === 'lotw_entry_points') {
+            $st = getAdminState($userId); $dataSt = $st['data'] ?? [];
+            setAdminState($userId, 'lot_w_entry_points', $dataSt);
+            tgAnswerCallbackQuery($callbackId, '');
+            tgEditMessageText($chatId, $messageId, 'عدد امتیاز ورود را بفرستید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]);
+            exit;
+        }
+        if ($isAdminUser && $data === 'lotw_entry_ref') {
+            $st = getAdminState($userId); $dataSt = $st['data'] ?? [];
+            setAdminState($userId, 'lot_w_entry_ref', $dataSt);
+            tgAnswerCallbackQuery($callbackId, '');
+            tgEditMessageText($chatId, $messageId, 'تعداد رفرال موردنیاز را بفرستید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]);
+            exit;
+        }
+        if ($isAdminUser && $data === 'lotw_prize_points') {
+            $st = getAdminState($userId); $dataSt = $st['data'] ?? [];
+            setAdminState($userId, 'lot_w_prize_points', $dataSt);
+            tgAnswerCallbackQuery($callbackId, '');
+            tgEditMessageText($chatId, $messageId, 'مقدار امتیاز جایزه را بفرستید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]);
+            exit;
+        }
+        if ($isAdminUser && $data === 'lotw_prize_text') {
+            $st = getAdminState($userId); $dataSt = $st['data'] ?? [];
+            setAdminState($userId, 'lot_w_prize_text', $dataSt);
+            tgAnswerCallbackQuery($callbackId, '');
+            tgEditMessageText($chatId, $messageId, 'متن جایزه را بفرستید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]);
+            exit;
+        }
+        if ($isAdminUser && $data === 'lotw_prize_add_more') {
+            $st = getAdminState($userId); $dataSt = $st['data'] ?? [];
+            setAdminState($userId, 'lot_w_prize_type', $dataSt);
+            tgAnswerCallbackQuery($callbackId, '');
+            tgEditMessageText($chatId, $messageId, 'نوع جایزه بعدی را انتخاب کنید:', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => 'امتیازی', 'callback_data' => 'lotw_prize_points' ], [ 'text' => 'شخصی‌سازی', 'callback_data' => 'lotw_prize_text' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_back' ], [ 'text' => '❌ انصراف', 'callback_data' => 'admin_cancel' ] ] ] ] ]);
+            exit;
+        }
+        if ($isAdminUser && $data === 'lotw_prize_continue') {
+            $st = getAdminState($userId); $dataSt = $st['data'] ?? [];
+            setAdminState($userId, 'lot_w_photo', $dataSt);
+            tgAnswerCallbackQuery($callbackId, '');
+            tgEditMessageText($chatId, $messageId, 'در صورت تمایل عکس قرعه‌کشی را بفرستید یا «رد» را ارسال کنید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]);
+            exit;
+        }
     }
 
     // Unknown callback
@@ -1930,16 +1987,21 @@ if ($messageText !== null) {
                 $data = $st['data'] ?? [];
                 $data['prize_points'] = (int)$messageText;
                 $data['prize_text'] = null;
-                setAdminState($userId, 'lot_w_photo', $data);
-                tgSendMessage($chatId, 'در صورت تمایل عکس قرعه‌کشی را بفرستید یا «رد» را ارسال کنید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]);
+                // ask to add more prizes or continue
+                $data['prizes'] = $data['prizes'] ?? [];
+                $data['prizes'][] = [ 'rank' => count($data['prizes']) + 1, 'prize_points' => $data['prize_points'], 'prize_text' => null ];
+                unset($data['prize_points']);
+                setAdminState($userId, 'lot_w_prize_next', $data);
+                tgSendMessage($chatId, 'آیا جایزه رتبه بعدی را اضافه می‌کنید یا ادامه دهیم؟', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '➕ افزودن جایزه بعدی', 'callback_data' => 'lotw_prize_add_more' ], [ 'text' => 'ادامه', 'callback_data' => 'lotw_prize_continue' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_back' ], [ 'text' => '❌ انصراف', 'callback_data' => 'admin_cancel' ] ] ] ] ]);
                 exit;
             }
             if ($s === 'lot_w_prize_text') {
                 $data = $st['data'] ?? [];
-                $data['prize_points'] = null;
-                $data['prize_text'] = sanitizeText($messageText, 255);
-                setAdminState($userId, 'lot_w_photo', $data);
-                tgSendMessage($chatId, 'در صورت تمایل عکس قرعه‌کشی را بفرستید یا «رد» را ارسال کنید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]);
+                $ptxt = sanitizeText($messageText, 255);
+                $data['prizes'] = $data['prizes'] ?? [];
+                $data['prizes'][] = [ 'rank' => count($data['prizes']) + 1, 'prize_points' => null, 'prize_text' => $ptxt ];
+                setAdminState($userId, 'lot_w_prize_next', $data);
+                tgSendMessage($chatId, 'آیا جایزه رتبه بعدی را اضافه می‌کنید یا ادامه دهیم؟', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '➕ افزودن جایزه بعدی', 'callback_data' => 'lotw_prize_add_more' ], [ 'text' => 'ادامه', 'callback_data' => 'lotw_prize_continue' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_back' ], [ 'text' => '❌ انصراف', 'callback_data' => 'admin_cancel' ] ] ] ] ]);
                 exit;
             }
             if ($s === 'lot_w_photo') {
@@ -2004,6 +2066,11 @@ if ($messageText !== null) {
                     $stmt = $pdo->prepare('INSERT INTO custom_lotteries (title, entry_cost_points, entry_requires_referral, referral_bonus_per_invite, prize_points, is_active, created_at, referral_required_count, prize_text, photo_file_id) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)');
                     $stmt->execute([$title, $entryCost, $entryCost === null ? 1 : 0, 0, (int)$prizePoints, nowUtc(), (int)$refNeed, $prizeText, $photoId]);
                     $lotId = (int) $pdo->lastInsertId();
+                    // insert prize tiers if provided
+                    $prizes = $data['prizes'] ?? [];
+                    foreach ($prizes as $pz) {
+                        $pdo->prepare('INSERT INTO custom_lottery_prizes (lottery_id, rank, prize_points, prize_text, created_at) VALUES (?, ?, ?, ?, ?)')->execute([$lotId, (int)$pz['rank'], $pz['prize_points'], $pz['prize_text'], nowUtc()]);
+                    }
                     // move channels (-1 placeholders) to this lot
                     $pdo->prepare('UPDATE custom_lottery_channels SET lottery_id = ? WHERE lottery_id = -1')->execute([$lotId]);
                     $pdo->commit();
