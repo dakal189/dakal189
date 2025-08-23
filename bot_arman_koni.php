@@ -568,18 +568,22 @@ function getBotUserId(): ?int {
 }
 
 function buildMainMenuKeyboard(bool $isAdmin): array {
-    $keyboard = [
-        ['📊 امتیاز من', '📎 لینک دعوت من'],
-        ['🛒 فروشگاه آیتم‌ها', '📤 درخواست‌های من'],
-        ['👤 پروفایل', '🎲 قرعه‌کشی'],
-    ];
-    if ($isAdmin) {
-        $keyboard[] = ['🛠 پنل ادمین'];
-    }
+    $rows = [];
+    $row1 = [];
+    if (isFeatureEnabled('points')) { $row1[] = '📊 امتیاز من'; }
+    if (isFeatureEnabled('invite')) { $row1[] = '📎 لینک دعوت من'; }
+    if (!empty($row1)) { $rows[] = $row1; }
+    $row2 = [];
+    if (isFeatureEnabled('shop')) { $row2[] = '🛒 فروشگاه آیتم‌ها'; }
+    if (isFeatureEnabled('requests')) { $row2[] = '📤 درخواست‌های من'; }
+    if (!empty($row2)) { $rows[] = $row2; }
+    $row3 = [];
+    if (isFeatureEnabled('profile')) { $row3[] = '👤 پروفایل'; }
+    if (isFeatureEnabled('lottery')) { $row3[] = '🎲 قرعه‌کشی'; }
+    if (!empty($row3)) { $rows[] = $row3; }
+    if ($isAdmin) { $rows[] = ['🛠 پنل ادمین']; }
     return [
-        'keyboard' => array_map(function ($row) {
-            return array_map(function ($btn) { return ['text' => $btn]; }, $row);
-        }, $keyboard),
+        'keyboard' => array_map(function ($row) { return array_map(function ($btn) { return ['text' => $btn]; }, $row); }, $rows),
         'resize_keyboard' => true,
         'one_time_keyboard' => false,
     ];
@@ -1495,7 +1499,7 @@ function buildLotteryDetailKeyboard(array $lottery): array {
     return [
         'inline_keyboard' => [
             [ [ 'text' => '🎟 شرکت در قرعه‌کشی', 'callback_data' => 'lot_join_' . $lottery['id'] ], [ 'text' => '👥 تعداد شرکت‌کنندگان', 'callback_data' => 'lot_count_' . $lottery['id'] ] ],
-            [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_back' ] ],
+            [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'lot_back' ], [ 'text' => '❎ بستن', 'callback_data' => 'lot_close' ] ],
         ],
     ];
 }
@@ -1619,6 +1623,17 @@ if ($callbackId && $data !== null) {
         if (!$lot) { tgAnswerCallbackQuery($callbackId, 'یافت نشد', true); exit; }
         tgAnswerCallbackQuery($callbackId, '');
         tgEditMessageText($chatId, $messageId, buildLotteryDetailText($lot, $userId), [ 'reply_markup' => buildLotteryDetailKeyboard($lot) ]);
+        exit;
+    }
+    if ($data === 'lot_back') {
+        tgAnswerCallbackQuery($callbackId, '');
+        $lots = listActiveCustomLotteries();
+        tgEditMessageText($chatId, $messageId, 'قرعه‌کشی‌های فعال:', [ 'reply_markup' => buildLotteriesKeyboard($lots) ]);
+        exit;
+    }
+    if ($data === 'lot_close') {
+        tgAnswerCallbackQuery($callbackId, '');
+        tgEditMessageText($chatId, $messageId, 'بسته شد.', []);
         exit;
     }
     if (strpos($data, 'lot_buy_') === 0) {
@@ -2030,11 +2045,13 @@ if ($messageText !== null) {
                     $photoId = $largest['file_id'] ?? null;
                 } elseif (trim(mb_strtolower($messageText)) === 'رد') {
                     $photoId = null;
+                } else {
+                    adminPrompt($chatId, $userId, 'عکس معتبر بفرستید یا «رد» را ارسال کنید.', buildAdminPromptKeyboard());
+                    exit;
                 }
-                if (!array_key_exists('photo_file_id', $data)) { $data['photo_file_id'] = $photoId; }
-                else { $data['photo_file_id'] = $photoId; }
+                $data['photo_file_id'] = $photoId;
                 setAdminState($userId, 'lot_w_channels', $data);
-                tgSendMessage($chatId, 'می‌توانید کانال‌های اجباری مخصوص این قرعه‌کشی را با ارسال @username یا chat_id یکی‌یکی اضافه کنید. برای پایان «تمام» را بفرستید.', [ 'reply_markup' => buildAdminPromptKeyboard() ]);
+                adminPrompt($chatId, $userId, 'می‌توانید کانال‌های اجباری مخصوص این قرعه‌کشی را با ارسال @username یا chat_id یکی‌یکی اضافه کنید. برای پایان «تمام» را بفرستید.', buildAdminPromptKeyboard());
                 exit;
             }
             if ($s === 'lot_w_channels') {
