@@ -531,12 +531,18 @@ function setPendingReferrerIfApplicable(int $userId, ?int $referrerId): void {
     if (!$referrerId || $referrerId === $userId) return;
     $pdo = pdo();
     // Only set pending if no permanent referrer already recorded and no referral exists
-    $stmt = $pdo->prepare('SELECT referrer_id, pending_referrer_id FROM users WHERE user_id = ?');
+    $stmt = $pdo->prepare('SELECT referrer_id, pending_referrer_id, joined_at FROM users WHERE user_id = ?');
     $stmt->execute([$userId]);
     $row = $stmt->fetch();
     if (!$row) return;
 
     if (!empty($row['referrer_id'])) return;
+
+    // Only allow referrals for new users: joined within the last 10 minutes
+    $joinedAt = isset($row['joined_at']) ? strtotime($row['joined_at']) : 0;
+    if ($joinedAt > 0 && (time() - $joinedAt) > 600) { // older than 10 minutes
+        return;
+    }
 
     // Ensure no prior referral credit exists
     $stmt = $pdo->prepare('SELECT 1 FROM referrals WHERE invited_id = ?');
@@ -702,15 +708,15 @@ function formatChannelsJoinMessage(): string {
     return implode("\n", $lines);
 }
 
-function enforceMembershipGate(int $chatId, int $userId, bool $isAdmin): bool {
+function enforceMembershipGate(int $chatId, int $userId, bool $isAdmin, bool $forcePrompt = false): bool {
     if ($isAdmin) return true;
     if (isMemberAllRequiredChannels($userId)) return true;
 
-    // Per-user throttle: remind at most once every 2 minutes
+    // Per-user throttle: remind at most once every 2 minutes (always show on forced prompts)
     $now = time();
     $key = 'gate_prompt_ts_' . $userId;
     $last = (int) (getSetting($key, '0') ?? '0');
-    if (($now - $last) >= 120) {
+    if ($forcePrompt || ($now - $last) >= 120) {
         tgSendMessage($chatId, formatChannelsJoinMessage(), [ 'reply_markup' => buildVerifyChannelsInlineKeyboard() ]);
         setSetting($key, (string)$now);
     }
@@ -1429,7 +1435,7 @@ if ($callbackId && $data !== null) {
     // Admin inline: show help/items/channels
     if ($isAdminUser && $data === 'admin_help') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, adminHelpText(), [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
     if ($isAdminUser && $data === 'admin_items_list') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, adminItemsList(), [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
-    if ($isAdminUser && $data === 'admin_channels_list') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, adminChannelsList(), [ 'reply_markup' => buildAdminChannelsDeleteKeyboard() ]); exit; }
+    if ($isAdminUser && $data === 'admin_channels_list') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, adminChannelsList(), [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
 
     // Admin: bot on/off confirmations
     if ($isAdminUser && $data === 'bot_off') {
@@ -1499,10 +1505,8 @@ if ($callbackId && $data !== null) {
         } else {
             $row = setItemRequestStatus($requestId, 'rejected');
             tgAnswerCallbackQuery($callbackId, 'درخواست رد شد.');
-            // Refund points
-            addUserPoints((int) $row['user_id'], (int) $row['cost_points']);
             // Notify user
-            tgSendMessage((int) $row['user_id'], '❌ درخواست شما برای آیتم: ' . $row['item_name'] . ' رد شد. امتیاز شما بازگشت داده شد.');
+            tgSendMessage((int) $row['user_id'], '❌ درخواست شما برای آیتم: ' . $row['item_name'] . ' رد شد.');
             // Update admin message
             if (!empty($row['admin_chat_id']) && !empty($row['admin_message_id'])) {
                 tgEditMessageText((int) $row['admin_chat_id'], (int) $row['admin_message_id'], 'درخواست رد شد.\nکاربر: @' . ($row['username'] ?: '-') . ' (' . $row['user_id'] . ")\n" . 'آیتم: ' . $row['item_name'] . "\n" . 'وضعیت: ❌ رد');
@@ -1529,29 +1533,6 @@ if ($callbackId && $data !== null) {
             exit;
         }
         
-        // Channels delete inline callbacks
-        if (strpos($data, 'ch_del_confirm_') === 0) {
-            $cid = (int) substr($data, strlen('ch_del_confirm_'));
-            $ch = getChannelById($cid);
-            pdo()->prepare('DELETE FROM channels WHERE id = ?')->execute([$cid]);
-            tgAnswerCallbackQuery($callbackId, 'حذف شد.');
-            $label = $ch ? ($ch['title'] ?: ($ch['username'] ? '@' . $ch['username'] : (string)$ch['chat_id'])) : ('#' . $cid);
-            tgEditMessageText($chatId, $messageId, '✅ کانال حذف شد: ' . $label, [ 'reply_markup' => buildAdminChannelsDeleteKeyboard() ]);
-            exit;
-        }
-        if (strpos($data, 'ch_del_') === 0) {
-            $cid = (int) substr($data, strlen('ch_del_'));
-            $ch = getChannelById($cid);
-            $label = $ch ? ($ch['title'] ?: ($ch['username'] ? '@' . $ch['username'] : (string)$ch['chat_id'])) : ('#' . $cid);
-            tgAnswerCallbackQuery($callbackId, '');
-            tgEditMessageText($chatId, $messageId, 'آیا مطمئنید برای حذف «' . $label . '»؟', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '✅ بله', 'callback_data' => 'ch_del_confirm_' . $cid ], [ 'text' => '❌ خیر', 'callback_data' => 'ch_del_cancel' ] ] ] ] ]);
-            exit;
-        }
-        if ($data === 'ch_del_cancel') {
-            tgAnswerCallbackQuery($callbackId, 'انصراف');
-            tgEditMessageText($chatId, $messageId, adminChannelsList(), [ 'reply_markup' => buildAdminChannelsDeleteKeyboard() ]);
-            exit;
-        }
         if ($data === 'admin_users') {
             tgAnswerCallbackQuery($callbackId, '');
             tgEditMessageText($chatId, $messageId, '👥 مدیریت کاربران', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '📋 لیست کاربران', 'callback_data' => 'admin_users_list' ], [ 'text' => '🔍 جستجوی user_id', 'callback_data' => 'admin_users_search' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
@@ -1587,7 +1568,7 @@ if ($callbackId && $data !== null) {
 
         if ($data === 'admin_channels_add') { setAdminState($userId, 'await_channel_add'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '➕ شناسه کانال (مثل @username یا -100...) را بفرستید.'); exit; }
         if ($data === 'admin_channels_del') { setAdminState($userId, 'await_channel_del'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '❌ chat_id کانال را بفرستید.'); exit; }
-        if ($data === 'admin_channels_list') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, adminChannelsList(), [ 'reply_markup' => buildAdminChannelsDeleteKeyboard() ]); exit; }
+        if ($data === 'admin_channels_list') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, adminChannelsList(), [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
 
         if ($data === 'admin_users_list') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, adminUsersList(1)); exit; }
         if ($data === 'admin_users_search') { setAdminState($userId, 'await_users_search'); tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, '🔍 user_id را بفرستید.'); exit; }
@@ -1625,7 +1606,7 @@ if ($messageText !== null) {
             }
         }
 
-        if (!enforceMembershipGate($chatId, $userId, $isAdminUser)) { exit; }
+        if (!enforceMembershipGate($chatId, $userId, $isAdminUser, true)) { exit; }
         recordReferralIfEligibleAfterVerification($userId);
         tgSendMessage($chatId, 'به ربات خوش آمدید! از منو انتخاب کنید.', [ 'reply_markup' => buildMainMenuKeyboard($isAdminUser) ]);
         exit;
@@ -1687,10 +1668,7 @@ if ($messageText !== null) {
             tgSendMessage($chatId, $reply);
             exit;
         }
-        if ($messageText[0] === '/') {
-            tgSendMessage($chatId, adminHelpText());
-            exit;
-        }
+        // Do not auto-send admin help on unknown slash commands
     }
 
     // Admin state inputs
