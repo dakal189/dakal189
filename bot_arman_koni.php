@@ -244,7 +244,10 @@ function ensureTables(): void {
             closed_at DATETIME NULL,
             drawn_at DATETIME NULL,
             winner_user_id BIGINT NULL,
-            total_tickets INT NOT NULL DEFAULT 0
+            total_tickets INT NOT NULL DEFAULT 0,
+            referral_required_count INT NOT NULL DEFAULT 0,
+            prize_text VARCHAR(255) NULL,
+            photo_file_id VARCHAR(255) NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         // Custom lottery tickets (positive/negative deltas)
@@ -284,6 +287,18 @@ function ensureTables(): void {
             data TEXT NULL,
             updated_at DATETIME NOT NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+
+        // Per-lottery channels
+        "CREATE TABLE IF NOT EXISTS custom_lottery_channels (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            lottery_id INT NOT NULL,
+            chat_id BIGINT NOT NULL,
+            username VARCHAR(128) NULL,
+            title VARCHAR(128) NULL,
+            added_at DATETIME NOT NULL,
+            UNIQUE KEY uniq_lottery_chat (lottery_id, chat_id),
+            FOREIGN KEY (lottery_id) REFERENCES custom_lotteries(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     ];
 
     $pdo = pdo();
@@ -293,6 +308,10 @@ function ensureTables(): void {
 
     // Attempt to add revoked_at to referrals if missing
     try { $pdo->exec("ALTER TABLE referrals ADD COLUMN IF NOT EXISTS revoked_at DATETIME NULL"); } catch (Throwable $e) { /* ignore */ }
+    // Extend custom_lotteries for wizard features
+    try { $pdo->exec("ALTER TABLE custom_lotteries ADD COLUMN referral_required_count INT NOT NULL DEFAULT 0"); } catch (Throwable $e) { /* ignore */ }
+    try { $pdo->exec("ALTER TABLE custom_lotteries ADD COLUMN prize_text VARCHAR(255) NULL"); } catch (Throwable $e) { /* ignore */ }
+    try { $pdo->exec("ALTER TABLE custom_lotteries ADD COLUMN photo_file_id VARCHAR(255) NULL"); } catch (Throwable $e) { /* ignore */ }
 }
 
 function getSetting(string $key, ?string $default = null): ?string {
@@ -1558,6 +1577,11 @@ if ($callbackId && $data !== null) {
         $lot = getCustomLottery($lotId);
         if (!$lot) { tgAnswerCallbackQuery($callbackId, 'یافت نشد', true); exit; }
         if (!enforceMembershipGate($chatId, $userId, $isAdminUser)) { echo 'OK'; exit; }
+        // Enforce one ticket per user
+        $stmt = pdo()->prepare('SELECT COALESCE(SUM(num_tickets),0) as t FROM custom_lottery_tickets WHERE lottery_id = ? AND user_id = ?');
+        $stmt->execute([$lotId, $userId]);
+        $has = (int) ($stmt->fetch()['t'] ?? 0);
+        if ($has > 0) { tgAnswerCallbackQuery($callbackId, 'قبلاً شرکت کرده‌اید.', true); exit; }
         if (is_null($lot['entry_cost_points'])) {
             tgAnswerCallbackQuery($callbackId, 'ورود این قرعه‌کشی با رفرال است.', true);
             exit;
