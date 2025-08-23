@@ -705,8 +705,17 @@ function formatChannelsJoinMessage(): string {
 function enforceMembershipGate(int $chatId, int $userId, bool $isAdmin): bool {
     if ($isAdmin) return true;
     if (isMemberAllRequiredChannels($userId)) return true;
+
+    // Per-user throttle: remind at most once every 2 minutes
+    $now = time();
+    $key = 'gate_prompt_ts_' . $userId;
+    $last = (int) (getSetting($key, '0') ?? '0');
+    if (($now - $last) >= 120) {
+        tgSendMessage($chatId, formatChannelsJoinMessage(), [ 'reply_markup' => buildVerifyChannelsInlineKeyboard() ]);
+        setSetting($key, (string)$now);
+    }
+
     tryRevokeReferralIfNecessary($userId);
-    tgSendMessage($chatId, formatChannelsJoinMessage(), [ 'reply_markup' => buildVerifyChannelsInlineKeyboard() ]);
     return false;
 }
 
@@ -767,6 +776,12 @@ function cleanupChannelsIfBotRemoved(): void {
     if (!$botId) return;
     $channels = listRequiredChannels();
     if (empty($channels)) return;
+
+    // Throttle notifications to once per 10 minutes
+    $now = time();
+    $lastTs = (int) (getSetting('cleanup_notify_ts', '0') ?? '0');
+    $canNotify = ($now - $lastTs) >= 600; // 10 minutes
+
     $removed = [];
     foreach ($channels as $ch) {
         $chatId = (int) $ch['chat_id'];
@@ -786,10 +801,18 @@ function cleanupChannelsIfBotRemoved(): void {
             $removed[] = $label . ' [' . $chatId . ']';
         }
     }
+
     if (!empty($removed)) {
-        $msg = '⚠️ کانال/گروه‌های زیر به دلیل عدم ادمین بودن یا حذف ربات پاک شدند:' . "\n" . implode("\n", array_map(function($x){ return '• ' . $x; }, $removed));
-        if (defined('ADMIN_GROUP_ID') && ADMIN_GROUP_ID) { tgSendMessage(ADMIN_GROUP_ID, $msg); }
-        foreach (ADMIN_IDS as $aid) { tgSendMessage($aid, $msg); }
+        // Deduplicate: if same content as last time, skip notifying
+        $payload = implode("\n", array_map(function($x){ return '• ' . $x; }, $removed));
+        $lastPayload = getSetting('cleanup_notify_payload', '');
+        if ($payload !== $lastPayload || $canNotify) {
+            $msg = '⚠️ کانال/گروه‌های زیر به دلیل عدم ادمین بودن یا حذف ربات پاک شدند:' . "\n" . $payload;
+            if (defined('ADMIN_GROUP_ID') && ADMIN_GROUP_ID) { tgSendMessage(ADMIN_GROUP_ID, $msg); }
+            foreach (ADMIN_IDS as $aid) { tgSendMessage($aid, $msg); }
+            setSetting('cleanup_notify_payload', $payload);
+            setSetting('cleanup_notify_ts', (string)$now);
+        }
     }
 }
 
@@ -1312,25 +1335,6 @@ ensureTables();
 // Ensure bot_enabled default
 if (getSetting('bot_enabled', null) === null) { setBotEnabled(true); }
 
-// Seed initial required channel if not present
-(function () {
-    $chatId = -1002798392543; // required channel/group
-    try {
-        $pdo = pdo();
-        $stmt = $pdo->prepare('SELECT 1 FROM channels WHERE chat_id = ?');
-        $stmt->execute([$chatId]);
-        if (!$stmt->fetch()) {
-            $title = null; $username = null;
-            $res = tgGetChat($chatId);
-            if ($res['ok'] ?? false) {
-                $title = $res['result']['title'] ?? null;
-                $username = $res['result']['username'] ?? null;
-            }
-            $ins = $pdo->prepare('INSERT INTO channels (chat_id, username, title, added_at) VALUES (?, ?, ?, ?)');
-            $ins->execute([$chatId, $username, $title, nowUtc()]);
-        }
-    } catch (Throwable $e) { /* ignore */ }
-})();
 
 if (isset($_GET['cron'])) {
     $secret = $_GET['secret'] ?? '';
