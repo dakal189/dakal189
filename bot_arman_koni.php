@@ -1407,6 +1407,27 @@ function lotteryInfoText(): string {
         'هفته جاری شروع: ' . $weekStart;
 }
 
+function buildLotteryDetailKeyboard(array $lottery): array {
+    return [
+        'inline_keyboard' => [
+            [ [ 'text' => '🎟 شرکت در قرعه‌کشی', 'callback_data' => 'lot_join_' . $lottery['id'] ], [ 'text' => '👥 تعداد شرکت‌کنندگان', 'callback_data' => 'lot_count_' . $lottery['id'] ] ],
+            [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_back' ] ],
+        ],
+    ];
+}
+
+function buildLotteryDetailText(array $lottery, int $userId): string {
+    $title = $lottery['title'];
+    $cost = is_null($lottery['entry_cost_points']) ? 'ref' : (string)$lottery['entry_cost_points'];
+    $entry = ($cost === 'ref') ? 'ورود با رفرال' : ('هزینه شرکت: ' . $cost . ' امتیاز');
+    // compute user referral stats if needed
+    $user = getUser($userId);
+    $refCnt = (int) ($user['referrals_count'] ?? 0);
+    $prize = (int) ($lottery['prize_points'] ?? 0);
+    $prizeText = $prize > 0 ? ('جایزه: ' . $prize . ' امتیاز') : 'جایزه: شخصی‌سازی شده';
+    return '🎲 ' . $title . "\n" . $entry . "\n" . 'رفرال‌های شما: ' . $refCnt . "\n" . $prizeText;
+}
+
 // ==========================
 // Update Handling
 // ==========================
@@ -1507,6 +1528,46 @@ if ($callbackId && $data !== null) {
         exit;
     }
 
+    // Lottery detail and actions
+    if (strpos($data, 'lot_info_') === 0) {
+        $lotId = (int) substr($data, strlen('lot_info_'));
+        $lot = getCustomLottery($lotId);
+        if (!$lot) { tgAnswerCallbackQuery($callbackId, 'یافت نشد', true); exit; }
+        tgAnswerCallbackQuery($callbackId, '');
+        tgEditMessageText($chatId, $messageId, buildLotteryDetailText($lot, $userId), [ 'reply_markup' => buildLotteryDetailKeyboard($lot) ]);
+        exit;
+    }
+    if (strpos($data, 'lot_buy_') === 0) {
+        $lotId = (int) substr($data, strlen('lot_buy_'));
+        $lot = getCustomLottery($lotId);
+        if (!$lot) { tgAnswerCallbackQuery($callbackId, 'یافت نشد', true); exit; }
+        tgAnswerCallbackQuery($callbackId, '');
+        tgEditMessageText($chatId, $messageId, buildLotteryDetailText($lot, $userId), [ 'reply_markup' => buildLotteryDetailKeyboard($lot) ]);
+        exit;
+    }
+    if (strpos($data, 'lot_count_') === 0) {
+        $lotId = (int) substr($data, strlen('lot_count_'));
+        $stmt = pdo()->prepare('SELECT COUNT(DISTINCT user_id) as c FROM custom_lottery_tickets WHERE lottery_id = ? AND num_tickets > 0');
+        $stmt->execute([$lotId]);
+        $cnt = (int) ($stmt->fetch()['c'] ?? 0);
+        tgAnswerCallbackQuery($callbackId, 'شرکت‌کننده: ' . $cnt);
+        exit;
+    }
+    if (strpos($data, 'lot_join_') === 0) {
+        $lotId = (int) substr($data, strlen('lot_join_'));
+        $lot = getCustomLottery($lotId);
+        if (!$lot) { tgAnswerCallbackQuery($callbackId, 'یافت نشد', true); exit; }
+        if (!enforceMembershipGate($chatId, $userId, $isAdminUser)) { echo 'OK'; exit; }
+        if (is_null($lot['entry_cost_points'])) {
+            tgAnswerCallbackQuery($callbackId, 'ورود این قرعه‌کشی با رفرال است.', true);
+            exit;
+        }
+        list($ok, $msg) = buyCustomLotteryTicket($userId, $lot);
+        tgAnswerCallbackQuery($callbackId, $ok ? 'ثبت شد' : 'خطا', !$ok);
+        tgSendMessage($chatId, $msg, [ 'reply_markup' => buildLotteryDetailKeyboard($lot) ]);
+        exit;
+    }
+
     // Admin inline: show help/items/channels
     if ($isAdminUser && $data === 'admin_help') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, adminHelpText(), [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
     if ($isAdminUser && $data === 'admin_items_list') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, adminItemsList(), [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
@@ -1539,16 +1600,16 @@ if ($callbackId && $data !== null) {
             exit;
         }
         $item = getItemById($itemId);
-        $text = 'درخواست شما ثبت شد و به ادمین ارسال گردید.\n' . 'آیتم: ' . $item['name'] . ' | هزینه: ' . $item['cost_points'] . ' امتیاز';
+        $text = "درخواست شما ثبت شد و به ادمین ارسال گردید.\n" . 'آیتم: ' . $item['name'] . ' | هزینه: ' . $item['cost_points'] . ' امتیاز';
         tgAnswerCallbackQuery($callbackId, 'درخواست ثبت شد.');
         tgSendMessage($chatId, $text);
 
         if (ADMIN_GROUP_ID) {
             $user = getUser($userId);
             $uname = $user['username'] ? '@' . $user['username'] : '-';
-            $adminText = 'درخواست جدید آیتم:\n' .
+            $adminText = "درخواست جدید آیتم:\n" .
                 'کاربر: ' . $uname . ' (' . $userId . ")\n" .
-                'آیتم: 🎁 ' . $item['name'] . "+\n" .
+                'آیتم: 🎁 ' . $item['name'] . "\n" .
                 'وضعیت: در حال بررسی';
             $sent = tgSendMessage(ADMIN_GROUP_ID, $adminText, [ 'reply_markup' => buildAdminApproveRejectKeyboard($reqId) ]);
             if (($sent['ok'] ?? false) && isset($sent['result']['message_id'])) {
@@ -1576,7 +1637,7 @@ if ($callbackId && $data !== null) {
             tgSendMessage((int) $row['user_id'], '✅ درخواست شما برای آیتم: ' . $row['item_name'] . ' تایید شد.');
             // Update admin message
             if (!empty($row['admin_chat_id']) && !empty($row['admin_message_id'])) {
-                tgEditMessageText((int) $row['admin_chat_id'], (int) $row['admin_message_id'], 'درخواست تایید شد.\nکاربر: @' . ($row['username'] ?: '-') . ' (' . $row['user_id'] . ")\n" . 'آیتم: ' . $row['item_name'] . "\n" . 'وضعیت: ✅ تایید');
+                tgEditMessageText((int) $row['admin_chat_id'], (int) $row['admin_message_id'], "درخواست تایید شد.\nکاربر: @" . ($row['username'] ?: '-') . ' (' . $row['user_id'] . ")\n" . 'آیتم: ' . $row['item_name'] . "\n" . 'وضعیت: ✅ تایید');
             }
         } else {
             $row = setItemRequestStatus($requestId, 'rejected');
@@ -1585,7 +1646,7 @@ if ($callbackId && $data !== null) {
             tgSendMessage((int) $row['user_id'], '❌ درخواست شما برای آیتم: ' . $row['item_name'] . ' رد شد.');
             // Update admin message
             if (!empty($row['admin_chat_id']) && !empty($row['admin_message_id'])) {
-                tgEditMessageText((int) $row['admin_chat_id'], (int) $row['admin_message_id'], 'درخواست رد شد.\nکاربر: @' . ($row['username'] ?: '-') . ' (' . $row['user_id'] . ")\n" . 'آیتم: ' . $row['item_name'] . "\n" . 'وضعیت: ❌ رد');
+                tgEditMessageText((int) $row['admin_chat_id'], (int) $row['admin_message_id'], "درخواست رد شد.\nکاربر: @" . ($row['username'] ?: '-') . ' (' . $row['user_id'] . ")\n" . 'آیتم: ' . $row['item_name'] . "\n" . 'وضعیت: ❌ رد');
             }
         }
         exit;
