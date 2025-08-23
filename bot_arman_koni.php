@@ -545,6 +545,13 @@ function tgExportChatInviteLink(int $chatId): array {
     ]);
 }
 
+function tgGetUserProfilePhotos(int $userId, int $limit = 1): array {
+    return apiRequest('getUserProfilePhotos', [
+        'user_id' => $userId,
+        'limit' => $limit,
+    ]);
+}
+
 function getBotUserId(): ?int {
     $cached = getSetting('bot_user_id', null);
     if ($cached !== null && $cached !== '') {
@@ -1671,7 +1678,7 @@ if ($callbackId && $data !== null) {
         exit;
     }
     if ($isAdminUser && $data === 'bot_off_yes') { setBotEnabled(false); tgAnswerCallbackQuery($callbackId, 'ربات خاموش شد'); tgEditMessageText($chatId, $messageId, 'ربات خاموش شد.', [ 'reply_markup' => buildAdminPanelInlineKeyboard(false) ]); exit; }
-    if ($isAdminUser && $data === 'bot_on_yes') { setBotEnabled(true); tgAnswerCallbackQuery($callbackId, 'ربات روشن شد'); tgEditMessageText($chatId, $messageId, 'ربات روشن شد.', [ 'reply_markup' => buildAdminPanelInlineKeyboard(true) ]); exit; }
+    if ($isAdminUser && $data === 'bot_on_yes') { setBotEnabled(true); resetAllUserPointsAndReferrals(); tgAnswerCallbackQuery($callbackId, 'ربات روشن شد'); tgEditMessageText($chatId, $messageId, 'ربات روشن شد.', [ 'reply_markup' => buildAdminPanelInlineKeyboard(true) ]); exit; }
     if ($isAdminUser && $data === 'admin_back') { tgAnswerCallbackQuery($callbackId, ''); handleAdminBack($chatId, $messageId, $userId); exit; }
     if ($isAdminUser && $data === 'admin_cancel') { clearAdminState($userId); tgAnswerCallbackQuery($callbackId, 'انصراف'); tgEditMessageText($chatId, $messageId, '🛠 پنل ادمین', [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
 
@@ -2120,7 +2127,14 @@ if ($messageText !== null) {
             break;
         case '👤 پروفایل':
             $u = getUser($userId);
-            tgSendMessage($chatId, userProfileText($u));
+            $photos = tgGetUserProfilePhotos($userId, 1);
+            $caption = userProfileText($u);
+            if (($photos['ok'] ?? false) && !empty($photos['result']['photos'][0][0]['file_id'])) {
+                $fileId = $photos['result']['photos'][0][0]['file_id'];
+                tgSendPhoto($chatId, $fileId, $caption);
+            } else {
+                tgSendMessage($chatId, $caption);
+            }
             break;
         case '🏆 برترین‌ها':
             tgSendMessage($chatId, 'یک گزینه را انتخاب کنید:', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '👥 برترین‌های رفرال', 'callback_data' => 'top_ref' ], [ 'text' => '⭐ برترین‌های امتیاز', 'callback_data' => 'top_pts' ] ] ] ] ]);
@@ -2206,5 +2220,17 @@ function adminPrompt(int $chatId, int $userId, string $text, array $replyMarkup 
     if (($sent['ok'] ?? false) && isset($sent['result']['message_id']) && $st && isset($st['state'])) {
         $data['last_msg_id'] = (int)$sent['result']['message_id'];
         setAdminState($userId, $st['state'], $data);
+    }
+}
+
+function resetAllUserPointsAndReferrals(): void {
+    try {
+        $pdo = pdo();
+        $pdo->beginTransaction();
+        $pdo->exec('UPDATE users SET points = 0, referrals_count = 0, referrer_id = NULL, pending_referrer_id = NULL, level = 1');
+        $pdo->exec('DELETE FROM referrals');
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) $pdo->rollBack();
     }
 }
