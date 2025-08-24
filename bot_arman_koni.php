@@ -1770,7 +1770,7 @@ if ($callbackId && $data !== null) {
         
         if ($data === 'admin_users') {
             tgAnswerCallbackQuery($callbackId, '');
-            tgEditMessageText($chatId, $messageId, '👥 مدیریت کاربران', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '📋 لیست کاربران', 'callback_data' => 'admin_users_list' ], [ 'text' => '🔍 جستجوی user_id', 'callback_data' => 'admin_users_search' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
+            tgEditMessageText($chatId, $messageId, '👥 مدیریت کاربران', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '📋 لیست کاربران', 'callback_data' => 'admin_users_list_1' ], [ 'text' => '🔍 جستجوی user_id', 'callback_data' => 'admin_users_search' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
             exit;
         }
         if ($data === 'admin_points') {
@@ -1785,7 +1785,7 @@ if ($callbackId && $data !== null) {
         }
         if ($data === 'admin_lottery') {
             tgAnswerCallbackQuery($callbackId, '');
-            tgEditMessageText($chatId, $messageId, '🎲 مدیریت قرعه‌کشی', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '🎯 ساخت جدید', 'callback_data' => 'admin_lottery_new' ], [ 'text' => '📋 لیست', 'callback_data' => 'admin_lottery_list' ] ], [ [ 'text' => '⛔ بستن', 'callback_data' => 'admin_lottery_close' ], [ 'text' => '🎟 انجام قرعه‌کشی', 'callback_data' => 'admin_lottery_draw' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
+            tgEditMessageText($chatId, $messageId, '🎲 مدیریت قرعه‌کشی', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '🎯 ساخت جدید', 'callback_data' => 'admin_lottery_new' ], [ 'text' => '📋 لیست', 'callback_data' => 'admin_lottery_list_1' ] ], [ [ 'text' => '⛔ بستن', 'callback_data' => 'admin_lottery_close' ], [ 'text' => '🎟 انجام قرعه‌کشی', 'callback_data' => 'admin_lottery_draw' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
             exit;
         }
 
@@ -2352,3 +2352,58 @@ function appendPointsLog(string $message): void {
 function buildSingleCancelKeyboard(string $cancelCb): array {
     return [ 'inline_keyboard' => [ [ [ 'text' => '❌ انصراف', 'callback_data' => $cancelCb ] ] ] ];
 }
+
+function buildPaginationKeyboard(?string $prevCb, ?string $nextCb, string $backCb): array {
+    $rows = [];
+    $nav = [];
+    if ($prevCb) { $nav[] = [ 'text' => '⬅️ صفحه قبل', 'callback_data' => $prevCb ]; }
+    if ($nextCb) { $nav[] = [ 'text' => '➡️ صفحه بعد', 'callback_data' => $nextCb ]; }
+    if (!empty($nav)) { $rows[] = $nav; }
+    $rows[] = [ [ 'text' => '🔙 بازگشت', 'callback_data' => $backCb ] ];
+    return [ 'inline_keyboard' => $rows ];
+}
+
+function adminUsersListPage(int $page, int $pageSize = 20): array {
+    $page = max(1, $page);
+    $cntRow = pdo()->query('SELECT COUNT(*) AS c FROM users')->fetch();
+    $total = (int)($cntRow['c'] ?? 0);
+    $offset = ($page - 1) * $pageSize;
+    $stmt = pdo()->prepare('SELECT user_id, username, points, referrals_count, level FROM users ORDER BY points DESC, user_id ASC LIMIT ? OFFSET ?');
+    $stmt->bindValue(1, $pageSize, PDO::PARAM_INT);
+    $stmt->bindValue(2, $offset, PDO::PARAM_INT);
+    $stmt->execute();
+    $rows = $stmt->fetchAll();
+    $lines = ["📊 لیست کاربران (صفحه {$page}):"];
+    foreach ($rows as $r) {
+        $uname = $r['username'] ? '@' . $r['username'] : '-';
+        $lines[] = $r['user_id'] . ' | ' . $uname . ' | امتیاز: ' . $r['points'] . ' | زیرمجموعه: ' . $r['referrals_count'] . ' | لول: ' . $r['level'];
+    }
+    $hasPrev = $page > 1;
+    $hasNext = ($offset + $pageSize) < $total;
+    return [ implode("\n", $lines), $hasPrev, $hasNext, $page ];
+}
+
+function adminLotteryListPage(int $page, int $pageSize = 20): array {
+    $page = max(1, $page);
+    $cntRow = pdo()->query('SELECT COUNT(*) AS c FROM custom_lotteries')->fetch();
+    $total = (int)($cntRow['c'] ?? 0);
+    $offset = ($page - 1) * $pageSize;
+    $stmt = pdo()->prepare('SELECT * FROM custom_lotteries ORDER BY id DESC LIMIT ? OFFSET ?');
+    $stmt->bindValue(1, $pageSize, PDO::PARAM_INT);
+    $stmt->bindValue(2, $offset, PDO::PARAM_INT);
+    $stmt->execute();
+    $rows = $stmt->fetchAll();
+    if (empty($rows)) return [ 'هیچ قرعه‌کشی‌ای ثبت نشده است.', $page > 1, false, $page ];
+    $lines = ['🎲 لیست قرعه‌کشی‌ها (صفحه ' . $page . '):'];
+    foreach ($rows as $r) {
+        $cost = is_null($r['entry_cost_points']) ? 'ref' : $r['entry_cost_points'];
+        $status = ((int)$r['is_active'] === 1 && is_null($r['drawn_at'])) ? 'فعال' : (is_null($r['drawn_at']) ? 'بسته' : 'پایان یافته');
+        $lines[] = '#' . $r['id'] . ' | ' . $r['title'] . ' | cost=' . $cost . ' | prize=' . $r['prize_points'] . ' | ' . $status;
+    }
+    $hasPrev = $page > 1;
+    $hasNext = ($offset + $pageSize) < $total;
+    return [ implode("\n", $lines), $hasPrev, $hasNext, $page ];
+}
+
+if (strpos($data, 'admin_users_list_') === 0) { $page = (int)substr($data, strlen('admin_users_list_')); list($txt,$hasPrev,$hasNext,$pg) = adminUsersListPage($page); tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, $txt, [ 'reply_markup' => buildPaginationKeyboard($hasPrev ? ('admin_users_list_' . ($pg-1)) : null, $hasNext ? ('admin_users_list_' . ($pg+1)) : null, 'admin_users' ) ]); exit; }
+if (strpos($data, 'admin_lottery_list_') === 0) { $page = (int)substr($data, strlen('admin_lottery_list_')); list($txt,$hasPrev,$hasNext,$pg) = adminLotteryListPage($page); tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, $txt, [ 'reply_markup' => buildPaginationKeyboard($hasPrev ? ('admin_lottery_list_' . ($pg-1)) : null, $hasNext ? ('admin_lottery_list_' . ($pg+1)) : null, 'admin_lottery' ) ]); exit; }
