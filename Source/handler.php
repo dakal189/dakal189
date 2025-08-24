@@ -385,7 +385,7 @@ $button_tools = json_encode(['keyboard'=>[
 [['text'=>'🐨 تصویر کوآلا'],['text'=>'🦊 تصویر روباه']],
 [['text'=>'😜 گیف چشمک زدن'],['text'=>'🙃 گیف نوازش']],
 [['text'=>'🔙 بازگشت']]
-], 'resize_keyboard'=>true]);
+], 'resize_keyboard'=>true);
 $button_texts = json_encode(
 [
 'keyboard'=>[
@@ -408,47 +408,47 @@ $languages = json_encode(['keyboard'=>[
 [['text'=>'🇷🇺 روسی'],['text'=>'🇸🇦 عربی']],
 [['text'=>'🇹🇷 ترکی'],['text'=>'🇫🇷 فرانسوی']],
 [['text'=>'🔙 بازگشت به بخش سرگرمی']]
-], 'resize_keyboard'=>true]);
+], 'resize_keyboard'=>true);
 $button_name = json_encode(['keyboard'=>[
 [['text'=>'پروفایل']],
 [['text'=>'ارسال شماره'],['text'=>'ارسال مکان']],
 [['text'=>'↩️ بازگشت']]
-], 'resize_keyboard'=>true]);
+], 'resize_keyboard'=>true);
 $button_filter = json_encode(['keyboard'=>[
 [['text'=>'➖ حذف فیلتر'],['text'=>'➕ افزودن فیلتر']],
 [['text'=>'📑 لیست فیلتر']],
 [['text'=>'🔙 بازگشت']]
-], 'resize_keyboard'=>true]);
+], 'resize_keyboard'=>true);
 $button_admins = json_encode(['keyboard'=>[
 [['text'=>'➖ حذف ادمین'],['text'=>'➕ افزودن ادمین']],
 [['text'=>'👨🏻‍💻 لیست ادمین ها']],
 [['text'=>'🔙 بازگشت']]
-], 'resize_keyboard'=>true]);
+], 'resize_keyboard'=>true);
 $reset = json_encode(['keyboard'=>[
 [['text'=>'✅ بله، کاملا مطمئن هستم']],
 [['text'=>'🔙 بازگشت']]
-], 'resize_keyboard'=>true]);
+], 'resize_keyboard'=>true);
 $contact = json_encode(['keyboard'=>[
 [['text'=>'📞 شماره من']],
 [['text'=>'☎️ تنظیم شماره', 'request_contact'=>true]],
 [['text'=>'🔙 بازگشت']]
-], 'resize_keyboard'=>true]);
+], 'resize_keyboard'=>true);
 ##----------------------Back
 $back = json_encode(['keyboard'=>[
 [['text'=>'🔙 بازگشت']]
-], 'resize_keyboard'=>true]);
+], 'resize_keyboard'=>true);
 $back_to_channels = json_encode(['keyboard'=>[
 [['text'=>'🔙 برگشت']]
-], 'resize_keyboard'=>true]);
+], 'resize_keyboard'=>true);
 $backans = json_encode(['keyboard'=>[
 [['text'=>'↩️ برگشت ']]
-], 'resize_keyboard'=>true]);
+], 'resize_keyboard'=>true);
 $backbtn = json_encode(['keyboard'=>[
 [['text'=>'↩️ بازگشت']]
-], 'resize_keyboard'=>true]);
+], 'resize_keyboard'=>true);
 $backto = json_encode(['keyboard'=>[
 [['text'=>'🔙 بازگشت به بخش سرگرمی']]
-], 'resize_keyboard'=>true]);
+], 'resize_keyboard'=>true);
 $remove = json_encode(['KeyboardRemove'=>[], 'remove_keyboard'=>true]);
 ##----------------------Inline
 $profile_btn = $data['button']['profile']['stats'];
@@ -602,6 +602,13 @@ function Forward($chatid, $from_id, $massege_id)
 	'chat_id' => $chatid,
 	'from_chat_id' => $from_id,
 	'message_id' => $massege_id
+	]);
+}
+function deleteMessage($chat_id, $message_id)
+{
+	return bot('deleteMessage',[
+	'chat_id' => $chat_id,
+	'message_id' => $message_id
 	]);
 }
 function sendPhoto($chatid, $photo, $caption = null)

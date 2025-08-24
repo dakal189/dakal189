@@ -724,7 +724,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 		}
 	}
 	if (isset($message->text)) {
-		if ($data['lock']['text'] != '✅') {
+		if ($data['lock']['text'] == '✅') {
 			$checklink = CheckLink($text);
 			$checkfilter = CheckFilter($text);
 			if ($checklink != true) {
@@ -747,12 +747,13 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی کلمات غیر مجاز ممنوع است.", 'html' , $message_id, $button_user);
 			}
 		} else {
+			deleteMessage($chat_id, $message_id);
 			sendMessage($chat_id, "⛔️ ارسال متن مجاز نیست.", 'html' , $message_id, $button_user);
 		}
 		goto tabliq;
 	}
 	if (isset($message->photo)) {
-		if ($data['lock']['photo'] != '✅') {
+		if ($data['lock']['photo'] == '✅') {
 			$get = Forward($Dev, $chat_id, $message_id);
 			if (!isset($get['result']['forward_from'])  || isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
 				$msg_ids = json_decode(file_get_contents('msg_ids.txt'), true);
@@ -762,12 +763,13 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
+			deleteMessage($chat_id, $message_id);
 			sendMessage($chat_id, "⛔️ ارسال تصویر مجاز نیست.", 'html' , $message_id, $button_user);
 		}
 		goto tabliq;
 	}
 	if (isset($message->video)) {
-		if ($data['lock']['video'] != '✅') {
+		if ($data['lock']['video'] == '✅') {
 			$get = Forward($Dev, $chat_id, $message_id);
 			if (!isset($get['result']['forward_from'])  || isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
 				$msg_ids = json_decode(file_get_contents('msg_ids.txt'), true);
@@ -777,12 +779,13 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
+			deleteMessage($chat_id, $message_id);
 			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , $message_id, $button_user);
 		}
 		goto tabliq;
 	}
 	if (isset($message->voice)) {
-		if ($data['lock']['voice'] != '✅') {
+		if ($data['lock']['voice'] == '✅') {
 			$get = Forward($Dev, $chat_id, $message_id);
 			if (!isset($get['result']['forward_from']) || isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
 				$msg_ids = json_decode(file_get_contents('msg_ids.txt'), true);
@@ -792,12 +795,13 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
+			deleteMessage($chat_id, $message_id);
 			sendMessage($chat_id, "⛔️ ارسال صدا مجاز نیست.", 'html' , $message_id, $button_user);
 		}
 		goto tabliq;
 	}
 	if (isset($message->audio)) {
-		if ($data['lock']['audio'] != '✅') {
+		if ($data['lock']['audio'] == '✅') {
 			$get = Forward($Dev, $chat_id, $message_id);
 			$msg_ids = json_decode(file_get_contents('msg_ids.txt'), true);
 						$msg_ids[$get['result']['message_id']] = $from_id;
@@ -805,13 +809,13 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 						//sendMessage($Dev, "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			
+			deleteMessage($chat_id, $message_id);
 			sendMessage($chat_id, "⛔️ ارسال موسیقی مجاز نیست.", 'html' , $message_id, $button_user);
 		}
 		goto tabliq;
 	}
 	if (isset($message->sticker)) {
-		if ($data['lock']['sticker'] != '✅') {
+		if ($data['lock']['sticker'] == '✅') {
 			$get = Forward($Dev, $chat_id, $message_id);
 			$msg_ids = json_decode(file_get_contents('msg_ids.txt'), true);
 						$msg_ids[$get['result']['message_id']] = $from_id;
@@ -819,12 +823,13 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 						//sendMessage($Dev, "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
+			deleteMessage($chat_id, $message_id);
 			sendMessage($chat_id, "⛔️ ارسال استیکر مجاز نیست.", 'html' , $message_id, $button_user);
 		}
 		goto tabliq;
 	}
 	if (isset($message->document)) {
-		if ($data['lock']['document'] != '✅') {
+		if ($data['lock']['document'] == '✅') {
 			$get = Forward($Dev, $chat_id, $message_id);
 			if (!isset($get['result']['forward_from']) || isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
 				$msg_ids = json_decode(file_get_contents('msg_ids.txt'), true);
@@ -834,6 +839,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
+			deleteMessage($chat_id, $message_id);
 			sendMessage($chat_id, "⛔️ ارسال فایل مجاز نیست.", 'html' , $message_id, $button_user);
 		}
 		goto tabliq;
@@ -873,7 +879,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 		}
 	}
 	if (isset($message->text)) {
-		if ($data['lock']['text'] != '✅') {
+		if ($data['lock']['text'] == '✅') {
 			$checklink = CheckLink($text);
 			$checkfilter = CheckFilter($text);
 			if ($checklink != true) {
@@ -895,12 +901,13 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی کلمات غیر مجاز ممنوع است.", 'html' , $message_id, $button_user);
 			}
 		} else {
+			deleteMessage($chat_id, $message_id);
 			sendMessage($chat_id, "⛔️ ارسال متن مجاز نیست.", 'html' , $message_id, $button_user);
 		}
 		goto tabliq;
 	}
 	if (isset($message->photo)) {
-		if ($data['lock']['photo'] != '✅') {
+		if ($data['lock']['photo'] == '✅') {
 			$get = Forward($data['feed'], $chat_id, $message_id);
 			if (!isset($get['result']['forward_from']) || isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
 				$msg_ids = json_decode(file_get_contents('msg_ids.txt'), true);
@@ -910,12 +917,13 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
+			deleteMessage($chat_id, $message_id);
 			sendMessage($chat_id, "⛔️ ارسال تصویر مجاز نیست.", 'html' , $message_id, $button_user);
 		}
 		goto tabliq;
 	}
 	if (isset($message->video)) {
-		if ($data['lock']['video'] != '✅') {
+		if ($data['lock']['video'] == '✅') {
 			$get = Forward($data['feed'], $chat_id, $message_id);
 			if (!isset($get['result']['forward_from']) || isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
 				$msg_ids = json_decode(file_get_contents('msg_ids.txt'), true);
@@ -925,12 +933,13 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
+			deleteMessage($chat_id, $message_id);
 			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , $message_id, $button_user);
 		}
 		goto tabliq;
 	}
 	if (isset($message->voice)) {
-		if ($data['lock']['voice'] != '✅') {
+		if ($data['lock']['voice'] == '✅') {
 			$get = Forward($data['feed'], $chat_id, $message_id);
 			if (!isset($get['result']['forward_from']) || isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
 				$msg_ids = json_decode(file_get_contents('msg_ids.txt'), true);
@@ -940,12 +949,13 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
+			deleteMessage($chat_id, $message_id);
 			sendMessage($chat_id, "⛔️ ارسال صدا مجاز نیست.", 'html' , $message_id, $button_user);
 		}
 		goto tabliq;
 	}
 	if (isset($message->audio)) {
-		if ($data['lock']['audio'] != '✅') {
+		if ($data['lock']['audio'] == '✅') {
 			$get = Forward($data['feed'], $chat_id, $message_id);
 			$msg_ids = json_decode(file_get_contents('msg_ids.txt'), true);
 						$msg_ids[$get['result']['message_id']] = $from_id;
@@ -953,12 +963,13 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 						//sendMessage($data['feed'], "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
+			deleteMessage($chat_id, $message_id);
 			sendMessage($chat_id, "⛔️ ارسال موسیقی مجاز نیست.", 'html' , $message_id, $button_user);
 		}
 		goto tabliq;
 	}
 	if (isset($message->sticker)) {
-		if ($data['lock']['sticker'] != '✅') {
+		if ($data['lock']['sticker'] == '✅') {
 			$get = Forward($data['feed'], $chat_id, $message_id);
 			$msg_ids = json_decode(file_get_contents('msg_ids.txt'), true);
 						$msg_ids[$get['result']['message_id']] = $from_id;
@@ -966,12 +977,13 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 						//sendMessage($data['feed'], "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
+			deleteMessage($chat_id, $message_id);
 			sendMessage($chat_id, "⛔️ ارسال استیکر مجاز نیست.", 'html' , $message_id, $button_user);
 		}
 		goto tabliq;
 	}
 	if (isset($message->document)) {
-		if ($data['lock']['document'] != '✅') {
+		if ($data['lock']['document'] == '✅') {
 			$get = Forward($data['feed'], $chat_id, $message_id);
 			if (!isset($get['result']['forward_from']) || isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
 				$msg_ids = json_decode(file_get_contents('msg_ids.txt'), true);
@@ -981,6 +993,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
+			deleteMessage($chat_id, $message_id);
 			sendMessage($chat_id, "⛔️ ارسال فایل مجاز نیست.", 'html' , $message_id, $button_user);
 		}
 		goto tabliq;
