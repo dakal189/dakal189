@@ -360,7 +360,6 @@ function buildAdminPanelInlineKeyboard(bool $enabled): array {
             [ [ 'text' => '🚫 مدیریت بن', 'callback_data' => 'admin_ban' ] ],
             [ [ 'text' => '🎲 مدیریت قرعه‌کشی', 'callback_data' => 'admin_lottery' ] ],
             [ [ 'text' => '⚙️ تنظیمات', 'callback_data' => 'admin_settings' ] ],
-            [ [ 'text' => '🏆 گزارش‌ها و کرون‌جاب', 'callback_data' => 'admin_reports' ] ],
             [ [ 'text' => '❎ بستن پنل', 'callback_data' => 'admin_close' ] ],
         ],
     ];
@@ -1297,7 +1296,7 @@ function adminHelpText(): string {
         '/sub_points user_id amount',
         '/ban user_id',
         '/unban user_id',
-        '/cron_lottery (قرعه‌کشی هفته قبل)',
+
         '/lottery_create عنوان | cost=10|ref | prize=200 | bonus=0',
         '/lottery_list',
         '/lottery_close ID',
@@ -1530,23 +1529,7 @@ ensureTables();
 if (getSetting('bot_enabled', null) === null) { setBotEnabled(true); }
 
 
-if (isset($_GET['cron'])) {
-    $secret = $_GET['secret'] ?? '';
-    if (CRON_SECRET !== '' && $secret !== CRON_SECRET) {
-        http_response_code(403);
-        echo 'forbidden';
-        exit;
-    }
-    $cron = $_GET['cron'];
-    if ($cron === 'weekly_referrals') {
-        echo runWeeklyReferralRewardsCron();
-    } elseif ($cron === 'weekly_lottery') {
-        echo runWeeklyLotteryDrawCron();
-    } else {
-        echo 'unknown cron';
-    }
-    exit;
-}
+
 
 $updateRaw = file_get_contents('php://input');
 if (!$updateRaw) {
@@ -1805,11 +1788,7 @@ if ($callbackId && $data !== null) {
             tgEditMessageText($chatId, $messageId, '🎲 مدیریت قرعه‌کشی', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '🎯 ساخت جدید', 'callback_data' => 'admin_lottery_new' ], [ 'text' => '📋 لیست', 'callback_data' => 'admin_lottery_list' ] ], [ [ 'text' => '⛔ بستن', 'callback_data' => 'admin_lottery_close' ], [ 'text' => '🎟 انجام قرعه‌کشی', 'callback_data' => 'admin_lottery_draw' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
             exit;
         }
-        if ($data === 'admin_reports') {
-            tgAnswerCallbackQuery($callbackId, '');
-            tgEditMessageText($chatId, $messageId, '🏆 گزارش‌ها و کرون‌جاب', [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '🎰 قرعه‌کشی هفتگی', 'callback_data' => 'admin_cron_lottery' ] ], [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_main' ] ] ] ] ]);
-            exit;
-        }
+
         if ($data === 'admin_main') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, '🛠 پنل ادمین', [ 'reply_markup' => buildAdminPanelInlineKeyboard(getBotEnabled()) ]); exit; }
         if ($data === 'admin_close') { tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, 'پنل بسته شد.', []); exit; }
 
@@ -2019,8 +1998,7 @@ if ($messageText !== null) {
             $reply = adminBanUser((int) $m[1]);
         } elseif (preg_match('/^\/unban\s+(\d+)/', $messageText, $m)) {
             $reply = adminUnbanUser((int) $m[1]);
-        } elseif (preg_match('/^\/cron_lottery$/', $messageText)) {
-            $reply = runWeeklyLotteryDrawCron();
+
         } elseif (preg_match('/^\/lottery_create\s+(.+)\|\s*cost=(ref|\d+)\s*\|\s*prize=(\d+)\s*(?:\|\s*bonus=(\d+))?$/u', $messageText, $m)) {
             $title = trim($m[1]);
             $costSpec = $m[2] === 'ref' ? 'ref' : (int)$m[2];
