@@ -1825,8 +1825,8 @@ if ($callbackId && $data !== null) {
         if ($data === 'admin_users_list') { tgAnswerCallbackQuery($callbackId, ''); tgSendMessage($chatId, adminUsersList(1)); exit; }
         if ($data === 'admin_users_search') { setAdminState($userId, 'await_users_search'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '🔍 user_id را بفرستید.', buildAdminPromptKeyboard()); exit; }
 
-        if ($data === 'admin_points_add') { setAdminState($userId, 'await_points_add'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '➕ به صورت «user_id amount» ارسال کنید.', buildAdminPromptKeyboard()); exit; }
-        if ($data === 'admin_points_sub') { setAdminState($userId, 'await_points_sub'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '➖ به صورت «user_id amount» ارسال کنید.', buildAdminPromptKeyboard()); exit; }
+        if ($data === 'admin_points_add') { setAdminState($userId, 'await_points_add_user'); tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, '➕ آیدی عددی کاربر را وارد کنید.', [ 'reply_markup' => buildSingleCancelKeyboard('admin_points') ]); exit; }
+        if ($data === 'admin_points_sub') { setAdminState($userId, 'await_points_sub_user'); tgAnswerCallbackQuery($callbackId, ''); tgEditMessageText($chatId, $messageId, '➖ آیدی عددی کاربر را وارد کنید.', [ 'reply_markup' => buildSingleCancelKeyboard('admin_points') ]); exit; }
 
         if ($data === 'admin_ban_user') { setAdminState($userId, 'await_ban'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '🚷 user_id کاربر برای بن کردن؟', buildAdminPromptKeyboard()); exit; }
         if ($data === 'admin_unban_user') { setAdminState($userId, 'await_unban'); tgAnswerCallbackQuery($callbackId, ''); adminPrompt($chatId, $userId, '✅ user_id کاربر برای آزاد کردن؟', buildAdminPromptKeyboard()); exit; }
@@ -1919,6 +1919,42 @@ if ($callbackId && $data !== null) {
             $text = empty($filtered) ? 'لاگی یافت نشد.' : implode("\n", $filtered);
             clearAdminState($userId);
             tgSendMessage($chatId, $text, [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '❎ بستن', 'callback_data' => 'admin_close' ] ] ] ] ]);
+            exit;
+        }
+        if ($s === 'await_points_add_user') {
+            if (!preg_match('/^\d+$/', $messageText)) { tgEditMessageText($chatId, $messageId, 'شناسه نامعتبر است.', [ 'reply_markup' => buildSingleCancelKeyboard('admin_points') ]); exit; }
+            $targetId = (int)$messageText; $tu = getUser($targetId);
+            if (!$tu) { tgEditMessageText($chatId, $messageId, 'کاربر یافت نشد.', [ 'reply_markup' => buildSingleCancelKeyboard('admin_points') ]); exit; }
+            $uname = $tu['username'] ? '@' . $tu['username'] : (string)$targetId;
+            setAdminState($userId, 'await_points_add_amount', [ 'target_id' => $targetId ]);
+            tgEditMessageText($chatId, $messageId, 'کاربر: ' . $uname . ' | امتیاز فعلی: ' . $tu['points'] . "\n" . 'مقدار امتیاز برای افزودن را وارد کنید.', [ 'reply_markup' => buildSingleCancelKeyboard('admin_points') ]);
+            exit;
+        }
+        if ($s === 'await_points_add_amount') {
+            if (!preg_match('/^-?\d+$/', $messageText)) { tgEditMessageText($chatId, $messageId, 'عدد معتبر وارد کنید.', [ 'reply_markup' => buildSingleCancelKeyboard('admin_points') ]); exit; }
+            $data = $st['data'] ?? []; $targetId = (int)($data['target_id'] ?? 0);
+            if ($targetId <= 0) { clearAdminState($userId); tgEditMessageText($chatId, $messageId, 'انصراف.', []); exit; }
+            $amt = (int)$messageText; $amt = abs($amt);
+            tgEditMessageText($chatId, $messageId, adminAddPoints($targetId, $amt), [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_points' ] ] ] ] ]);
+            clearAdminState($userId);
+            exit;
+        }
+        if ($s === 'await_points_sub_user') {
+            if (!preg_match('/^\d+$/', $messageText)) { tgEditMessageText($chatId, $messageId, 'شناسه نامعتبر است.', [ 'reply_markup' => buildSingleCancelKeyboard('admin_points') ]); exit; }
+            $targetId = (int)$messageText; $tu = getUser($targetId);
+            if (!$tu) { tgEditMessageText($chatId, $messageId, 'کاربر یافت نشد.', [ 'reply_markup' => buildSingleCancelKeyboard('admin_points') ]); exit; }
+            $uname = $tu['username'] ? '@' . $tu['username'] : (string)$targetId;
+            setAdminState($userId, 'await_points_sub_amount', [ 'target_id' => $targetId ]);
+            tgEditMessageText($chatId, $messageId, 'کاربر: ' . $uname . ' | امتیاز فعلی: ' . $tu['points'] . "\n" . 'مقدار امتیاز برای کم کردن را وارد کنید.', [ 'reply_markup' => buildSingleCancelKeyboard('admin_points') ]);
+            exit;
+        }
+        if ($s === 'await_points_sub_amount') {
+            if (!preg_match('/^-?\d+$/', $messageText)) { tgEditMessageText($chatId, $messageId, 'عدد معتبر وارد کنید.', [ 'reply_markup' => buildSingleCancelKeyboard('admin_points') ]); exit; }
+            $data = $st['data'] ?? []; $targetId = (int)($data['target_id'] ?? 0);
+            if ($targetId <= 0) { clearAdminState($userId); tgEditMessageText($chatId, $messageId, 'انصراف.', []); exit; }
+            $amt = (int)$messageText; $amt = abs($amt);
+            tgEditMessageText($chatId, $messageId, adminSubPoints($targetId, $amt), [ 'reply_markup' => [ 'inline_keyboard' => [ [ [ 'text' => '🔙 بازگشت', 'callback_data' => 'admin_points' ] ] ] ] ]);
+            clearAdminState($userId);
             exit;
         }
     }
@@ -2333,4 +2369,8 @@ function appendPointsLog(string $message): void {
     $lines[] = $message;
     if (count($lines) > 500) { $lines = array_slice($lines, -500); }
     setSetting('points_logs', implode("\n", $lines));
+}
+
+function buildSingleCancelKeyboard(string $cancelCb): array {
+    return [ 'inline_keyboard' => [ [ [ 'text' => '❌ انصراف', 'callback_data' => $cancelCb ] ] ] ];
 }
