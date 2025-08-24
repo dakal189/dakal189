@@ -28,6 +28,129 @@ if ($from_id != $Dev) {
 	$flood['flood']["$now-$from_id"] += 1;
 	file_put_contents('data/flood.json', json_encode($flood));
 	
+	// Anti-spam check
+	if (isset($data['antispam']['enabled']) && $data['antispam']['enabled'] && $tc == 'private') {
+		$message_limit = $data['antispam']['message_limit'];
+		$time_window = 0;
+		
+		// Calculate time window in seconds
+		$time_window += $data['antispam']['time_window']['year'] * 365 * 24 * 3600;
+		$time_window += $data['antispam']['time_window']['month'] * 30 * 24 * 3600;
+		$time_window += $data['antispam']['time_window']['day'] * 24 * 3600;
+		$time_window += $data['antispam']['time_window']['hour'] * 3600;
+		$time_window += $data['antispam']['time_window']['minute'] * 60;
+		$time_window += $data['antispam']['time_window']['second'];
+		
+		// If no time window set, use default 1 minute
+		if ($time_window == 0) {
+			$time_window = 60;
+		}
+		
+		// Check if user has exceeded message limit within time window
+		$current_time = time();
+		$window_start = $current_time - $time_window;
+		
+		// Count messages within the time window
+		$message_count = 0;
+		foreach ($flood['flood'] as $key => $count) {
+			if (strpos($key, "-{$from_id}") !== false) {
+				$timestamp = (int)explode('-', $key)[0];
+				if ($timestamp >= $window_start) {
+					$message_count += $count;
+				}
+			}
+		}
+		
+		if ($message_limit > 0 && $message_count >= $message_limit) {
+			sendAction($chat_id);
+			
+			// Calculate ban duration in seconds
+			$ban_duration = 0;
+			$ban_duration += $data['antispam']['ban_duration']['year'] * 365 * 24 * 3600;
+			$ban_duration += $data['antispam']['ban_duration']['month'] * 30 * 24 * 3600;
+			$ban_duration += $data['antispam']['ban_duration']['day'] * 24 * 3600;
+			$ban_duration += $data['antispam']['ban_duration']['hour'] * 3600;
+			$ban_duration += $data['antispam']['ban_duration']['minute'] * 60;
+			$ban_duration += $data['antispam']['ban_duration']['second'];
+			
+			// If no duration set, use default 1 hour
+			if ($ban_duration == 0) {
+				$ban_duration = 3600;
+			}
+			
+			// Get user info for anti-spam ban
+			$user_info = bot('getChat', ['chat_id' => $from_id]);
+			$username = isset($user_info['result']['username']) ? $user_info['result']['username'] : 'بدون یوزرنیم';
+			
+			// Add to anti-spam bans
+			if (!isset($data['antispam_bans'])) {
+				$data['antispam_bans'] = [];
+			}
+			
+			$data['antispam_bans'][$from_id] = [
+				'username' => $username,
+				'ban_time' => time(),
+				'duration' => $ban_duration
+			];
+			
+			file_put_contents('data/data.json', json_encode($data));
+			
+			// Add to regular ban list
+			if ($list['ban'] == null) {
+				$list['ban'] = [];
+			}
+			
+			if (!in_array($from_id, $list['ban'])) {
+				array_push($list['ban'], $from_id);
+				file_put_contents('data/list.json', json_encode($list));
+			}
+			
+			// Send ban message to user
+			$ban_end_time = time() + $ban_duration;
+			$remaining_time = timeElapsed($ban_duration);
+			sendMessage($from_id, "⛔️ شما به دلیل ارسال پیام های مکرر (اسپم) از ربات مسدود گردیدید.\n\n⏰ مدت مسدودیت: {$remaining_time}\n🕰 زمان اتمام: " . jdate('Y/m/j H:i:s', $ban_end_time), 'markdown', null, $remove);
+			
+			// Send notification to admin
+			sendMessage($Dev, "🛡️ کاربر [$from_id](tg://user?id=$from_id) به دلیل اسپم از ربات مسدود گردید.\n\n👤 یوزرنیم: {$username}\n⏰ مدت مسدودیت: {$remaining_time}\n/unban\_{$from_id}", 'markdown');
+			
+			unlink('data/flood.json');
+			exit();
+		}
+	}
+	
+	// Check and remove expired anti-spam bans
+	if (isset($data['antispam_bans']) && !empty($data['antispam_bans'])) {
+		$current_time = time();
+		$expired_bans = [];
+		
+		foreach ($data['antispam_bans'] as $user_id => $ban_info) {
+			$ban_end_time = $ban_info['ban_time'] + $ban_info['duration'];
+			if ($current_time >= $ban_end_time) {
+				$expired_bans[] = $user_id;
+				
+				// Remove from regular ban list
+				if (in_array($user_id, $list['ban'])) {
+					$search = array_search($user_id, $list['ban']);
+					unset($list['ban'][$search]);
+					$list['ban'] = array_values($list['ban']);
+					file_put_contents('data/list.json', json_encode($list));
+				}
+				
+				// Send unban notification to user
+				sendMessage($user_id, "✅ شما از مسدودیت ضد اسپم آزاد شدید.\n\n🔰 می توانید دوباره از ربات استفاده کنید.", 'markdown', null, $button_user);
+			}
+		}
+		
+		// Remove expired bans from anti-spam bans
+		foreach ($expired_bans as $user_id) {
+			unset($data['antispam_bans'][$user_id]);
+		}
+		
+		if (!empty($expired_bans)) {
+			file_put_contents('data/data.json', json_encode($data));
+		}
+	}
+	
 	if ($flood['flood']["$now-$from_id"] >= 33 && $tc == 'private') {
 		sendAction($chat_id);
 		if ($list['ban'] == null) {
@@ -719,7 +842,11 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 
 	if (isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
 		if ($data['lock']['forward'] == '✅') {
-			sendMessage($chat_id, "⛔️ ارسال پیام های هدایت شده (فروارد شده) مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال پیام های هدایت شده (فروارد شده) مجاز نیست.", 'html' , null, $button_user);
 			goto tabliq;
 		}
 	}
@@ -741,13 +868,25 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 				}
 			}
 			if ($checklink == true) {
-				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی لینک مجاز نیست.", 'html' , $message_id, $button_user);
+				bot('deleteMessage', [
+					'chat_id' => $chat_id,
+					'message_id' => $message_id
+				]);
+				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی لینک مجاز نیست.", 'html' , null, $button_user);
 			}
 			if ($checkfilter == true) {
-				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی کلمات غیر مجاز ممنوع است.", 'html' , $message_id, $button_user);
+				bot('deleteMessage', [
+					'chat_id' => $chat_id,
+					'message_id' => $message_id
+				]);
+				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی کلمات غیر مجاز ممنوع است.", 'html' , null, $button_user);
 			}
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال متن مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال متن مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -762,7 +901,11 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال تصویر مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال تصویر مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -777,7 +920,11 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -792,7 +939,11 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال صدا مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال صدا مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -805,8 +956,11 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 						//sendMessage($Dev, "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			
-			sendMessage($chat_id, "⛔️ ارسال موسیقی مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال موسیقی مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -819,7 +973,11 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 						//sendMessage($Dev, "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال استیکر مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال استیکر مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -834,7 +992,11 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال فایل مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال فایل مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -868,7 +1030,11 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 
 	if (isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
 		if ($data['lock']['forward'] == '✅') {
-			sendMessage($chat_id, "⛔️ ارسال پیام های هدایت شده (فروارد شده) مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال پیام های هدایت شده (فروارد شده) مجاز نیست.", 'html' , null, $button_user);
 			goto tabliq;
 		}
 	}
@@ -889,13 +1055,25 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 				}
 			}
 			if ($checklink == true) {
-				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی لینک مجاز نیست.", 'html' , $message_id, $button_user);
+				bot('deleteMessage', [
+					'chat_id' => $chat_id,
+					'message_id' => $message_id
+				]);
+				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی لینک مجاز نیست.", 'html' , null, $button_user);
 			}
 			if ($checkfilter == true) {
-				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی کلمات غیر مجاز ممنوع است.", 'html' , $message_id, $button_user);
+				bot('deleteMessage', [
+					'chat_id' => $chat_id,
+					'message_id' => $message_id
+				]);
+				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی کلمات غیر مجاز ممنوع است.", 'html' , null, $button_user);
 			}
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال متن مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال متن مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -910,7 +1088,11 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال تصویر مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال تصویر مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -925,7 +1107,11 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -940,7 +1126,11 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال صدا مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال صدا مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -953,7 +1143,11 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 						//sendMessage($data['feed'], "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال موسیقی مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال موسیقی مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -966,7 +1160,11 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 						//sendMessage($data['feed'], "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال استیکر مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال استیکر مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -981,7 +1179,11 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال فایل مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال فایل مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -2504,6 +2706,7 @@ elseif ($text == '💡 روشن کردن ربات') {
 		[['text'=>"📝 پیام خصوصی"],['text'=>"👤 اطلاعات کاربر"]],
 		[['text'=>'📤 بارگذاری پشتیبان'],['text'=>'📥 دریافت پشتیبان']],
 		[['text'=>'🎖 اشتراک ویژه'],['text'=>'🗑 پاکسازی']],
+		[['text'=>"🛡️ ضد اسپم"]],
 		[['text'=>"🔌 خاموش کردن ربات"]],
 		[['text'=>"🔙 خروج از مدیریت"]]
 		], 'resize_keyboard'=>true]);
@@ -2526,9 +2729,270 @@ elseif ($text == '🔌 خاموش کردن ربات') {
 		[['text'=>"📝 پیام خصوصی"],['text'=>"👤 اطلاعات کاربر"]],
 		[['text'=>'📤 بارگذاری پشتیبان'],['text'=>'📥 دریافت پشتیبان']],
 		[['text'=>'🎖 اشتراک ویژه'],['text'=>'🗑 پاکسازی']],
+		[['text'=>"🛡️ ضد اسپم"]],
 		[['text'=>"🔙 خروج از مدیریت"]]
 		], 'resize_keyboard'=>true]);
 	sendMessage($chat_id, "🔌 ربات با موفقیت خاموش شد.\n\n📩 از این پس پیام های کاربران دریافت نخواهد شد.", 'markdown', $message_id, $panel);
+}
+elseif ($text == '🛡️ ضد اسپم') {
+	sendAction($chat_id);
+	
+	// Initialize anti-spam settings if they don't exist
+	if (!isset($data['antispam'])) {
+		$data['antispam'] = [
+			'enabled' => false,
+			'message_limit' => 0,
+			'time_window' => [
+				'year' => 0,
+				'month' => 0,
+				'day' => 0,
+				'hour' => 0,
+				'minute' => 0,
+				'second' => 0
+			],
+			'ban_duration' => [
+				'year' => 0,
+				'month' => 0,
+				'day' => 0,
+				'hour' => 0,
+				'minute' => 0,
+				'second' => 0
+			]
+		];
+		file_put_contents('data/data.json', json_encode($data));
+	}
+	
+	$antispam_status = $data['antispam']['enabled'] ? '❌ غیرفعال‌سازی ضد اسپم' : '✅ فعال‌سازی ضد اسپم';
+	$message_limit = $data['antispam']['message_limit'];
+	
+	// Format ban duration
+	$ban_duration_text = '';
+	$duration_parts = [];
+	if ($data['antispam']['ban_duration']['year'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['year'] . ' سال';
+	}
+	if ($data['antispam']['ban_duration']['month'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['month'] . ' ماه';
+	}
+	if ($data['antispam']['ban_duration']['day'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['day'] . ' روز';
+	}
+	if ($data['antispam']['ban_duration']['hour'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['hour'] . ' ساعت';
+	}
+	if ($data['antispam']['ban_duration']['minute'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['minute'] . ' دقیقه';
+	}
+	if ($data['antispam']['ban_duration']['second'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['second'] . ' ثانیه';
+	}
+	
+	if (empty($duration_parts)) {
+		$ban_duration_text = '0';
+	} else {
+		$ban_duration_text = implode(' ', $duration_parts);
+	}
+	
+	$antispam_panel = json_encode(['keyboard'=>[
+		[['text'=>$antispam_status]],
+		[['text'=>"مقدار پیام برای مسدود سازی : {$message_limit}"]],
+		[['text'=>"محدوده زمانی : {$time_window_text}"]],
+		[['text'=>"مقدار زمان مسدود سازی : {$ban_duration_text}"]],
+		[['text'=>"کاربران مسدود شده از طریق ضد اسپم"]],
+		[['text'=>"🔙 بازگشت"]]
+	], 'resize_keyboard'=>true]);
+	
+	sendMessage($chat_id, "🛡️ به بخش ضد اسپم خوش آمدید.\n\n🔰 تنظیمات فعلی:\n✅ وضعیت: " . ($data['antispam']['enabled'] ? 'فعال' : 'غیرفعال') . "\n📝 محدودیت پیام: {$message_limit}\n⏱️ محدوده زمانی: {$time_window_text}\n⏰ مدت مسدودیت: {$ban_duration_text}", 'html', $message_id, $antispam_panel);
+}
+elseif ($text == '✅ فعال‌سازی ضد اسپم' || $text == '❌ غیرفعال‌سازی ضد اسپم') {
+	sendAction($chat_id);
+	
+	$data['antispam']['enabled'] = !$data['antispam']['enabled'];
+	file_put_contents('data/data.json', json_encode($data));
+	
+	$status_text = $data['antispam']['enabled'] ? 'فعال' : 'غیرفعال';
+	$antispam_status = $data['antispam']['enabled'] ? '❌ غیرفعال‌سازی ضد اسپم' : '✅ فعال‌سازی ضد اسپم';
+	$message_limit = $data['antispam']['message_limit'];
+	
+	// Format ban duration
+	$ban_duration_text = '';
+	$duration_parts = [];
+	if ($data['antispam']['ban_duration']['year'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['year'] . ' سال';
+	}
+	if ($data['antispam']['ban_duration']['month'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['month'] . ' ماه';
+	}
+	if ($data['antispam']['ban_duration']['day'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['day'] . ' روز';
+	}
+	if ($data['antispam']['ban_duration']['hour'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['hour'] . ' ساعت';
+	}
+	if ($data['antispam']['ban_duration']['minute'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['minute'] . ' دقیقه';
+	}
+	if ($data['antispam']['ban_duration']['second'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['second'] . ' ثانیه';
+	}
+	
+	if (empty($duration_parts)) {
+		$ban_duration_text = '0';
+	} else {
+		$ban_duration_text = implode(' ', $duration_parts);
+	}
+	
+	// Format time window
+	$time_window_text = '';
+	$time_parts = [];
+	if ($data['antispam']['time_window']['year'] > 0) {
+		$time_parts[] = $data['antispam']['time_window']['year'] . ' سال';
+	}
+	if ($data['antispam']['time_window']['month'] > 0) {
+		$time_parts[] = $data['antispam']['time_window']['month'] . ' ماه';
+	}
+	if ($data['antispam']['time_window']['day'] > 0) {
+		$time_parts[] = $data['antispam']['time_window']['day'] . ' روز';
+	}
+	if ($data['antispam']['time_window']['hour'] > 0) {
+		$time_parts[] = $data['antispam']['time_window']['hour'] . ' ساعت';
+	}
+	if ($data['antispam']['time_window']['minute'] > 0) {
+		$time_parts[] = $data['antispam']['time_window']['minute'] . ' دقیقه';
+	}
+	if ($data['antispam']['time_window']['second'] > 0) {
+		$time_parts[] = $data['antispam']['time_window']['second'] . ' ثانیه';
+	}
+	
+	if (empty($time_parts)) {
+		$time_window_text = '0';
+	} else {
+		$time_window_text = implode(' ', $time_parts);
+	}
+	
+	$antispam_panel = json_encode(['keyboard'=>[
+		[['text'=>$antispam_status]],
+		[['text'=>"مقدار پیام برای مسدود سازی : {$message_limit}"]],
+		[['text'=>"محدوده زمانی : {$time_window_text}"]],
+		[['text'=>"مقدار زمان مسدود سازی : {$ban_duration_text}"]],
+		[['text'=>"کاربران مسدود شده از طریق ضد اسپم"]],
+		[['text'=>"🔙 بازگشت"]]
+	], 'resize_keyboard'=>true]);
+	
+	sendMessage($chat_id, "🛡️ ضد اسپم با موفقیت {$status_text} شد.\n\n🔰 تنظیمات فعلی:\n✅ وضعیت: {$status_text}\n📝 محدودیت پیام: {$message_limit}\n⏱️ محدوده زمانی: {$time_window_text}\n⏰ مدت مسدودیت: {$ban_duration_text}", 'html', $message_id, $antispam_panel);
+}
+elseif (strpos($text, 'مقدار پیام برای مسدود سازی :') !== false) {
+	sendAction($chat_id);
+	$data['step'] = 'set_message_limit';
+	file_put_contents('data/data.json', json_encode($data));
+	
+	$back_keyboard = json_encode(['keyboard'=>[['text'=>'🔙 بازگشت']], 'resize_keyboard'=>true]);
+	sendMessage($chat_id, "📝 لطفا تعداد پیام مجاز برای ارسال در محدوده زمانی مشخص شده را وارد کنید.\n\n💡 مثال: 5\n\n⚠️ بعد از تنظیم این مقدار، باید محدوده زمانی را نیز تنظیم کنید.\n\n🔰 توضیح: اگر محدوده زمانی 1 دقیقه و تعداد پیام 5 باشد، کاربر در 1 دقیقه فقط 5 پیام می‌تواند ارسال کند.", 'html', $message_id, $back_keyboard);
+}
+elseif (strpos($text, 'محدوده زمانی :') !== false) {
+	sendAction($chat_id);
+	$data['step'] = 'set_time_window';
+	file_put_contents('data/data.json', json_encode($data));
+	
+	$duration_keyboard = json_encode(['keyboard'=>[
+		['text'=>'سال'], ['text'=>'ماه'], ['text'=>'روز'],
+		['text'=>'ساعت'], ['text'=>'دقیقه'], ['text'=>'ثانیه'],
+		['text'=>'🔙 بازگشت']
+	], 'resize_keyboard'=>true]);
+	
+	sendMessage($chat_id, "⏱️ لطفا واحد زمان محدوده ارسال پیام را انتخاب کنید و سپس مقدار آن را وارد کنید.\n\n💡 مثال: دقیقه را انتخاب کنید و سپس عدد 1 را وارد کنید تا محدوده 1 دقیقه تنظیم شود.\n\n🔰 توضیح: این محدوده زمانی برای شمارش پیام‌های کاربر استفاده می‌شود. مثلاً اگر 1 دقیقه تنظیم شود، ربات در هر 1 دقیقه پیام‌های کاربر را می‌شمارد.", 'html', $message_id, $duration_keyboard);
+}
+elseif (strpos($text, 'مقدار زمان مسدود سازی :') !== false) {
+	sendAction($chat_id);
+	$data['step'] = 'set_ban_duration';
+	file_put_contents('data/data.json', json_encode($data));
+	
+	$duration_keyboard = json_encode(['keyboard'=>[
+		['text'=>'سال'], ['text'=>'ماه'], ['text'=>'روز'],
+		['text'=>'ساعت'], ['text'=>'دقیقه'], ['text'=>'ثانیه'],
+		['text'=>'🔙 بازگشت']
+	], 'resize_keyboard'=>true]);
+	
+	sendMessage($chat_id, "⏰ لطفا واحد زمان مسدودیت را انتخاب کنید و سپس مقدار آن را وارد کنید.\n\n💡 مثال: دقیقه را انتخاب کنید و سپس عدد 30 را وارد کنید تا مدت مسدودیت 30 دقیقه تنظیم شود.", 'html', $message_id, $duration_keyboard);
+}
+elseif ($text == 'کاربران مسدود شده از طریق ضد اسپم') {
+	sendAction($chat_id);
+	
+	if (!isset($data['antispam_bans']) || empty($data['antispam_bans'])) {
+		sendMessage($chat_id, "📝 هیچ کاربری از طریق ضد اسپم مسدود نشده است.", 'html', $message_id);
+	} else {
+		$banned_users_text = "📝 کاربران مسدود شده از طریق ضد اسپم:\n\n";
+		$counter = 1;
+		
+		foreach ($data['antispam_bans'] as $user_id => $ban_info) {
+			$username = isset($ban_info['username']) ? $ban_info['username'] : 'بدون یوزرنیم';
+			$ban_date = jdate('Y/m/j H:i:s', $ban_info['ban_time']);
+			$end_time = $ban_info['ban_time'] + $ban_info['duration'];
+			$remaining_time = $end_time - time();
+			
+			if ($remaining_time > 0) {
+				$remaining_text = timeElapsed($remaining_time);
+			} else {
+				$remaining_text = 'منقضی شده';
+			}
+			
+			// Make username clickable or user ID clickable
+			if ($username != 'بدون یوزرنیم') {
+				$clickable_username = "@{$username}";
+			} else {
+				$clickable_username = "[{$user_id}](tg://user?id={$user_id})";
+			}
+			
+			$banned_users_text .= "{$counter} - {$clickable_username} | تاریخ مسدود سازی : {$ban_date} | زمان اتمام : {$remaining_text}\n\n";
+			$counter++;
+		}
+		
+		sendMessage($chat_id, $banned_users_text, 'markdown', $message_id);
+	}
+}
+elseif ($text == '🔙 بازگشت') {
+	sendAction($chat_id);
+	$data['step'] = "none";
+	file_put_contents("data/data.json",json_encode($data));
+	
+	// Reconstruct the main panel based on bot status
+	if ($data['stats'] == "on") {
+		$panel = json_encode(['keyboard'=>[
+			[['text'=>"📕 راهنما"]],
+			[['text'=>"⛔️ کاربران مسدود"],['text'=>"📊 آمار"]],
+			[['text'=>"✉️ پیام همگانی"],['text'=>"🚀 هدایت همگانی"]],
+			[['text'=>"🎲 سرگرمی"]],
+			[['text'=>"⌨️ دکمه ها"],['text'=>"✉️ پیغام ها"]],
+			[['text'=>"💻 پاسخ خودکار"],['text'=>"⛔️ فیلتر کلمه"]],
+			[['text'=>"☎️ شماره من"],['text'=>"👨🏻‍💻 ادمین ها"]],
+			[['text'=>"📣 قفل کانال ها"],['text'=>"🔐 قفل ها"]],
+			[['text'=>"📝 پیام خصوصی"],['text'=>"👤 اطلاعات کاربر"]],
+			[['text'=>'📤 بارگذاری پشتیبان'],['text'=>'📥 دریافت پشتیبان']],
+			[['text'=>'🎖 اشتراک ویژه'],['text'=>'🗑 پاکسازی']],
+			[['text'=>"🛡️ ضد اسپم"]],
+			[['text'=>"🔌 خاموش کردن ربات"]],
+			[['text'=>"🔙 خروج از مدیریت"]]
+			], 'resize_keyboard'=>true]);
+	} else {
+		$panel = json_encode(['keyboard'=>[
+			[['text'=>"💡 روشن کردن ربات"]],
+			[['text'=>"📕 راهنما"]],
+			[['text'=>"⛔️ کاربران مسدود"],['text'=>"📊 آمار"]],
+			[['text'=>"✉️ پیام همگانی"],['text'=>"🚀 هدایت همگانی"]],
+			[['text'=>"🎲 سرگرمی"]],
+			[['text'=>"⌨️ دکمه ها"],['text'=>"✉️ پیغام ها"]],
+			[['text'=>"💻 پاسخ خودکار"],['text'=>"⛔️ فیلتر کلمه"]],
+			[['text'=>"☎️ شماره من"],['text'=>"👨🏻‍💻 ادمین ها"]],
+			[['text'=>"📣 قفل کانال ها"],['text'=>"🔐 قفل ها"]],
+			[['text'=>"📝 پیام خصوصی"],['text'=>"👤 اطلاعات کاربر"]],
+			[['text'=>'📤 بارگذاری پشتیبان'],['text'=>'📥 دریافت پشتیبان']],
+			[['text'=>'🎖 اشتراک ویژه'],['text'=>'🗑 پاکسازی']],
+			[['text'=>"🛡️ ضد اسپم"]],
+			[['text'=>"🔙 خروج از مدیریت"]]
+			], 'resize_keyboard'=>true]);
+	}
+	
+	sendMessage($chat_id, "👇🏻 لطفا یکی از دکمه های زیر را انتخاب نمایید.", 'markdown' , $message_id, $panel);
 }
 ##----------------------
 elseif ($text == '🏞 تصویر به استیکر') {
@@ -3796,6 +4260,291 @@ elseif ($data['step'] == 'set_off_text' && isset($text)) {
 		sendMessage($chat_id, "✅ تنظیم گردید.", 'markdown', $message_id, $peygham);
 	}
 }
+elseif ($data['step'] == 'set_message_limit' && isset($text)) {
+	sendAction($chat_id);
+	
+	if (is_numeric($text) && $text > 0) {
+		$data['antispam']['message_limit'] = (int)$text;
+		$data['step'] = 'none';
+		file_put_contents('data/data.json', json_encode($data));
+		
+		$antispam_status = $data['antispam']['enabled'] ? '❌ غیرفعال‌سازی ضد اسپم' : '✅ فعال‌سازی ضد اسپم';
+		$message_limit = $data['antispam']['message_limit'];
+		
+		// Format ban duration
+		$ban_duration_text = '';
+		$duration_parts = [];
+		if ($data['antispam']['ban_duration']['year'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['year'] . ' سال';
+		}
+		if ($data['antispam']['ban_duration']['month'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['month'] . ' ماه';
+		}
+		if ($data['antispam']['ban_duration']['day'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['day'] . ' روز';
+		}
+		if ($data['antispam']['ban_duration']['hour'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['hour'] . ' ساعت';
+		}
+		if ($data['antispam']['ban_duration']['minute'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['minute'] . ' دقیقه';
+		}
+		if ($data['antispam']['ban_duration']['second'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['second'] . ' ثانیه';
+		}
+		
+		if (empty($duration_parts)) {
+			$ban_duration_text = '0';
+		} else {
+			$ban_duration_text = implode(' ', $duration_parts);
+		}
+		
+		// Format time window
+		$time_window_text = '';
+		$time_parts = [];
+		if ($data['antispam']['time_window']['year'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['year'] . ' سال';
+		}
+		if ($data['antispam']['time_window']['month'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['month'] . ' ماه';
+		}
+		if ($data['antispam']['time_window']['day'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['day'] . ' روز';
+		}
+		if ($data['antispam']['time_window']['hour'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['hour'] . ' ساعت';
+		}
+		if ($data['antispam']['time_window']['minute'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['minute'] . ' دقیقه';
+		}
+		if ($data['antispam']['time_window']['second'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['second'] . ' ثانیه';
+		}
+		
+		if (empty($time_parts)) {
+			$time_window_text = '0';
+		} else {
+			$time_window_text = implode(' ', $time_parts);
+		}
+		
+		$antispam_panel = json_encode(['keyboard'=>[
+			[['text'=>$antispam_status]],
+			[['text'=>"مقدار پیام برای مسدود سازی : {$message_limit}"]],
+			[['text'=>"محدوده زمانی : {$time_window_text}"]],
+			[['text'=>"مقدار زمان مسدود سازی : {$ban_duration_text}"]],
+			[['text'=>"کاربران مسدود شده از طریق ضد اسپم"]],
+			[['text'=>"🔙 بازگشت"]]
+		], 'resize_keyboard'=>true]);
+		
+		sendMessage($chat_id, "✅ محدودیت پیام با موفقیت به {$text} تنظیم شد.", 'html', $message_id, $antispam_panel);
+	} else {
+		sendMessage($chat_id, "❌ لطفا یک عدد معتبر وارد کنید.", 'html', $message_id);
+	}
+}
+elseif ($data['step'] == 'set_ban_duration' && isset($text)) {
+	sendAction($chat_id);
+	
+	if (in_array($text, ['سال', 'ماه', 'روز', 'ساعت', 'دقیقه', 'ثانیه'])) {
+		$data['step'] = 'set_ban_duration_value';
+		$data['temp_duration_unit'] = $text;
+		file_put_contents('data/data.json', json_encode($data));
+		
+		$back_keyboard = json_encode(['keyboard'=>[['text'=>'🔙 بازگشت']], 'resize_keyboard'=>true]);
+		sendMessage($chat_id, "⏰ لطفا مقدار {$text} را وارد کنید.\n\n💡 مثال: 1", 'html', $message_id, $back_keyboard);
+	} else {
+		sendMessage($chat_id, "❌ لطفا یکی از واحدهای زمان را انتخاب کنید.", 'html', $message_id);
+	}
+}
+elseif ($data['step'] == 'set_ban_duration_value' && isset($text)) {
+	sendAction($chat_id);
+	
+	if (is_numeric($text) && $text >= 0) {
+		$unit = $data['temp_duration_unit'];
+		
+		// Map Persian unit names to English keys
+		$unit_mapping = [
+			'سال' => 'year',
+			'ماه' => 'month',
+			'روز' => 'day',
+			'ساعت' => 'hour',
+			'دقیقه' => 'minute',
+			'ثانیه' => 'second'
+		];
+		
+		$english_unit = $unit_mapping[$unit];
+		$data['antispam']['ban_duration'][$english_unit] = (int)$text;
+		unset($data['temp_duration_unit']);
+		$data['step'] = 'none';
+		file_put_contents('data/data.json', json_encode($data));
+		
+		$antispam_status = $data['antispam']['enabled'] ? '❌ غیرفعال‌سازی ضد اسپم' : '✅ فعال‌سازی ضد اسپم';
+		$message_limit = $data['antispam']['message_limit'];
+		
+		// Format ban duration
+		$ban_duration_text = '';
+		$duration_parts = [];
+		if ($data['antispam']['ban_duration']['year'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['year'] . ' سال';
+		}
+		if ($data['antispam']['ban_duration']['month'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['month'] . ' ماه';
+		}
+		if ($data['antispam']['ban_duration']['day'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['day'] . ' روز';
+		}
+		if ($data['antispam']['ban_duration']['hour'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['hour'] . ' ساعت';
+		}
+		if ($data['antispam']['ban_duration']['minute'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['minute'] . ' دقیقه';
+		}
+		if ($data['antispam']['ban_duration']['second'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['second'] . ' ثانیه';
+		}
+		
+		if (empty($duration_parts)) {
+			$ban_duration_text = '0';
+		} else {
+			$ban_duration_text = implode(' ', $duration_parts);
+		}
+		
+		// Format time window
+		$time_window_text = '';
+		$time_parts = [];
+		if ($data['antispam']['time_window']['year'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['year'] . ' سال';
+		}
+		if ($data['antispam']['time_window']['month'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['month'] . ' ماه';
+		}
+		if ($data['antispam']['time_window']['day'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['day'] . ' روز';
+		}
+		if ($data['antispam']['time_window']['hour'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['hour'] . ' ساعت';
+		}
+		if ($data['antispam']['time_window']['minute'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['minute'] . ' دقیقه';
+		}
+		if ($data['antispam']['time_window']['second'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['second'] . ' ثانیه';
+		}
+		
+		if (empty($time_parts)) {
+			$time_window_text = '0';
+		} else {
+			$time_window_text = implode(' ', $time_parts);
+		}
+		
+		$antispam_panel = json_encode(['keyboard'=>[
+			[['text'=>$antispam_status]],
+			[['text'=>"مقدار پیام برای مسدود سازی : {$message_limit}"]],
+			[['text'=>"محدوده زمانی : {$time_window_text}"]],
+			[['text'=>"مقدار زمان مسدود سازی : {$ban_duration_text}"]],
+			[['text'=>"کاربران مسدود شده از طریق ضد اسپم"]],
+			[['text'=>"🔙 بازگشت"]]
+		], 'resize_keyboard'=>true]);
+		
+		sendMessage($chat_id, "✅ مدت زمان مسدودیت برای {$unit} با موفقیت به {$text} تنظیم شد.", 'html', $message_id, $antispam_panel);
+	} else {
+		sendMessage($chat_id, "❌ لطفا یک عدد معتبر وارد کنید.", 'html', $message_id);
+	}
+}
+elseif ($data['step'] == 'set_time_window_value' && isset($text)) {
+	sendAction($chat_id);
+	
+	if (is_numeric($text) && $text >= 0) {
+		$unit = $data['temp_duration_unit'];
+		
+		// Map Persian unit names to English keys
+		$unit_mapping = [
+			'سال' => 'year',
+			'ماه' => 'month',
+			'روز' => 'day',
+			'ساعت' => 'hour',
+			'دقیقه' => 'minute',
+			'ثانیه' => 'second'
+		];
+		
+		$english_unit = $unit_mapping[$unit];
+		$data['antispam']['time_window'][$english_unit] = (int)$text;
+		unset($data['temp_duration_unit']);
+		$data['step'] = 'none';
+		file_put_contents('data/data.json', json_encode($data));
+		
+		$antispam_status = $data['antispam']['enabled'] ? '❌ غیرفعال‌سازی ضد اسپم' : '✅ فعال‌سازی ضد اسپم';
+		$message_limit = $data['antispam']['message_limit'];
+		
+		// Format time window
+		$time_window_text = '';
+		$time_parts = [];
+		if ($data['antispam']['time_window']['year'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['year'] . ' سال';
+		}
+		if ($data['antispam']['time_window']['month'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['month'] . ' ماه';
+		}
+		if ($data['antispam']['time_window']['day'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['day'] . ' روز';
+		}
+		if ($data['antispam']['time_window']['hour'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['hour'] . ' ساعت';
+		}
+		if ($data['antispam']['time_window']['minute'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['minute'] . ' دقیقه';
+		}
+		if ($data['antispam']['time_window']['second'] > 0) {
+			$time_parts[] = $data['antispam']['time_window']['second'] . ' ثانیه';
+		}
+		
+		if (empty($time_parts)) {
+			$time_window_text = '0';
+		} else {
+			$time_window_text = implode(' ', $time_parts);
+		}
+		
+		// Format ban duration
+		$ban_duration_text = '';
+		$duration_parts = [];
+		if ($data['antispam']['ban_duration']['year'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['year'] . ' سال';
+		}
+		if ($data['antispam']['ban_duration']['month'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['month'] . ' ماه';
+		}
+		if ($data['antispam']['ban_duration']['day'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['day'] . ' روز';
+		}
+		if ($data['antispam']['ban_duration']['hour'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['hour'] . ' ساعت';
+		}
+		if ($data['antispam']['ban_duration']['minute'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['minute'] . ' دقیقه';
+		}
+		if ($data['antispam']['ban_duration']['second'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['second'] . ' ثانیه';
+		}
+		
+		if (empty($duration_parts)) {
+			$ban_duration_text = '0';
+		} else {
+			$ban_duration_text = implode(' ', $duration_parts);
+		}
+		
+		$antispam_panel = json_encode(['keyboard'=>[
+			[['text'=>$antispam_status]],
+			[['text'=>"مقدار پیام برای مسدود سازی : {$message_limit}"]],
+			[['text'=>"محدوده زمانی : {$time_window_text}"]],
+			[['text'=>"مقدار زمان مسدود سازی : {$ban_duration_text}"]],
+			[['text'=>"کاربران مسدود شده از طریق ضد اسپم"]],
+			[['text'=>"🔙 بازگشت"]]
+		], 'resize_keyboard'=>true]);
+		
+		sendMessage($chat_id, "✅ محدوده زمانی ارسال پیام برای {$unit} با موفقیت به {$text} تنظیم شد.", 'html', $message_id, $antispam_panel);
+	} else {
+		sendMessage($chat_id, "❌ لطفا یک عدد معتبر وارد کنید.", 'html', $message_id);
+	}
+}
 elseif ($data['step'] == "user") {
 	sendAction($chat_id);
 	if (isset($forward)) {
@@ -4237,16 +4986,25 @@ elseif (preg_match("|\/ban([\_\s])([0-9]+)|i", $text, $match)) {
 ##----------------------
 elseif (preg_match("|\/unban([\_\s])([0-9]+)|i", $text, $match)) {
 	sendAction($chat_id);
-	if (in_array($match[2], $list['ban'])) {
-		$search = array_search($match[2], $list['ban']);
+	$user_id = $match[2];
+	
+	if (in_array($user_id, $list['ban'])) {
+		$search = array_search($user_id, $list['ban']);
 		unset($list['ban'][$search]);
 		$list['ban'] = array_values($list['ban']);
 		file_put_contents("data/list.json",json_encode($list, true));
-		sendMessage($chat_id, "⛔️ کاربر [$match[2]](tg://user?id={$match[2]}) آزاد شد.", 'markdown', null, $panel);
-		sendMessage($match[2], "🔰 شما آزاد گردیدید.\n✅ دستور /start را ارسال نمایید.", 'markdown', null);
+		
+		// Also remove from anti-spam bans if exists
+		if (isset($data['antispam_bans'][$user_id])) {
+			unset($data['antispam_bans'][$user_id]);
+			file_put_contents('data/data.json', json_encode($data));
+		}
+		
+		sendMessage($chat_id, "⛔️ کاربر [$user_id](tg://user?id={$user_id}) آزاد شد.", 'markdown', null, $panel);
+		sendMessage($user_id, "🔰 شما آزاد گردیدید.\n✅ دستور /start را ارسال نمایید.", 'markdown', null);
 	}
 	else {
-		sendMessage($chat_id, "👤 کاربر [$match[2]](tg://user?id={$match[2]}) از قبل آزاد بود.", 'markdown', null);
+		sendMessage($chat_id, "👤 کاربر [$user_id](tg://user?id={$user_id}) از قبل آزاد بود.", 'markdown', null);
 	}
 }
 }
