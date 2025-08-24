@@ -28,6 +28,99 @@ if ($from_id != $Dev) {
 	$flood['flood']["$now-$from_id"] += 1;
 	file_put_contents('data/flood.json', json_encode($flood));
 	
+	// Anti-spam check
+	if (isset($data['antispam']['enabled']) && $data['antispam']['enabled'] && $tc == 'private') {
+		$message_limit = $data['antispam']['message_limit'];
+		if ($message_limit > 0 && $flood['flood']["$now-$from_id"] >= $message_limit) {
+			sendAction($chat_id);
+			
+			// Calculate ban duration in seconds
+			$ban_duration = 0;
+			$ban_duration += $data['antispam']['ban_duration']['year'] * 365 * 24 * 3600;
+			$ban_duration += $data['antispam']['ban_duration']['month'] * 30 * 24 * 3600;
+			$ban_duration += $data['antispam']['ban_duration']['day'] * 24 * 3600;
+			$ban_duration += $data['antispam']['ban_duration']['hour'] * 3600;
+			$ban_duration += $data['antispam']['ban_duration']['minute'] * 60;
+			$ban_duration += $data['antispam']['ban_duration']['second'];
+			
+			// If no duration set, use default 1 hour
+			if ($ban_duration == 0) {
+				$ban_duration = 3600;
+			}
+			
+			// Get user info for anti-spam ban
+			$user_info = bot('getChat', ['chat_id' => $from_id]);
+			$username = isset($user_info['result']['username']) ? $user_info['result']['username'] : 'بدون یوزرنیم';
+			
+			// Add to anti-spam bans
+			if (!isset($data['antispam_bans'])) {
+				$data['antispam_bans'] = [];
+			}
+			
+			$data['antispam_bans'][$from_id] = [
+				'username' => $username,
+				'ban_time' => time(),
+				'duration' => $ban_duration
+			];
+			
+			file_put_contents('data/data.json', json_encode($data));
+			
+			// Add to regular ban list
+			if ($list['ban'] == null) {
+				$list['ban'] = [];
+			}
+			
+			if (!in_array($from_id, $list['ban'])) {
+				array_push($list['ban'], $from_id);
+				file_put_contents('data/list.json', json_encode($list));
+			}
+			
+			// Send ban message to user
+			$ban_end_time = time() + $ban_duration;
+			$remaining_time = timeElapsed($ban_duration);
+			sendMessage($from_id, "⛔️ شما به دلیل ارسال پیام های مکرر (اسپم) از ربات مسدود گردیدید.\n\n⏰ مدت مسدودیت: {$remaining_time}\n🕰 زمان اتمام: " . jdate('Y/m/j H:i:s', $ban_end_time), 'markdown', null, $remove);
+			
+			// Send notification to admin
+			sendMessage($Dev, "🛡️ کاربر [$from_id](tg://user?id=$from_id) به دلیل اسپم از ربات مسدود گردید.\n\n👤 یوزرنیم: {$username}\n⏰ مدت مسدودیت: {$remaining_time}\n/unban\_{$from_id}", 'markdown');
+			
+			unlink('data/flood.json');
+			exit();
+		}
+	}
+	
+	// Check and remove expired anti-spam bans
+	if (isset($data['antispam_bans']) && !empty($data['antispam_bans'])) {
+		$current_time = time();
+		$expired_bans = [];
+		
+		foreach ($data['antispam_bans'] as $user_id => $ban_info) {
+			$ban_end_time = $ban_info['ban_time'] + $ban_info['duration'];
+			if ($current_time >= $ban_end_time) {
+				$expired_bans[] = $user_id;
+				
+				// Remove from regular ban list
+				if (in_array($user_id, $list['ban'])) {
+					$search = array_search($user_id, $list['ban']);
+					unset($list['ban'][$search]);
+					$list['ban'] = array_values($list['ban']);
+					file_put_contents('data/list.json', json_encode($list));
+				}
+				
+				// Send unban notification to user
+				sendMessage($user_id, "✅ شما از مسدودیت ضد اسپم آزاد شدید.\n\n🔰 می توانید دوباره از ربات استفاده کنید.", 'markdown', null, $button_user);
+			}
+		}
+		
+		// Remove expired bans from anti-spam bans
+		foreach ($expired_bans as $user_id) {
+			unset($data['antispam_bans'][$user_id]);
+		}
+		
+		if (!empty($expired_bans)) {
+			file_put_contents('data/data.json', json_encode($data));
+		}
+	}
+	
 	if ($flood['flood']["$now-$from_id"] >= 33 && $tc == 'private') {
 		sendAction($chat_id);
 		if ($list['ban'] == null) {
@@ -2583,6 +2676,7 @@ elseif ($text == '💡 روشن کردن ربات') {
 		[['text'=>"📝 پیام خصوصی"],['text'=>"👤 اطلاعات کاربر"]],
 		[['text'=>'📤 بارگذاری پشتیبان'],['text'=>'📥 دریافت پشتیبان']],
 		[['text'=>'🎖 اشتراک ویژه'],['text'=>'🗑 پاکسازی']],
+		[['text'=>"🛡️ ضد اسپم"]],
 		[['text'=>"🔌 خاموش کردن ربات"]],
 		[['text'=>"🔙 خروج از مدیریت"]]
 		], 'resize_keyboard'=>true]);
@@ -2605,9 +2699,174 @@ elseif ($text == '🔌 خاموش کردن ربات') {
 		[['text'=>"📝 پیام خصوصی"],['text'=>"👤 اطلاعات کاربر"]],
 		[['text'=>'📤 بارگذاری پشتیبان'],['text'=>'📥 دریافت پشتیبان']],
 		[['text'=>'🎖 اشتراک ویژه'],['text'=>'🗑 پاکسازی']],
+		[['text'=>"🛡️ ضد اسپم"]],
 		[['text'=>"🔙 خروج از مدیریت"]]
 		], 'resize_keyboard'=>true]);
 	sendMessage($chat_id, "🔌 ربات با موفقیت خاموش شد.\n\n📩 از این پس پیام های کاربران دریافت نخواهد شد.", 'markdown', $message_id, $panel);
+}
+elseif ($text == '🛡️ ضد اسپم') {
+	sendAction($chat_id);
+	
+	// Initialize anti-spam settings if they don't exist
+	if (!isset($data['antispam'])) {
+		$data['antispam'] = [
+			'enabled' => false,
+			'message_limit' => 0,
+			'ban_duration' => [
+				'year' => 0,
+				'month' => 0,
+				'day' => 0,
+				'hour' => 0,
+				'minute' => 0,
+				'second' => 0
+			]
+		];
+		file_put_contents('data/data.json', json_encode($data));
+	}
+	
+	$antispam_status = $data['antispam']['enabled'] ? '❌ غیرفعال‌سازی ضد اسپم' : '✅ فعال‌سازی ضد اسپم';
+	$message_limit = $data['antispam']['message_limit'];
+	
+	// Format ban duration
+	$ban_duration_text = '';
+	$duration_parts = [];
+	if ($data['antispam']['ban_duration']['year'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['year'] . ' سال';
+	}
+	if ($data['antispam']['ban_duration']['month'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['month'] . ' ماه';
+	}
+	if ($data['antispam']['ban_duration']['day'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['day'] . ' روز';
+	}
+	if ($data['antispam']['ban_duration']['hour'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['hour'] . ' ساعت';
+	}
+	if ($data['antispam']['ban_duration']['minute'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['minute'] . ' دقیقه';
+	}
+	if ($data['antispam']['ban_duration']['second'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['second'] . ' ثانیه';
+	}
+	
+	if (empty($duration_parts)) {
+		$ban_duration_text = '0';
+	} else {
+		$ban_duration_text = implode(' ', $duration_parts);
+	}
+	
+	$antispam_panel = json_encode(['keyboard'=>[
+		[['text'=>$antispam_status]],
+		[['text'=>"مقدار پیام برای مسدود سازی : {$message_limit}"]],
+		[['text'=>"مقدار زمان مسدود سازی : {$ban_duration_text}"]],
+		[['text'=>"کاربران مسدود شده از طریق ضد اسپم"]],
+		[['text'=>"🔙 بازگشت"]]
+	], 'resize_keyboard'=>true]);
+	
+	sendMessage($chat_id, "🛡️ به بخش ضد اسپم خوش آمدید.\n\n🔰 تنظیمات فعلی:\n✅ وضعیت: " . ($data['antispam']['enabled'] ? 'فعال' : 'غیرفعال') . "\n📝 محدودیت پیام: {$message_limit}\n⏰ مدت مسدودیت: {$ban_duration_text}", 'html', $message_id, $antispam_panel);
+}
+elseif ($text == '✅ فعال‌سازی ضد اسپم' || $text == '❌ غیرفعال‌سازی ضد اسپم') {
+	sendAction($chat_id);
+	
+	$data['antispam']['enabled'] = !$data['antispam']['enabled'];
+	file_put_contents('data/data.json', json_encode($data));
+	
+	$status_text = $data['antispam']['enabled'] ? 'فعال' : 'غیرفعال';
+	$antispam_status = $data['antispam']['enabled'] ? '❌ غیرفعال‌سازی ضد اسپم' : '✅ فعال‌سازی ضد اسپم';
+	$message_limit = $data['antispam']['message_limit'];
+	
+	// Format ban duration
+	$ban_duration_text = '';
+	$duration_parts = [];
+	if ($data['antispam']['ban_duration']['year'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['year'] . ' سال';
+	}
+	if ($data['antispam']['ban_duration']['month'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['month'] . ' ماه';
+	}
+	if ($data['antispam']['ban_duration']['day'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['day'] . ' روز';
+	}
+	if ($data['antispam']['ban_duration']['hour'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['hour'] . ' ساعت';
+	}
+	if ($data['antispam']['ban_duration']['minute'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['minute'] . ' دقیقه';
+	}
+	if ($data['antispam']['ban_duration']['second'] > 0) {
+		$duration_parts[] = $data['antispam']['ban_duration']['second'] . ' ثانیه';
+	}
+	
+	if (empty($duration_parts)) {
+		$ban_duration_text = '0';
+	} else {
+		$ban_duration_text = implode(' ', $duration_parts);
+	}
+	
+	$antispam_panel = json_encode(['keyboard'=>[
+		[['text'=>$antispam_status]],
+		[['text'=>"مقدار پیام برای مسدود سازی : {$message_limit}"]],
+		[['text'=>"مقدار زمان مسدود سازی : {$ban_duration_text}"]],
+		[['text'=>"کاربران مسدود شده از طریق ضد اسپم"]],
+		[['text'=>"🔙 بازگشت"]]
+	], 'resize_keyboard'=>true]);
+	
+	sendMessage($chat_id, "🛡️ ضد اسپم با موفقیت {$status_text} شد.\n\n🔰 تنظیمات فعلی:\n✅ وضعیت: {$status_text}\n📝 محدودیت پیام: {$message_limit}\n⏰ مدت مسدودیت: {$ban_duration_text}", 'html', $message_id, $antispam_panel);
+}
+elseif (strpos($text, 'مقدار پیام برای مسدود سازی :') !== false) {
+	sendAction($chat_id);
+	$data['step'] = 'set_message_limit';
+	file_put_contents('data/data.json', json_encode($data));
+	
+	$back_keyboard = json_encode(['keyboard'=>[['text'=>'🔙 بازگشت']], 'resize_keyboard'=>true]);
+	sendMessage($chat_id, "📝 لطفا تعداد پیام مجاز برای ارسال در مدت زمان کوتاه را وارد کنید.\n\n💡 مثال: 5", 'html', $message_id, $back_keyboard);
+}
+elseif (strpos($text, 'مقدار زمان مسدود سازی :') !== false) {
+	sendAction($chat_id);
+	$data['step'] = 'set_ban_duration';
+	file_put_contents('data/data.json', json_encode($data));
+	
+	$duration_keyboard = json_encode(['keyboard'=>[
+		['text'=>'سال'], ['text'=>'ماه'], ['text'=>'روز'],
+		['text'=>'ساعت'], ['text'=>'دقیقه'], ['text'=>'ثانیه'],
+		['text'=>'🔙 بازگشت']
+	], 'resize_keyboard'=>true]);
+	
+	sendMessage($chat_id, "⏰ لطفا واحد زمان مورد نظر را انتخاب کنید و سپس مقدار آن را وارد کنید.\n\n💡 مثال: سال را انتخاب کنید و سپس عدد 1 را وارد کنید.", 'html', $message_id, $duration_keyboard);
+}
+elseif ($text == 'کاربران مسدود شده از طریق ضد اسپم') {
+	sendAction($chat_id);
+	
+	if (!isset($data['antispam_bans']) || empty($data['antispam_bans'])) {
+		sendMessage($chat_id, "📝 هیچ کاربری از طریق ضد اسپم مسدود نشده است.", 'html', $message_id);
+	} else {
+		$banned_users_text = "📝 کاربران مسدود شده از طریق ضد اسپم:\n\n";
+		$counter = 1;
+		
+		foreach ($data['antispam_bans'] as $user_id => $ban_info) {
+			$username = isset($ban_info['username']) ? $ban_info['username'] : 'بدون یوزرنیم';
+			$ban_date = jdate('Y/m/j H:i:s', $ban_info['ban_time']);
+			$end_time = $ban_info['ban_time'] + $ban_info['duration'];
+			$remaining_time = $end_time - time();
+			
+			if ($remaining_time > 0) {
+				$remaining_text = timeElapsed($remaining_time);
+			} else {
+				$remaining_text = 'منقضی شده';
+			}
+			
+			$banned_users_text .= "{$counter} - {$username} | تاریخ مسدود سازی : {$ban_date} | زمان اتمام : {$remaining_text}\n\n";
+			$counter++;
+		}
+		
+		sendMessage($chat_id, $banned_users_text, 'html', $message_id);
+	}
+}
+elseif ($text == '🔙 بازگشت') {
+	sendAction($chat_id);
+	$data['step'] = "none";
+	file_put_contents("data/data.json",json_encode($data));
+	sendMessage($chat_id, "👇🏻 لطفا یکی از دکمه های زیر را انتخاب نمایید.", 'markdown' , $message_id, $panel);
 }
 ##----------------------
 elseif ($text == '🏞 تصویر به استیکر') {
@@ -3873,6 +4132,138 @@ elseif ($data['step'] == 'set_off_text' && isset($text)) {
 		file_put_contents('data/data.json', json_encode($data));
 
 		sendMessage($chat_id, "✅ تنظیم گردید.", 'markdown', $message_id, $peygham);
+	}
+}
+elseif ($data['step'] == 'set_message_limit' && isset($text)) {
+	sendAction($chat_id);
+	
+	if (is_numeric($text) && $text > 0) {
+		$data['antispam']['message_limit'] = (int)$text;
+		$data['step'] = 'none';
+		file_put_contents('data/data.json', json_encode($data));
+		
+		$antispam_status = $data['antispam']['enabled'] ? '❌ غیرفعال‌سازی ضد اسپم' : '✅ فعال‌سازی ضد اسپم';
+		$message_limit = $data['antispam']['message_limit'];
+		
+		// Format ban duration
+		$ban_duration_text = '';
+		$duration_parts = [];
+		if ($data['antispam']['ban_duration']['year'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['year'] . ' سال';
+		}
+		if ($data['antispam']['ban_duration']['month'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['month'] . ' ماه';
+		}
+		if ($data['antispam']['ban_duration']['day'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['day'] . ' روز';
+		}
+		if ($data['antispam']['ban_duration']['hour'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['hour'] . ' ساعت';
+		}
+		if ($data['antispam']['ban_duration']['minute'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['minute'] . ' دقیقه';
+		}
+		if ($data['antispam']['ban_duration']['second'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['second'] . ' ثانیه';
+		}
+		
+		if (empty($duration_parts)) {
+			$ban_duration_text = '0';
+		} else {
+			$ban_duration_text = implode(' ', $duration_parts);
+		}
+		
+		$antispam_panel = json_encode(['keyboard'=>[
+			[['text'=>$antispam_status]],
+			[['text'=>"مقدار پیام برای مسدود سازی : {$message_limit}"]],
+			[['text'=>"مقدار زمان مسدود سازی : {$ban_duration_text}"]],
+			[['text'=>"کاربران مسدود شده از طریق ضد اسپم"]],
+			[['text'=>"🔙 بازگشت"]]
+		], 'resize_keyboard'=>true]);
+		
+		sendMessage($chat_id, "✅ محدودیت پیام با موفقیت به {$text} تنظیم شد.", 'html', $message_id, $antispam_panel);
+	} else {
+		sendMessage($chat_id, "❌ لطفا یک عدد معتبر وارد کنید.", 'html', $message_id);
+	}
+}
+elseif ($data['step'] == 'set_ban_duration' && isset($text)) {
+	sendAction($chat_id);
+	
+	if (in_array($text, ['سال', 'ماه', 'روز', 'ساعت', 'دقیقه', 'ثانیه'])) {
+		$data['step'] = 'set_ban_duration_value';
+		$data['temp_duration_unit'] = $text;
+		file_put_contents('data/data.json', json_encode($data));
+		
+		$back_keyboard = json_encode(['keyboard'=>[['text'=>'🔙 بازگشت']], 'resize_keyboard'=>true]);
+		sendMessage($chat_id, "⏰ لطفا مقدار {$text} را وارد کنید.\n\n💡 مثال: 1", 'html', $message_id, $back_keyboard);
+	} else {
+		sendMessage($chat_id, "❌ لطفا یکی از واحدهای زمان را انتخاب کنید.", 'html', $message_id);
+	}
+}
+elseif ($data['step'] == 'set_ban_duration_value' && isset($text)) {
+	sendAction($chat_id);
+	
+	if (is_numeric($text) && $text >= 0) {
+		$unit = $data['temp_duration_unit'];
+		
+		// Map Persian unit names to English keys
+		$unit_mapping = [
+			'سال' => 'year',
+			'ماه' => 'month',
+			'روز' => 'day',
+			'ساعت' => 'hour',
+			'دقیقه' => 'minute',
+			'ثانیه' => 'second'
+		];
+		
+		$english_unit = $unit_mapping[$unit];
+		$data['antispam']['ban_duration'][$english_unit] = (int)$text;
+		unset($data['temp_duration_unit']);
+		$data['step'] = 'none';
+		file_put_contents('data/data.json', json_encode($data));
+		
+		$antispam_status = $data['antispam']['enabled'] ? '❌ غیرفعال‌سازی ضد اسپم' : '✅ فعال‌سازی ضد اسپم';
+		$message_limit = $data['antispam']['message_limit'];
+		
+		// Format ban duration
+		$ban_duration_text = '';
+		$duration_parts = [];
+		if ($data['antispam']['ban_duration']['year'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['year'] . ' سال';
+		}
+		if ($data['antispam']['ban_duration']['month'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['month'] . ' ماه';
+		}
+		if ($data['antispam']['ban_duration']['day'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['day'] . ' روز';
+		}
+		if ($data['antispam']['ban_duration']['hour'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['hour'] . ' ساعت';
+		}
+		if ($data['antispam']['ban_duration']['minute'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['minute'] . ' دقیقه';
+		}
+		if ($data['antispam']['ban_duration']['second'] > 0) {
+			$duration_parts[] = $data['antispam']['ban_duration']['second'] . ' ثانیه';
+		}
+		
+		if (empty($duration_parts)) {
+			$ban_duration_text = '0';
+		} else {
+			$ban_duration_text = implode(' ', $duration_parts);
+		}
+		
+		$antispam_panel = json_encode(['keyboard'=>[
+			[['text'=>$antispam_status]],
+			[['text'=>"مقدار پیام برای مسدود سازی : {$message_limit}"]],
+			[['text'=>"مقدار زمان مسدود سازی : {$ban_duration_text}"]],
+			[['text'=>"کاربران مسدود شده از طریق ضد اسپم"]],
+			[['text'=>"🔙 بازگشت"]]
+		], 'resize_keyboard'=>true]);
+		
+		sendMessage($chat_id, "✅ مدت زمان مسدودیت برای {$unit} با موفقیت به {$text} تنظیم شد.", 'html', $message_id, $antispam_panel);
+	} else {
+		sendMessage($chat_id, "❌ لطفا یک عدد معتبر وارد کنید.", 'html', $message_id);
 	}
 }
 elseif ($data['step'] == "user") {
