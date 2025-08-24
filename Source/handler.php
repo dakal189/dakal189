@@ -861,7 +861,7 @@ function replace(string $text)
 ##----------------------
 function CheckLink($text) {
 	global $data;
-	if ($data['lock']['link'] == '✅') {
+	if ($data['lock']['link'] != '✅') {
 		if (stripos($text, "t.me") !== false || stripos($text, "http") !== false || stripos($text, "www.") !== false) {
 			return true;
 		}
