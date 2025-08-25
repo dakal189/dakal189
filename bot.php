@@ -79,7 +79,7 @@ if (isset($update->callback_query)) {
 	$callback_id = $data_id;
 	$pv_id = $user_id;
 	$message_id = $update->callback_query->inline_message_id;
-	$locks = ['video', 'audio', 'voice', 'text', 'sticker', 'link', 'photo', 'document', 'forward', 'channel'];
+	$locks = ['video', 'audio', 'voice', 'text', 'sticker', 'link', 'photo', 'document', 'forward', 'channel', 'edit'];
 
 	if ($user_id == $Dev && preg_match('@lockch_(?<channel>.+?)_(?<switch>.+)@i', $callback_data, $matches)) {
 		$select_channel = '@' . $matches['channel'];
@@ -176,6 +176,7 @@ if (isset($update->callback_query)) {
 		$document = $data_2['lock']['document'];
 		$forward = $data_2['lock']['forward'];
 		$channel = $data_2['lock']['channel'];
+		$edit = $data_2['lock']['edit'];
 
 		$btnstats = json_encode(
 			[
@@ -189,7 +190,8 @@ if (isset($update->callback_query)) {
 					[['text'=>"$audio", 'callback_data'=>"audio"],['text'=>"🎵 قفل موسیقی", 'callback_data'=>"audio"]],
 					[['text'=>"$voice", 'callback_data'=>"voice"],['text'=>"🔊 قفل ویس", 'callback_data'=>"voice"]],
 					[['text'=>"$video", 'callback_data'=>"video"],['text'=>"🎥 قفل ویدیو", 'callback_data'=>"video"]],
-					[['text'=>"$document", 'callback_data'=>"document"],['text'=>"💾 قفل فایل", 'callback_data'=>"document"]]
+					[['text'=>"$document", 'callback_data'=>"document"],['text'=>"💾 قفل فایل", 'callback_data'=>"document"]],
+					[['text'=>"$edit", 'callback_data'=>"edit"],['text'=>"✏️ قفل ویرایش پیام", 'callback_data'=>"edit"]]
 				]
 			]
 		);
@@ -713,6 +715,19 @@ elseif (!is_null($text) && !is_null($data['buttonans'][$text]) && $tc == 'privat
 		sendMessage($chat_id, $button_answer, null, $message_id);
 	}
 }
+elseif (isset($update->edited_message) && $from_id != $Dev) {
+	// Handle edited messages - delete them if edit lock is enabled
+	if (isset($data['lock']['edit']) && $data['lock']['edit'] == '✅') {
+		// Delete the edited message
+		bot('deleteMessage', [
+			'chat_id' => $chat_id,
+			'message_id' => $update->edited_message->message_id
+		]);
+		
+		// Send a warning message
+		sendMessage($chat_id, "⛔️ ویرایش پیام مجاز نیست. پیام شما حذف شد.", 'html', null, $button_user);
+	}
+}
 elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && $tc == 'private') {
 	sendAction($chat_id);
 	$done = isset($data['text']['done']) ? replace($data['text']['done']) : '✅ پیام شما ارسال گردید.';
@@ -861,6 +876,19 @@ elseif ($from_id == $Dev && strtolower($text) == '/delfeed' && $tc == 'private')
 	unset($data['feed']);
 	sendMessage($chat_id, '🗑 گروه پشتیبانی با موفقیت حذف گردید.', 'html' , $message_id);
 	file_put_contents('data/data.json', json_encode($data));
+}
+elseif (isset($update->edited_message) && $from_id != $Dev && $data['feed'] != null) {
+	// Handle edited messages in feed mode - delete them if edit lock is enabled
+	if (isset($data['lock']['edit']) && $data['lock']['edit'] == '✅') {
+		// Delete the edited message
+		bot('deleteMessage', [
+			'chat_id' => $chat_id,
+			'message_id' => $update->edited_message->message_id
+		]);
+		
+		// Send a warning message
+		sendMessage($chat_id, "⛔️ ویرایش پیام مجاز نیست. پیام شما حذف شد.", 'html', null, $button_user);
+	}
 }
 elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && $tc == 'private') {
 	sendAction($chat_id);
@@ -1882,6 +1910,7 @@ elseif ($text == '🔐 قفل ها') {
 	$document = $data['lock']['document'];
 	$forward = $data['lock']['forward'];
 	$channel = $data['lock']['channel'];
+	$edit = $data['lock']['edit'];
 	
 	if ($video == null) {
 		$data['lock']['video'] = "❌";
@@ -1910,6 +1939,9 @@ elseif ($text == '🔐 قفل ها') {
 	if ($forward == null) {
 		$data['lock']['forward'] = "❌";
 	}
+	if ($edit == null) {
+		$data['lock']['edit'] = "❌";
+	}
 	
 	$video = $data['lock']['video'];
 	$audio = $data['lock']['audio'];
@@ -1920,6 +1952,7 @@ elseif ($text == '🔐 قفل ها') {
 	$photo = $data['lock']['photo'];
 	$document = $data['lock']['document'];
 	$forward = $data['lock']['forward'];
+	$edit = $data['lock']['edit'];
 	$btnstats = json_encode(['inline_keyboard'=>[
 		[['text'=>"$text", 'callback_data'=>"text"],['text'=>"📝 قفل متن", 'callback_data'=>"text"]],
 		[['text'=>"$forward", 'callback_data'=>"forward"],['text'=>"⤵️ قفل فروارد", 'callback_data'=>"forward"]],
@@ -1929,7 +1962,8 @@ elseif ($text == '🔐 قفل ها') {
 		[['text'=>"$audio", 'callback_data'=>"audio"],['text'=>"🎵 قفل موسیقی", 'callback_data'=>"audio"]],
 		[['text'=>"$voice", 'callback_data'=>"voice"],['text'=>"🔊 قفل ویس", 'callback_data'=>"voice"]],
 		[['text'=>"$video", 'callback_data'=>"video"],['text'=>"🎥 قفل ویدیو", 'callback_data'=>"video"]],
-		[['text'=>"$document", 'callback_data'=>"document"],['text'=>"💾 قفل فایل", 'callback_data'=>"document"]]
+		[['text'=>"$document", 'callback_data'=>"document"],['text'=>"💾 قفل فایل", 'callback_data'=>"document"]],
+		[['text'=>"$edit", 'callback_data'=>"edit"],['text'=>"✏️ قفل ویرایش پیام", 'callback_data'=>"edit"]]
 	]]);
 	sendMessage($chat_id, "🔐 برای قفل کردن و یا باز کردن از دکمه های سمت چپ استفاده نمایید.\n\n👈 قفل : ✅\n👈 آزاد : ❌", 'markdown', $message_id, $btnstats);
 
@@ -2367,7 +2401,7 @@ elseif ($text == '⛔️ فیلتر کلمه' || $text == '↩️  برگشـت'
 	file_put_contents("data/data.json",json_encode($data));
 	sendMessage($chat_id, "⛔️ به بخش فیلتر کردن کلمات خوش آمدید.", 'markdown', $message_id, $button_filter);
 }
-elseif ($text == '💻 پاسخ خودکار' || $text == '↩️ برگشت ') {
+elseif ($text == '💻 پاسخ خودکار' || $text == '↩️ برگشت ') {
 	sendAction($chat_id);
 	$data['step'] = "none";
 	file_put_contents("data/data.json",json_encode($data));
@@ -4249,6 +4283,18 @@ elseif (preg_match("|\/unban([\_\s])([0-9]+)|i", $text, $match)) {
 		sendMessage($chat_id, "👤 کاربر [$match[2]](tg://user?id={$match[2]}) از قبل آزاد بود.", 'markdown', null);
 	}
 }
+elseif (isset($update->edited_message) && $from_id != $Dev) {
+	// Handle edited messages - delete them if edit lock is enabled
+	if (isset($data['lock']['edit']) && $data['lock']['edit'] == '✅') {
+		// Delete the edited message
+		bot('deleteMessage', [
+			'chat_id' => $chat_id,
+			'message_id' => $update->edited_message->message_id
+		]);
+		
+		// Send a warning message
+		sendMessage($chat_id, "⛔️ ویرایش پیام مجاز نیست. پیام شما حذف شد.", 'html', null, $button_user);
+	}
 }
 tabliq:
 
