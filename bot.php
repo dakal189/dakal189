@@ -734,7 +734,12 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 
 	if (isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
 		if ($data['lock']['forward'] == '✅') {
-			sendMessage($chat_id, "⛔️ ارسال پیام های هدایت شده (فروارد شده) مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the forwarded message
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال پیام های هدایت شده (فروارد شده) مجاز نیست.", 'html' , null, $button_user);
 			goto tabliq;
 		}
 	}
@@ -756,13 +761,28 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 				}
 			}
 			if ($checklink == true) {
-				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی لینک مجاز نیست.", 'html' , $message_id, $button_user);
+				// Delete the message with link
+				bot('deleteMessage', [
+					'chat_id' => $chat_id,
+					'message_id' => $message_id
+				]);
+				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی لینک مجاز نیست.", 'html' , null, $button_user);
 			}
 			if ($checkfilter == true) {
-				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی کلمات غیر مجاز ممنوع است.", 'html' , $message_id, $button_user);
+				// Delete the filtered message
+				bot('deleteMessage', [
+					'chat_id' => $chat_id,
+					'message_id' => $message_id
+				]);
+				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی کلمات غیر مجاز ممنوع است.", 'html' , null, $button_user);
 			}
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال متن مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the text message if text is locked
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال متن مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -777,7 +797,12 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال تصویر مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the photo if photo is locked
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال تصویر مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -792,7 +817,12 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the video if video is locked
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -807,7 +837,12 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال صدا مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the voice if voice is locked
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال صدا مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -820,8 +855,12 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 						//sendMessage($Dev, "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			
-			sendMessage($chat_id, "⛔️ ارسال موسیقی مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the audio if audio is locked
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال موسیقی مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -834,7 +873,12 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 						//sendMessage($Dev, "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال استیکر مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the sticker if sticker is locked
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال استیکر مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -849,7 +893,12 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال فایل مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the document if document is locked
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال فایل مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -896,7 +945,12 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 
 	if (isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
 		if ($data['lock']['forward'] == '✅') {
-			sendMessage($chat_id, "⛔️ ارسال پیام های هدایت شده (فروارد شده) مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the forwarded message
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال پیام های هدایت شده (فروارد شده) مجاز نیست.", 'html' , null, $button_user);
 			goto tabliq;
 		}
 	}
@@ -911,19 +965,34 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 						$msg_ids = json_decode(file_get_contents('msg_ids.txt'), true);
 						$msg_ids[$get['result']['message_id']] = $from_id;
 						file_put_contents('msg_ids.txt', json_encode($msg_ids));
-						//sendMessage($data['feed'], "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
+						//sendMessage($data['feed'], "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown");
 					}
 					sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 				}
 			}
 			if ($checklink == true) {
-				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی لینک مجاز نیست.", 'html' , $message_id, $button_user);
+				// Delete the message with link
+				bot('deleteMessage', [
+					'chat_id' => $chat_id,
+					'message_id' => $message_id
+				]);
+				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی لینک مجاز نیست.", 'html' , null, $button_user);
 			}
 			if ($checkfilter == true) {
-				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی کلمات غیر مجاز ممنوع است.", 'html' , $message_id, $button_user);
+				// Delete the filtered message
+				bot('deleteMessage', [
+					'chat_id' => $chat_id,
+					'message_id' => $message_id
+				]);
+				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی کلمات غیر مجاز ممنوع است.", 'html' , null, $button_user);
 			}
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال متن مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the text message if text is locked
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال متن مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -938,7 +1007,12 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال تصویر مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the photo if photo is locked
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال تصویر مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -953,7 +1027,12 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the video if video is locked
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -968,7 +1047,12 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال صدا مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the voice if voice is locked
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال صدا مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -981,7 +1065,12 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 						//sendMessage($data['feed'], "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال موسیقی مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the audio if audio is locked
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال موسیقی مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -994,7 +1083,12 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 						//sendMessage($data['feed'], "👤 فرستنده : [$from_id](tg://user?id=$from_id)", 'markdown');
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال استیکر مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the sticker if sticker is locked
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال استیکر مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
@@ -1009,7 +1103,12 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
-			sendMessage($chat_id, "⛔️ ارسال فایل مجاز نیست.", 'html' , $message_id, $button_user);
+			// Delete the document if document is locked
+			bot('deleteMessage', [
+				'chat_id' => $chat_id,
+				'message_id' => $message_id
+			]);
+			sendMessage($chat_id, "⛔️ ارسال فایل مجاز نیست.", 'html' , null, $button_user);
 		}
 		goto tabliq;
 	}
