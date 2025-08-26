@@ -28,8 +28,24 @@ if ($from_id != $Dev) {
 	$flood['flood']["$now-$from_id"] += 1;
 	file_put_contents('data/flood.json', json_encode($flood));
 	
-	// اگر نقض قفل بوده باشد، از مسدودسازی چشم‌پوشی کن
-	$skip_ban_due_to_lock = isset($GLOBALS['__LOCK_VIOLATION__']) && $GLOBALS['__LOCK_VIOLATION__'] === true;
+	// تشخیص زودهنگام نقض قفل برای جلوگیری از بن شدن به خاطر اسپمِ محتوای قفل
+	$skip_ban_due_to_lock = false;
+	if ($tc == 'private' && isset($update->message)) {
+		if (isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
+			if ($data['lock']['forward'] == '✅') $skip_ban_due_to_lock = true;
+		}
+		if (isset($message->text)) {
+			if ($data['lock']['text'] == '✅') $skip_ban_due_to_lock = true;
+			if (CheckLink($text) == true) $skip_ban_due_to_lock = true; // قفل لینک فعال و متن حاوی لینک
+		}
+		if (isset($message->photo) && $data['lock']['photo'] == '✅') $skip_ban_due_to_lock = true;
+		if (isset($message->video) && $data['lock']['video'] == '✅') $skip_ban_due_to_lock = true;
+		if (isset($message->animation) && $data['lock']['gif'] == '✅') $skip_ban_due_to_lock = true;
+		if (isset($message->voice) && $data['lock']['voice'] == '✅') $skip_ban_due_to_lock = true;
+		if (isset($message->audio) && $data['lock']['audio'] == '✅') $skip_ban_due_to_lock = true;
+		if (isset($message->sticker) && $data['lock']['sticker'] == '✅') $skip_ban_due_to_lock = true;
+		if (isset($message->document) && $data['lock']['document'] == '✅') $skip_ban_due_to_lock = true;
+	}
 	
 	if (!$skip_ban_due_to_lock && $flood['flood']["$now-$from_id"] >= 33 && $tc == 'private') {
 		sendAction($chat_id);
@@ -3764,7 +3780,7 @@ elseif ($data['step'] == 'face') {
 	if (isset($update->message->photo)) {
 		sendAction($chat_id, 'upload_photo');
 		$file_id = $update->message->photo[count($update->message->photo)-1]->file_id;
-		$file_path = bot('getFile', ['file_id' => $file_id])['result']['file_path'];
+		$file_path = bot('getFile', ['file_id'=> $file_id])['result']['file_path'];
 		sendPhoto($chat_id, $host_folder . '/Face/image.php?img=https://api.telegram.org/file/bot' . API_KEY . '/' . $file_path . '&rand=' . rand(0, 99999999999) . $file_id, "👦🏻👩🏻");
 		sendMessage($chat_id, "👇🏻 یکی از دکمه های زیر را انتخاب کنید :", 'markdown', $message_id, $button_tools);
 		$data['step'] = "none";
