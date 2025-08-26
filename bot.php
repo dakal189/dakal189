@@ -79,7 +79,7 @@ if (isset($update->callback_query)) {
 	$callback_id = $data_id;
 	$pv_id = $user_id;
 	$message_id = $update->callback_query->inline_message_id;
-	$locks = ['video', 'audio', 'voice', 'text', 'sticker', 'link', 'photo', 'document', 'forward', 'channel'];
+	$locks = ['video', 'audio', 'voice', 'text', 'sticker', 'link', 'photo', 'document', 'forward', 'gif', 'edit', 'channel'];
 
 	if ($user_id == $Dev && preg_match('@lockch_(?<channel>.+?)_(?<switch>.+)@i', $callback_data, $matches)) {
 		$select_channel = '@' . $matches['channel'];
@@ -176,6 +176,8 @@ if (isset($update->callback_query)) {
 		$document = $data_2['lock']['document'];
 		$forward = $data_2['lock']['forward'];
 		$channel = $data_2['lock']['channel'];
+		$gif = $data_2['lock']['gif'];
+		$edit = $data_2['lock']['edit'];
 
 		$btnstats = json_encode(
 			[
@@ -189,7 +191,9 @@ if (isset($update->callback_query)) {
 					[['text'=>"$audio", 'callback_data'=>"audio"],['text'=>"🎵 قفل موسیقی", 'callback_data'=>"audio"]],
 					[['text'=>"$voice", 'callback_data'=>"voice"],['text'=>"🔊 قفل ویس", 'callback_data'=>"voice"]],
 					[['text'=>"$video", 'callback_data'=>"video"],['text'=>"🎥 قفل ویدیو", 'callback_data'=>"video"]],
-					[['text'=>"$document", 'callback_data'=>"document"],['text'=>"💾 قفل فایل", 'callback_data'=>"document"]]
+					[['text'=>"$document", 'callback_data'=>"document"],['text'=>"💾 قفل فایل", 'callback_data'=>"document"]],
+					[['text'=>"$gif", 'callback_data'=>"gif"],['text'=>"🎞 قفل گیف", 'callback_data'=>"gif"]],
+					[['text'=>"$edit", 'callback_data'=>"edit"],['text'=>"✏️ قفل ویرایش", 'callback_data'=>"edit"]]
 				]
 			]
 		);
@@ -713,6 +717,17 @@ elseif (!is_null($text) && !is_null($data['buttonans'][$text]) && $tc == 'privat
 		sendMessage($chat_id, $button_answer, null, $message_id);
 	}
 }
+elseif (isset($update->edited_message) && $from_id != $Dev && $tc == 'private') {
+	sendAction($chat_id);
+	if ($data['lock']['edit'] == '✅') {
+		bot('deleteMessage', [
+			'chat_id' => $chat_id,
+			'message_id' => $message_id
+		]);
+		sendMessage($chat_id, "⛔️ شما حق ویرایش پیام هارو ندارید", 'html', null, $button_user);
+	}
+	goto tabliq;
+}
 elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && $tc == 'private') {
 	sendAction($chat_id);
 	$done = isset($data['text']['done']) ? replace($data['text']['done']) : '✅ پیام شما ارسال گردید.';
@@ -742,9 +757,11 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			}
 			if ($checklink == true) {
 				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی لینک مجاز نیست.", 'html' , $message_id, $button_user);
+				bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
 			}
 			if ($checkfilter == true) {
 				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی کلمات غیر مجاز ممنوع است.", 'html' , $message_id, $button_user);
+				bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
 			}
 		} else {
 			sendMessage($chat_id, "⛔️ ارسال متن مجاز نیست.", 'html' , $message_id, $button_user);
@@ -778,6 +795,21 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
 			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , $message_id, $button_user);
+		}
+		goto tabliq;
+	}
+	if (isset($message->animation)) {
+		if ($data['lock']['gif'] != '✅') {
+			$get = Forward($Dev, $chat_id, $message_id);
+			if (!isset($get['result']['forward_from'])  || isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
+				$msg_ids = json_decode(file_get_contents('msg_ids.txt'), true);
+				$msg_ids[$get['result']['message_id']] = $from_id;
+				file_put_contents('msg_ids.txt', json_encode($msg_ids));
+			}
+			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
+		} else {
+			sendMessage($chat_id, "⛔️ ارسال گیف مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [ 'chat_id' => $chat_id, 'message_id' => $message_id ]);
 		}
 		goto tabliq;
 	}
@@ -890,9 +922,11 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			}
 			if ($checklink == true) {
 				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی لینک مجاز نیست.", 'html' , $message_id, $button_user);
+				bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
 			}
 			if ($checkfilter == true) {
 				sendMessage($chat_id, "⛔️ ارسال پیام های حاوی کلمات غیر مجاز ممنوع است.", 'html' , $message_id, $button_user);
+				bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
 			}
 		} else {
 			sendMessage($chat_id, "⛔️ ارسال متن مجاز نیست.", 'html' , $message_id, $button_user);
@@ -926,6 +960,21 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
 			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , $message_id, $button_user);
+		}
+		goto tabliq;
+	}
+	if (isset($message->animation)) {
+		if ($data['lock']['gif'] != '✅') {
+			$get = Forward($data['feed'], $chat_id, $message_id);
+			if (!isset($get['result']['forward_from'])  || isset($update->message->forward_from) || isset($update->message->forward_from_chat)) {
+				$msg_ids = json_decode(file_get_contents('msg_ids.txt'), true);
+				$msg_ids[$get['result']['message_id']] = $from_id;
+				file_put_contents('msg_ids.txt', json_encode($msg_ids));
+			}
+			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
+		} else {
+			sendMessage($chat_id, "⛔️ ارسال گیف مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', [ 'chat_id' => $chat_id, 'message_id' => $message_id ]);
 		}
 		goto tabliq;
 	}
@@ -1872,7 +1921,7 @@ elseif ($text == '📑 لیست فیلتر') {
 elseif ($text == '🔐 قفل ها') {
 	sendAction($chat_id);
 
-	$video = $data['lock']['video'];
+		$video = $data['lock']['video'];
 	$audio = $data['lock']['audio'];
 	$voice = $data['lock']['voice'];
 	$text = $data['lock']['text'];
@@ -1882,7 +1931,9 @@ elseif ($text == '🔐 قفل ها') {
 	$document = $data['lock']['document'];
 	$forward = $data['lock']['forward'];
 	$channel = $data['lock']['channel'];
-	
+	$gif = $data['lock']['gif'];
+	$edit = $data['lock']['edit'];
+		
 	if ($video == null) {
 		$data['lock']['video'] = "❌";
 	}
@@ -1910,7 +1961,13 @@ elseif ($text == '🔐 قفل ها') {
 	if ($forward == null) {
 		$data['lock']['forward'] = "❌";
 	}
-	
+	if ($gif == null) {
+		$data['lock']['gif'] = "❌";
+	}
+	if ($edit == null) {
+		$data['lock']['edit'] = "❌";
+	}
+		
 	$video = $data['lock']['video'];
 	$audio = $data['lock']['audio'];
 	$voice = $data['lock']['voice'];
@@ -1920,6 +1977,8 @@ elseif ($text == '🔐 قفل ها') {
 	$photo = $data['lock']['photo'];
 	$document = $data['lock']['document'];
 	$forward = $data['lock']['forward'];
+	$gif = $data['lock']['gif'];
+	$edit = $data['lock']['edit'];
 	$btnstats = json_encode(['inline_keyboard'=>[
 		[['text'=>"$text", 'callback_data'=>"text"],['text'=>"📝 قفل متن", 'callback_data'=>"text"]],
 		[['text'=>"$forward", 'callback_data'=>"forward"],['text'=>"⤵️ قفل فروارد", 'callback_data'=>"forward"]],
@@ -1929,7 +1988,9 @@ elseif ($text == '🔐 قفل ها') {
 		[['text'=>"$audio", 'callback_data'=>"audio"],['text'=>"🎵 قفل موسیقی", 'callback_data'=>"audio"]],
 		[['text'=>"$voice", 'callback_data'=>"voice"],['text'=>"🔊 قفل ویس", 'callback_data'=>"voice"]],
 		[['text'=>"$video", 'callback_data'=>"video"],['text'=>"🎥 قفل ویدیو", 'callback_data'=>"video"]],
-		[['text'=>"$document", 'callback_data'=>"document"],['text'=>"💾 قفل فایل", 'callback_data'=>"document"]]
+		[['text'=>"$document", 'callback_data'=>"document"],['text'=>"💾 قفل فایل", 'callback_data'=>"document"]],
+		[['text'=>"$gif", 'callback_data'=>"gif"],['text'=>"🎞 قفل گیف", 'callback_data'=>"gif"]],
+		[['text'=>"$edit", 'callback_data'=>"edit"],['text'=>"✏️ قفل ویرایش", 'callback_data'=>"edit"]]
 	]]);
 	sendMessage($chat_id, "🔐 برای قفل کردن و یا باز کردن از دکمه های سمت چپ استفاده نمایید.\n\n👈 قفل : ✅\n👈 آزاد : ❌", 'markdown', $message_id, $btnstats);
 
@@ -2003,7 +2064,7 @@ elseif ($text == '📕 راهنما') {
 ▪️ `TODAY` 👉🏻 روز هفته
 
 📕 متغیرهای مربوط به متن ها :
-▪️ `JOKE` 👉🏻 لطیفه
+▪️ `JOKE` 👉🏻 متن طنز
 ▫️ `PA-NA-PA` 👉🏻 متن طنز پ ن پ
 ▪️ `AST-DIGAR` 👉🏻 متن طنز ... است دیگر
 ▫️ `CHIST` 👉🏻 متن ... چیست
@@ -2367,7 +2428,7 @@ elseif ($text == '⛔️ فیلتر کلمه' || $text == '↩️  برگشـت'
 	file_put_contents("data/data.json",json_encode($data));
 	sendMessage($chat_id, "⛔️ به بخش فیلتر کردن کلمات خوش آمدید.", 'markdown', $message_id, $button_filter);
 }
-elseif ($text == '💻 پاسخ خودکار' || $text == '↩️ برگشت ') {
+elseif ($text == '💻 پاسخ خودکار' || $text == '↩️ برگشت ') {
 	sendAction($chat_id);
 	$data['step'] = "none";
 	file_put_contents("data/data.json",json_encode($data));
