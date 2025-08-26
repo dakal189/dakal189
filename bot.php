@@ -815,6 +815,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
 			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
 		}
 		goto tabliq;
 	}
@@ -845,6 +846,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
 			sendMessage($chat_id, "⛔️ ارسال صدا مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
 		}
 		goto tabliq;
 	}
@@ -859,6 +861,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 		} else {
 			
 			sendMessage($chat_id, "⛔️ ارسال موسیقی مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
 		}
 		goto tabliq;
 	}
@@ -872,6 +875,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
 			sendMessage($chat_id, "⛔️ ارسال استیکر مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
 		}
 		goto tabliq;
 	}
@@ -887,6 +891,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
 			sendMessage($chat_id, "⛔️ ارسال فایل مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
 		}
 		goto tabliq;
 	}
@@ -965,6 +970,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
 			sendMessage($chat_id, "⛔️ ارسال تصویر مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
 		}
 		goto tabliq;
 	}
@@ -980,6 +986,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
 			sendMessage($chat_id, "⛔️ ارسال ویدیو مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
 		}
 		goto tabliq;
 	}
@@ -1010,6 +1017,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
 			sendMessage($chat_id, "⛔️ ارسال صدا مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
 		}
 		goto tabliq;
 	}
@@ -1023,6 +1031,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
 			sendMessage($chat_id, "⛔️ ارسال موسیقی مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
 		}
 		goto tabliq;
 	}
@@ -1036,6 +1045,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
 			sendMessage($chat_id, "⛔️ ارسال استیکر مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
 		}
 		goto tabliq;
 	}
@@ -1051,6 +1061,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] != null && 
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
 			sendMessage($chat_id, "⛔️ ارسال فایل مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
 		}
 		goto tabliq;
 	}
