@@ -1,4 +1,691 @@
 <?php
+declare(strict_types=1);
+
+/*
+	User Bot (music search/play)
+
+	Webhook URL pattern set by master when registering a bot:
+	  BASE_WEBHOOK_URL/bot.php?token=<BOT_TOKEN>
+
+	Features:
+	- Search music via Songstats (RapidAPI): send any text query
+	- Personal playlist: /playlist, save via inline button
+	- Ranking Top 10: /top10
+	- Downloads: inline buttons for Low/High using DOWNLOADER_BASE_URL (if configured)
+	- Group play: /play <query>
+	- Ads: shown after sending audio (skipped for VIP Basic+). Pro can set custom ads via /setad
+	- Admin (owner + added admins): /public <on|off>, /admins, /addadmin <uid>, /rmadmin <uid>
+	- Customization (VIP-only):
+		Premium+: /setlogo <url>, /setwelcome <text>
+		Pro: /setkbd <json>, /setlangdef <code>, /setad <type> <content> | <kbJson>, /delad
+	- Language: /lang with picker
+	- Stats: /stats
+*/
+
+require_once __DIR__ . '/config.php';
+
+$pdo = getPdo();
+initDatabase($pdo);
+
+$botToken = $_GET['token'] ?? '';
+if ($botToken === '') { echo 'OK'; exit; }
+
+$botRow = getBotRowByToken($pdo, $botToken);
+if (!$botRow) { echo 'OK'; exit; }
+if (!(int)$botRow['is_active']) { echo 'OK'; exit; }
+
+$update = readUpdate();
+if (!$update) { echo 'OK'; exit; }
+
+$message = $update['message'] ?? null;
+$callback = $update['callback_query'] ?? null;
+
+if ($message) {
+	$chatId = (int)($message['chat']['id'] ?? 0);
+	$fromId = (int)($message['from']['id'] ?? 0);
+	$username = $message['from']['username'] ?? null;
+	$type = $message['chat']['type'] ?? 'private';
+	ensureBotAndUser($pdo, $botRow, $fromId, $username);
+	if (isGloballyBanned($pdo, $fromId)) { echo 'OK'; exit; }
+
+	// Access control for private bots
+	if (!(int)$botRow['public_enabled'] && !isUserBotAdmin($pdo, (int)$botRow['id'], $fromId)) {
+		tgSendMessage($botToken, $chatId, t('not_authorized', getUserLang($pdo, $fromId, (string)$botRow['lang_default'])));
+		echo 'OK';
+		exit;
+	}
+
+	$text = (string)($message['text'] ?? '');
+	[$cmd, $args] = getCommandAndArgs($text);
+	if ($cmd === '/start') {
+		$settings = getSettings($pdo, (int)$botRow['id']);
+		$lang = getUserLang($pdo, $fromId, (string)$botRow['lang_default']);
+		$welcome = $settings['welcome_text'] ?? t('welcome_userbot', $lang);
+		$reply = buildCustomKeyboardReply($settings);
+		if (!empty($settings['logo_url'])) {
+			tgSendPhoto($botToken, $chatId, (string)$settings['logo_url'], array_merge(['caption' => $welcome, 'parse_mode' => 'HTML'], $reply));
+		} else {
+			tgSendMessage($botToken, $chatId, $welcome, $reply);
+		}
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/lang') {
+		sendLanguagePicker($botToken, $chatId, getUserLang($pdo, $fromId, (string)$botRow['lang_default']));
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/stats') {
+		$st = getStats($pdo, (int)$botRow['id']);
+		$lang = getUserLang($pdo, $fromId, (string)$botRow['lang_default']);
+		$vip = isBotVip($botRow);
+		$vipInfo = $vip['is_vip'] ? ('VIP ' . ($vip['level'] ?? '') . ' until ' . ($botRow['vip_expire'] ?? '')) : 'Free';
+		$msg = t('stats', $lang, ['u' => $st['total_users'] ?? 0, 'q' => $st['total_queries'] ?? 0, 'p' => $st['total_playlists'] ?? 0]) . "\n" . $vipInfo;
+		tgSendMessage($botToken, $chatId, $msg);
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/playlist') {
+		$stmt = $pdo->prepare('SELECT track_id, created_at FROM playlists WHERE bot_id = ? AND user_id = ? ORDER BY id DESC LIMIT 10');
+		$stmt->execute([(int)$botRow['id'], $fromId]);
+		$rows = $stmt->fetchAll();
+		if (!$rows) { tgSendMessage($botToken, $chatId, 'Empty.'); echo 'OK'; exit; }
+		$out = [];
+		foreach ($rows as $r) { $out[] = $r['track_id']; }
+		tgSendMessage($botToken, $chatId, implode("\n", $out));
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/top10') {
+		$stmt = $pdo->query('SELECT track_id, save_count FROM rankings ORDER BY save_count DESC, search_count DESC LIMIT 10');
+		$rows = $stmt->fetchAll();
+		if (!$rows) { tgSendMessage($botToken, $chatId, 'No ranking yet.'); echo 'OK'; exit; }
+		$out = [];
+		foreach ($rows as $i => $r) { $out[] = (string)($i + 1) . '. ' . $r['track_id'] . ' (' . (int)$r['save_count'] . ')'; }
+		tgSendMessage($botToken, $chatId, implode("\n", $out));
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/public') {
+		if (!isUserBotAdmin($pdo, (int)$botRow['id'], $fromId)) { tgSendMessage($botToken, $chatId, t('not_authorized', getUserLang($pdo, $fromId, (string)$botRow['lang_default']))); echo 'OK'; exit; }
+		$state = strtolower(trim($args));
+		if (!in_array($state, ['on','off'], true)) { tgSendMessage($botToken, $chatId, 'Usage: /public <on|off>'); echo 'OK'; exit; }
+		$pdo->prepare('UPDATE bots SET public_enabled = ? WHERE id = ?')->execute([$state === 'on' ? 1 : 0, (int)$botRow['id']]);
+		tgSendMessage($botToken, $chatId, $state === 'on' ? t('public_on', getUserLang($pdo, $fromId, (string)$botRow['lang_default'])) : t('public_off', getUserLang($pdo, $fromId, (string)$botRow['lang_default'])));
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/admins') {
+		$stmt = $pdo->prepare('SELECT admin_user_id FROM bot_admins WHERE bot_id = ? ORDER BY id ASC LIMIT 50');
+		$stmt->execute([(int)$botRow['id']]);
+		$rows = $stmt->fetchAll();
+		$list = array_map(fn($r) => (string)$r['admin_user_id'], $rows);
+		tgSendMessage($botToken, $chatId, t('admins_list', getUserLang($pdo, $fromId, (string)$botRow['lang_default'])) . "\n" . implode(', ', $list));
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/addadmin') {
+		if (!isUserBotAdmin($pdo, (int)$botRow['id'], $fromId)) { tgSendMessage($botToken, $chatId, t('not_authorized', getUserLang($pdo, $fromId, (string)$botRow['lang_default']))); echo 'OK'; exit; }
+		$uid = (int)$args; if ($uid <= 0) { tgSendMessage($botToken, $chatId, 'Usage: /addadmin <user_id>'); echo 'OK'; exit; }
+		$pdo->prepare('INSERT IGNORE INTO bot_admins (bot_id, admin_user_id) VALUES (?,?)')->execute([(int)$botRow['id'], $uid]);
+		tgSendMessage($botToken, $chatId, 'Added admin: ' . $uid);
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/rmadmin') {
+		if (!isUserBotAdmin($pdo, (int)$botRow['id'], $fromId)) { tgSendMessage($botToken, $chatId, t('not_authorized', getUserLang($pdo, $fromId, (string)$botRow['lang_default']))); echo 'OK'; exit; }
+		$uid = (int)$args; if ($uid <= 0) { tgSendMessage($botToken, $chatId, 'Usage: /rmadmin <user_id>'); echo 'OK'; exit; }
+		$pdo->prepare('DELETE FROM bot_admins WHERE bot_id = ? AND admin_user_id = ?')->execute([(int)$botRow['id'], $uid]);
+		tgSendMessage($botToken, $chatId, 'Removed admin: ' . $uid);
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/play') {
+		$q = trim($args);
+		if ($q === '') { tgSendMessage($botToken, $chatId, 'Usage: /play <query>'); echo 'OK'; exit; }
+		handlePlay($pdo, $botRow, $botToken, $chatId, $fromId, $q, $type);
+		echo 'OK';
+		exit;
+	}
+	// VIP customization commands
+	if ($cmd === '/setlogo') {
+		if (!isUserBotAdmin($pdo, (int)$botRow['id'], $fromId)) { denyUser($botToken, $chatId, $pdo, $fromId, $botRow); exit; }
+		$vip = isBotVip($botRow); if (!hasVipAtLeast($vip, 'Premium')) { tgSendMessage($botToken, $chatId, t('feature_vip_only', getUserLang($pdo, $fromId, (string)$botRow['lang_default']))); exit; }
+		$url = trim($args);
+		if ($url === '') { tgSendMessage($botToken, $chatId, 'Usage: /setlogo <url>'); exit; }
+		upsertSetting($pdo, (int)$botRow['id'], ['logo_url' => $url]);
+		tgSendMessage($botToken, $chatId, 'Logo updated.');
+		exit;
+	}
+	if ($cmd === '/setwelcome') {
+		if (!isUserBotAdmin($pdo, (int)$botRow['id'], $fromId)) { denyUser($botToken, $chatId, $pdo, $fromId, $botRow); exit; }
+		$vip = isBotVip($botRow); if (!hasVipAtLeast($vip, 'Premium')) { tgSendMessage($botToken, $chatId, t('feature_vip_only', getUserLang($pdo, $fromId, (string)$botRow['lang_default']))); exit; }
+		$txt = trim($args);
+		if ($txt === '') { tgSendMessage($botToken, $chatId, 'Usage: /setwelcome <text>'); exit; }
+		upsertSetting($pdo, (int)$botRow['id'], ['welcome_text' => $txt]);
+		tgSendMessage($botToken, $chatId, 'Welcome text updated.');
+		exit;
+	}
+	if ($cmd === '/setkbd') {
+		if (!isUserBotAdmin($pdo, (int)$botRow['id'], $fromId)) { denyUser($botToken, $chatId, $pdo, $fromId, $botRow); exit; }
+		$vip = isBotVip($botRow); if (!hasVipAtLeast($vip, 'Pro')) { tgSendMessage($botToken, $chatId, t('feature_vip_only', getUserLang($pdo, $fromId, (string)$botRow['lang_default']))); exit; }
+		$json = trim($args);
+		if ($json === '') { tgSendMessage($botToken, $chatId, 'Usage: /setkbd <json keyboard>'); exit; }
+		// Validate JSON structure (telegram reply keyboard or inline_keyboard wrapper)
+		$decoded = json_decode($json, true);
+		if (!is_array($decoded)) { tgSendMessage($botToken, $chatId, 'Invalid JSON.'); exit; }
+		upsertSetting($pdo, (int)$botRow['id'], ['custom_keyboard' => $json]);
+		tgSendMessage($botToken, $chatId, 'Custom keyboard updated.');
+		exit;
+	}
+	if ($cmd === '/setlangdef') {
+		if (!isUserBotAdmin($pdo, (int)$botRow['id'], $fromId)) { denyUser($botToken, $chatId, $pdo, $fromId, $botRow); exit; }
+		$vip = isBotVip($botRow); if (!hasVipAtLeast($vip, 'Pro')) { tgSendMessage($botToken, $chatId, t('feature_vip_only', getUserLang($pdo, $fromId, (string)$botRow['lang_default']))); exit; }
+		$code = strtolower(trim($args));
+		if ($code === '') { tgSendMessage($botToken, $chatId, 'Usage: /setlangdef <code>'); exit; }
+		$pdo->prepare('UPDATE bots SET lang_default = ? WHERE id = ?')->execute([$code, (int)$botRow['id']]);
+		tgSendMessage($botToken, $chatId, 'Default language updated: ' . $code);
+		exit;
+	}
+	if ($cmd === '/setad') {
+		if (!isUserBotAdmin($pdo, (int)$botRow['id'], $fromId)) { denyUser($botToken, $chatId, $pdo, $fromId, $botRow); exit; }
+		$vip = isBotVip($botRow); if (!hasVipAtLeast($vip, 'Pro')) { tgSendMessage($botToken, $chatId, t('feature_vip_only', getUserLang($pdo, $fromId, (string)$botRow['lang_default']))); exit; }
+		// format: /setad <type> <content> | <kbJson>
+		list($typeArg, $rest) = array_pad(explode(' ', $args, 2), 2, '');
+		$typeArg = strtolower(trim($typeArg));
+		if (!in_array($typeArg, ['text','photo','video','mixed'], true)) { tgSendMessage($botToken, $chatId, 'Usage: /setad <text|photo|video|mixed> <content> | <kbJson?>'); exit; }
+		list($content, $kb) = explodeInlineArgLocal($rest);
+		$payload = json_encode(['type' => $typeArg, 'content' => $content, 'kb' => $kb], JSON_UNESCAPED_UNICODE);
+		upsertSetting($pdo, (int)$botRow['id'], ['custom_keyboard' => storeAdInCustomKeyboard(getSettings($pdo, (int)$botRow['id']), $payload)]);
+		tgSendMessage($botToken, $chatId, 'Custom ad set.');
+		exit;
+	}
+	if ($cmd === '/delad') {
+		if (!isUserBotAdmin($pdo, (int)$botRow['id'], $fromId)) { denyUser($botToken, $chatId, $pdo, $fromId, $botRow); exit; }
+		$vip = isBotVip($botRow); if (!hasVipAtLeast($vip, 'Pro')) { tgSendMessage($botToken, $chatId, t('feature_vip_only', getUserLang($pdo, $fromId, (string)$botRow['lang_default']))); exit; }
+		$current = getSettings($pdo, (int)$botRow['id']);
+		$updated = removeAdFromCustomKeyboard($current);
+		upsertSetting($pdo, (int)$botRow['id'], ['custom_keyboard' => $updated]);
+		tgSendMessage($botToken, $chatId, 'Custom ad removed.');
+		exit;
+	}
+
+	// Fallback: treat as search query in private chats and groups
+	$q = trim($text);
+	if ($q !== '' && $q[0] !== '/') {
+		incrementStat($pdo, (int)$botRow['id'], 'total_queries', 1);
+		$client = new SongstatsClient(RAPIDAPI_KEY);
+		$res = $client->searchTracks($q);
+		if (!($res['ok'] ?? false) || empty($res['results'])) {
+			tgSendMessage($botToken, $chatId, t('no_results', getUserLang($pdo, $fromId, (string)$botRow['lang_default'])));
+			echo 'OK'; exit;
+		}
+		$results = array_slice($res['results'], 0, 5);
+		$settings = getSettings($pdo, (int)$botRow['id']);
+		$reply = buildCustomKeyboardReply($settings);
+		foreach ($results as $r) {
+			$name = trim(($r['name'] ?? '') . ' - ' . ($r['artist'] ?? ''));
+			$cover = $r['cover'] ?? '';
+			$spid = $r['spotify_track_id'] ?? '';
+			$tid = trackKeyFrom($r);
+			recordRanking($pdo, $tid, 1, 0);
+			$kbRows = buildResultButtons($name, $spid, $tid);
+			$opts = array_merge(['reply_markup' => json_encode(['inline_keyboard' => $kbRows], JSON_UNESCAPED_UNICODE)], $reply);
+			$textOut = '<b>' . htmlspecialchars($name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "</b>\n";
+			if ($cover) { tgSendPhoto($botToken, $chatId, $cover, array_merge($opts, ['caption' => $textOut])); }
+			else { tgSendMessage($botToken, $chatId, $textOut, $opts); }
+		}
+		echo 'OK';
+		exit;
+	}
+}
+
+if ($callback) {
+	$cbid = (string)($callback['id'] ?? '');
+	$data = (string)($callback['data'] ?? '');
+	$chatId = (int)($callback['message']['chat']['id'] ?? 0);
+	$fromId = (int)($callback['from']['id'] ?? 0);
+	if (strpos($data, 'lang:') === 0) {
+		$lang = substr($data, 5);
+		setUserLang($pdo, $fromId, $lang);
+		tgAnswerCallback($botToken, $cbid, 'OK');
+		echo 'OK'; exit;
+	}
+	if (strpos($data, 'sv:') === 0) {
+		$trackKey = substr($data, 3);
+		$pdo->prepare('INSERT INTO playlists (user_id, bot_id, track_id) VALUES (?,?,?)')->execute([$fromId, (int)$botRow['id'], $trackKey]);
+		incrementStat($pdo, (int)$botRow['id'], 'total_playlists', 1);
+		recordRanking($pdo, $trackKey, 0, 1);
+		tgAnswerCallback($botToken, $cbid, t('playlist_added', getUserLang($pdo, $fromId, (string)$botRow['lang_default'])));
+		echo 'OK'; exit;
+	}
+	if (strpos($data, 'dl:') === 0) {
+		// dl:<b64name>:<low|high>
+		$parts = explode(':', $data, 3);
+		if (count($parts) === 3) {
+			$name = base64_decode($parts[1], true) ?: '';
+			$quality = $parts[2];
+			$url = resolveDownloaderUrl($name, $quality);
+			if ($url) {
+				$send = tgSendAudio($botToken, $chatId, $url, ['caption' => $name]);
+				$vip = isBotVip($botRow);
+				if (!($vip['is_vip'] && ($vip['level'] === 'Basic' || $vip['level'] === 'Premium' || $vip['level'] === 'Pro'))) {
+					$ad = selectAdForBot($pdo, (int)$botRow['id'], $botRow);
+					sendAd($botToken, $chatId, $ad);
+				}
+			}
+		}
+		tgAnswerCallback($botToken, $cbid, '');
+		echo 'OK'; exit;
+	}
+}
+
+echo 'OK';
+
+// ===== Helpers (local to bot) =====
+
+function isGloballyBanned(PDO $pdo, int $userId): bool {
+	$stmt = $pdo->prepare('SELECT 1 FROM banned_users WHERE user_id = ?');
+	$stmt->execute([$userId]);
+	return (bool)$stmt->fetch();
+}
+
+function trackKeyFrom(array $r): string {
+	$sp = trim((string)($r['spotify_track_id'] ?? ''));
+	if ($sp !== '') return 'sp:' . $sp;
+	$ss = trim((string)($r['id'] ?? ''));
+	if ($ss !== '') return 'ss:' . $ss;
+	$isrc = trim((string)($r['isrc'] ?? ''));
+	if ($isrc !== '') return 'isrc:' . $isrc;
+	$name = trim((string)($r['name'] ?? ''));
+	$artist = trim((string)($r['artist'] ?? ''));
+	return 'q:' . substr(md5($name . '|' . $artist), 0, 10);
+}
+
+function buildResultButtons(string $name, string $spotifyId, string $trackKey): array {
+	$rows = [];
+	$dlName = base64_encode($name);
+	$btns = [];
+	$dlLow = resolveDownloaderUrl($name, 'low');
+	$dlHigh = resolveDownloaderUrl($name, 'high');
+	if ($dlLow) { $btns[] = ['text' => '⬇️ Low', 'callback_data' => 'dl:' . $dlName . ':low']; }
+	if ($dlHigh) { $btns[] = ['text' => '⬇️ High', 'callback_data' => 'dl:' . $dlName . ':high']; }
+	if ($btns) { $rows[] = $btns; }
+	$rows[] = [
+		['text' => '❤️ Save', 'callback_data' => 'sv:' . $trackKey],
+		$spotifyId ? ['text' => 'Spotify', 'url' => 'https://open.spotify.com/track/' . $spotifyId] : ['text' => 'More', 'callback_data' => 'noop'],
+	];
+	return $rows;
+}
+
+function handlePlay(PDO $pdo, array $botRow, string $botToken, int $chatId, int $fromId, string $q, string $chatType): void {
+	$url = resolveDownloaderUrl($q, 'high') ?? resolveDownloaderUrl($q, 'low');
+	if ($url) {
+		tgSendAudio($botToken, $chatId, $url, ['caption' => $q]);
+		$vip = isBotVip($botRow);
+		if (!($vip['is_vip'] && ($vip['level'] === 'Basic' || $vip['level'] === 'Premium' || $vip['level'] === 'Pro'))) {
+			$ad = selectAdForBot($pdo, (int)$botRow['id'], $botRow);
+			sendAd($botToken, $chatId, $ad);
+		}
+	} else {
+		tgSendMessage($botToken, $chatId, 'Downloader not configured.');
+	}
+}
+
+function hasVipAtLeast(array $vip, string $level): bool {
+	$levels = ['Basic' => 1, 'Premium' => 2, 'Pro' => 3];
+	if (!($vip['is_vip'] ?? false)) return false;
+	$cur = $levels[$vip['level'] ?? 'Basic'] ?? 1;
+	$need = $levels[$level] ?? 1;
+	return $cur >= $need;
+}
+
+function denyUser(string $token, int $chatId, PDO $pdo, int $fromId, array $botRow): void {
+	tgSendMessage($token, $chatId, t('not_authorized', getUserLang($pdo, $fromId, (string)$botRow['lang_default'])));
+}
+
+function explodeInlineArgLocal(string $arg): array {
+	$parts = explode('|', $arg, 2);
+	$content = trim($parts[0] ?? '');
+	$kbJson = trim($parts[1] ?? '');
+	$kb = '';
+	if ($kbJson !== '') {
+		$json = json_decode($kbJson, true);
+		if (is_array($json)) {
+			$kb = json_encode($json, JSON_UNESCAPED_UNICODE);
+		}
+	}
+	return [$content, $kb];
+}
+
+function storeAdInCustomKeyboard(array $settings, string $adPayload): string {
+	$custom = $settings['custom_keyboard'] ?? '';
+	$data = [];
+	if ($custom !== '') {
+		$decoded = json_decode($custom, true);
+		if (is_array($decoded)) { $data = $decoded; }
+	}
+	$data['_pro_ad'] = $adPayload;
+	return json_encode($data, JSON_UNESCAPED_UNICODE);
+}
+
+function removeAdFromCustomKeyboard(array $settings): string {
+	$custom = $settings['custom_keyboard'] ?? '';
+	if ($custom === '') return '';
+	$decoded = json_decode($custom, true);
+	if (!is_array($decoded)) return '';
+	unset($decoded['_pro_ad']);
+	return json_encode($decoded, JSON_UNESCAPED_UNICODE);
+}
+
+function selectAdForBot(PDO $pdo, int $botId, array $botRow): ?array {
+	$vip = isBotVip($botRow);
+	if ($vip['is_vip'] && ($vip['level'] ?? '') === 'Pro') {
+		$settings = getSettings($pdo, $botId);
+		$custom = $settings['custom_keyboard'] ?? '';
+		if ($custom !== '') {
+			$decoded = json_decode($custom, true);
+			if (is_array($decoded) && isset($decoded['_pro_ad'])) {
+				$ad = json_decode((string)$decoded['_pro_ad'], true);
+				if (is_array($ad) && isset($ad['type'], $ad['content'])) {
+					$kb = [];
+					if (!empty($ad['kb'])) { $k = json_decode((string)$ad['kb'], true); if (is_array($k)) $kb = $k; }
+					return ['type' => $ad['type'], 'content' => $ad['content'], 'inline_keyboard' => $kb ? json_encode($kb, JSON_UNESCAPED_UNICODE) : null];
+				}
+			}
+		}
+	}
+	return fetchRandomAd($pdo);
+}
+
+function buildCustomKeyboardReply(array $settings): array {
+	$ck = $settings['custom_keyboard'] ?? '';
+	if ($ck === '') return [];
+	$decoded = json_decode($ck, true);
+	if (!is_array($decoded)) return [];
+	if (isset($decoded['keyboard']) || isset($decoded['inline_keyboard'])) {
+		return ['reply_markup' => json_encode($decoded, JSON_UNESCAPED_UNICODE)];
+	}
+	return [];
+}
+
+?>
+
+<?php
+declare(strict_types=1);
+
+/*
+	User Bot (music search/play)
+
+	Webhook URL pattern set by master when registering a bot:
+	  BASE_WEBHOOK_URL/bot.php?token=<BOT_TOKEN>
+
+	Features:
+	- Search music via Songstats (RapidAPI): send any text query
+	- Personal playlist: /playlist, save via inline button
+	- Ranking Top 10: /top10
+	- Downloads: inline buttons for Low/High using DOWNLOADER_BASE_URL (if configured)
+	- Group play: /play <query>
+	- Ads: shown after sending audio (skipped for VIP)
+	- Admin (owner + added admins): /public <on|off>, /admins, /addadmin <uid>, /rmadmin <uid>
+	- Language: /lang with picker
+	- Stats: /stats
+*/
+
+require_once __DIR__ . '/config.php';
+
+$pdo = getPdo();
+initDatabase($pdo);
+
+$botToken = $_GET['token'] ?? '';
+if ($botToken === '') { echo 'OK'; exit; }
+
+$botRow = getBotRowByToken($pdo, $botToken);
+if (!$botRow) { echo 'OK'; exit; }
+if (!(int)$botRow['is_active']) { echo 'OK'; exit; }
+
+$update = readUpdate();
+if (!$update) { echo 'OK'; exit; }
+
+$message = $update['message'] ?? null;
+$callback = $update['callback_query'] ?? null;
+
+if ($message) {
+	$chatId = (int)($message['chat']['id'] ?? 0);
+	$fromId = (int)($message['from']['id'] ?? 0);
+	$username = $message['from']['username'] ?? null;
+	$type = $message['chat']['type'] ?? 'private';
+	ensureBotAndUser($pdo, $botRow, $fromId, $username);
+	if (isGloballyBanned($pdo, $fromId)) { echo 'OK'; exit; }
+
+	// Access control for private bots
+	if (!(int)$botRow['public_enabled'] && !isUserBotAdmin($pdo, (int)$botRow['id'], $fromId)) {
+		tgSendMessage($botToken, $chatId, t('not_authorized', getUserLang($pdo, $fromId, (string)$botRow['lang_default'])));
+		echo 'OK';
+		exit;
+	}
+
+	$text = (string)($message['text'] ?? '');
+	[$cmd, $args] = getCommandAndArgs($text);
+	if ($cmd === '/start') {
+		$settings = getSettings($pdo, (int)$botRow['id']);
+		$lang = getUserLang($pdo, $fromId, (string)$botRow['lang_default']);
+		$welcome = $settings['welcome_text'] ?? t('welcome_userbot', $lang);
+		if (!empty($settings['logo_url'])) {
+			tgSendPhoto($botToken, $chatId, (string)$settings['logo_url'], ['caption' => $welcome, 'parse_mode' => 'HTML']);
+		} else {
+			tgSendMessage($botToken, $chatId, $welcome);
+		}
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/lang') {
+		sendLanguagePicker($botToken, $chatId, getUserLang($pdo, $fromId, (string)$botRow['lang_default']));
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/stats') {
+		$st = getStats($pdo, (int)$botRow['id']);
+		$lang = getUserLang($pdo, $fromId, (string)$botRow['lang_default']);
+		$vip = isBotVip($botRow);
+		$vipInfo = $vip['is_vip'] ? ('VIP ' . ($vip['level'] ?? '') . ' until ' . ($botRow['vip_expire'] ?? '')) : 'Free';
+		$msg = t('stats', $lang, ['u' => $st['total_users'] ?? 0, 'q' => $st['total_queries'] ?? 0, 'p' => $st['total_playlists'] ?? 0]) . "\n" . $vipInfo;
+		tgSendMessage($botToken, $chatId, $msg);
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/playlist') {
+		$stmt = $pdo->prepare('SELECT track_id, created_at FROM playlists WHERE bot_id = ? AND user_id = ? ORDER BY id DESC LIMIT 10');
+		$stmt->execute([(int)$botRow['id'], $fromId]);
+		$rows = $stmt->fetchAll();
+		if (!$rows) { tgSendMessage($botToken, $chatId, 'Empty.'); echo 'OK'; exit; }
+		$out = [];
+		foreach ($rows as $r) { $out[] = $r['track_id']; }
+		tgSendMessage($botToken, $chatId, implode("\n", $out));
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/top10') {
+		$stmt = $pdo->query('SELECT track_id, save_count FROM rankings ORDER BY save_count DESC, search_count DESC LIMIT 10');
+		$rows = $stmt->fetchAll();
+		if (!$rows) { tgSendMessage($botToken, $chatId, 'No ranking yet.'); echo 'OK'; exit; }
+		$out = [];
+		foreach ($rows as $i => $r) { $out[] = (string)($i + 1) . '. ' . $r['track_id'] . ' (' . (int)$r['save_count'] . ')'; }
+		tgSendMessage($botToken, $chatId, implode("\n", $out));
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/public') {
+		if (!isUserBotAdmin($pdo, (int)$botRow['id'], $fromId)) { tgSendMessage($botToken, $chatId, t('not_authorized', getUserLang($pdo, $fromId, (string)$botRow['lang_default']))); echo 'OK'; exit; }
+		$state = strtolower(trim($args));
+		if (!in_array($state, ['on','off'], true)) { tgSendMessage($botToken, $chatId, 'Usage: /public <on|off>'); echo 'OK'; exit; }
+		$pdo->prepare('UPDATE bots SET public_enabled = ? WHERE id = ?')->execute([$state === 'on' ? 1 : 0, (int)$botRow['id']]);
+		tgSendMessage($botToken, $chatId, $state === 'on' ? t('public_on', getUserLang($pdo, $fromId, (string)$botRow['lang_default'])) : t('public_off', getUserLang($pdo, $fromId, (string)$botRow['lang_default'])));
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/admins') {
+		$stmt = $pdo->prepare('SELECT admin_user_id FROM bot_admins WHERE bot_id = ? ORDER BY id ASC LIMIT 50');
+		$stmt->execute([(int)$botRow['id']]);
+		$rows = $stmt->fetchAll();
+		$list = array_map(fn($r) => (string)$r['admin_user_id'], $rows);
+		tgSendMessage($botToken, $chatId, t('admins_list', getUserLang($pdo, $fromId, (string)$botRow['lang_default'])) . "\n" . implode(', ', $list));
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/addadmin') {
+		if (!isUserBotAdmin($pdo, (int)$botRow['id'], $fromId)) { tgSendMessage($botToken, $chatId, t('not_authorized', getUserLang($pdo, $fromId, (string)$botRow['lang_default']))); echo 'OK'; exit; }
+		$uid = (int)$args; if ($uid <= 0) { tgSendMessage($botToken, $chatId, 'Usage: /addadmin <user_id>'); echo 'OK'; exit; }
+		$pdo->prepare('INSERT IGNORE INTO bot_admins (bot_id, admin_user_id) VALUES (?,?)')->execute([(int)$botRow['id'], $uid]);
+		tgSendMessage($botToken, $chatId, 'Added admin: ' . $uid);
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/rmadmin') {
+		if (!isUserBotAdmin($pdo, (int)$botRow['id'], $fromId)) { tgSendMessage($botToken, $chatId, t('not_authorized', getUserLang($pdo, $fromId, (string)$botRow['lang_default']))); echo 'OK'; exit; }
+		$uid = (int)$args; if ($uid <= 0) { tgSendMessage($botToken, $chatId, 'Usage: /rmadmin <user_id>'); echo 'OK'; exit; }
+		$pdo->prepare('DELETE FROM bot_admins WHERE bot_id = ? AND admin_user_id = ?')->execute([(int)$botRow['id'], $uid]);
+		tgSendMessage($botToken, $chatId, 'Removed admin: ' . $uid);
+		echo 'OK';
+		exit;
+	}
+	if ($cmd === '/play') {
+		$q = trim($args);
+		if ($q === '') { tgSendMessage($botToken, $chatId, 'Usage: /play <query>'); echo 'OK'; exit; }
+		handlePlay($pdo, $botRow, $botToken, $chatId, $fromId, $q, $type);
+		echo 'OK';
+		exit;
+	}
+
+	// Fallback: treat as search query in private chats and groups
+	$q = trim($text);
+	if ($q !== '' && $q[0] !== '/') {
+		incrementStat($pdo, (int)$botRow['id'], 'total_queries', 1);
+		$client = new SongstatsClient(RAPIDAPI_KEY);
+		$res = $client->searchTracks($q);
+		if (!($res['ok'] ?? false) || empty($res['results'])) {
+			tgSendMessage($botToken, $chatId, t('no_results', getUserLang($pdo, $fromId, (string)$botRow['lang_default'])));
+			echo 'OK'; exit;
+		}
+		$results = array_slice($res['results'], 0, 5);
+		foreach ($results as $r) {
+			$name = trim(($r['name'] ?? '') . ' - ' . ($r['artist'] ?? ''));
+			$cover = $r['cover'] ?? '';
+			$spid = $r['spotify_track_id'] ?? '';
+			$tid = trackKeyFrom($r);
+			recordRanking($pdo, $tid, 1, 0);
+			$kbRows = buildResultButtons($name, $spid, $tid);
+			$opts = ['reply_markup' => json_encode(['inline_keyboard' => $kbRows], JSON_UNESCAPED_UNICODE)];
+			$textOut = '<b>' . htmlspecialchars($name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "</b>\n";
+			if ($cover) { tgSendPhoto($botToken, $chatId, $cover, array_merge($opts, ['caption' => $textOut])); }
+			else { tgSendMessage($botToken, $chatId, $textOut, $opts); }
+		}
+		echo 'OK';
+		exit;
+	}
+}
+
+if ($callback) {
+	$cbid = (string)($callback['id'] ?? '');
+	$data = (string)($callback['data'] ?? '');
+	$chatId = (int)($callback['message']['chat']['id'] ?? 0);
+	$fromId = (int)($callback['from']['id'] ?? 0);
+	if (strpos($data, 'lang:') === 0) {
+		$lang = substr($data, 5);
+		setUserLang($pdo, $fromId, $lang);
+		tgAnswerCallback($botToken, $cbid, 'OK');
+		echo 'OK'; exit;
+	}
+	if (strpos($data, 'sv:') === 0) {
+		$trackKey = substr($data, 3);
+		$pdo->prepare('INSERT INTO playlists (user_id, bot_id, track_id) VALUES (?,?,?)')->execute([$fromId, (int)$botRow['id'], $trackKey]);
+		incrementStat($pdo, (int)$botRow['id'], 'total_playlists', 1);
+		recordRanking($pdo, $trackKey, 0, 1);
+		tgAnswerCallback($botToken, $cbid, t('playlist_added', getUserLang($pdo, $fromId, (string)$botRow['lang_default'])));
+		echo 'OK'; exit;
+	}
+	if (strpos($data, 'dl:') === 0) {
+		// dl:<b64name>:<low|high>
+		$parts = explode(':', $data, 3);
+		if (count($parts) === 3) {
+			$name = base64_decode($parts[1], true) ?: '';
+			$quality = $parts[2];
+			$url = resolveDownloaderUrl($name, $quality);
+			if ($url) {
+				$send = tgSendAudio($botToken, $chatId, $url, ['caption' => $name]);
+				$vip = isBotVip($botRow);
+				if (!($vip['is_vip'] && ($vip['level'] === 'Basic' || $vip['level'] === 'Premium' || $vip['level'] === 'Pro'))) {
+					sendAd($botToken, $chatId, fetchRandomAd($pdo));
+				}
+			}
+		}
+		tgAnswerCallback($botToken, $cbid, '');
+		echo 'OK'; exit;
+	}
+}
+
+echo 'OK';
+
+// ===== Helpers (local to bot) =====
+
+function isGloballyBanned(PDO $pdo, int $userId): bool {
+	$stmt = $pdo->prepare('SELECT 1 FROM banned_users WHERE user_id = ?');
+	$stmt->execute([$userId]);
+	return (bool)$stmt->fetch();
+}
+
+function trackKeyFrom(array $r): string {
+	$sp = trim((string)($r['spotify_track_id'] ?? ''));
+	if ($sp !== '') return 'sp:' . $sp;
+	$ss = trim((string)($r['id'] ?? ''));
+	if ($ss !== '') return 'ss:' . $ss;
+	$isrc = trim((string)($r['isrc'] ?? ''));
+	if ($isrc !== '') return 'isrc:' . $isrc;
+	$name = trim((string)($r['name'] ?? ''));
+	$artist = trim((string)($r['artist'] ?? ''));
+	return 'q:' . substr(md5($name . '|' . $artist), 0, 10);
+}
+
+function buildResultButtons(string $name, string $spotifyId, string $trackKey): array {
+	$rows = [];
+	$dlName = base64_encode($name);
+	$btns = [];
+	$dlLow = resolveDownloaderUrl($name, 'low');
+	$dlHigh = resolveDownloaderUrl($name, 'high');
+	if ($dlLow) { $btns[] = ['text' => '⬇️ Low', 'callback_data' => 'dl:' . $dlName . ':low']; }
+	if ($dlHigh) { $btns[] = ['text' => '⬇️ High', 'callback_data' => 'dl:' . $dlName . ':high']; }
+	if ($btns) { $rows[] = $btns; }
+	$rows[] = [
+		['text' => '❤️ Save', 'callback_data' => 'sv:' . $trackKey],
+		$spotifyId ? ['text' => 'Spotify', 'url' => 'https://open.spotify.com/track/' . $spotifyId] : ['text' => 'More', 'callback_data' => 'noop'],
+	];
+	return $rows;
+}
+
+function handlePlay(PDO $pdo, array $botRow, string $botToken, int $chatId, int $fromId, string $q, string $chatType): void {
+	$url = resolveDownloaderUrl($q, 'high') ?? resolveDownloaderUrl($q, 'low');
+	if ($url) {
+		tgSendAudio($botToken, $chatId, $url, ['caption' => $q]);
+		$vip = isBotVip($botRow);
+		if (!($vip['is_vip'] && ($vip['level'] === 'Basic' || $vip['level'] === 'Premium' || $vip['level'] === 'Pro'))) {
+			sendAd($botToken, $chatId, fetchRandomAd($pdo));
+		}
+	} else {
+		tgSendMessage($botToken, $chatId, 'Downloader not configured.');
+	}
+}
+
+function hasVipAtLeast(array $vip, string $level): bool {
+	$levels = ['Basic' => 1, 'Premium' => 2, 'Pro' => 3];
+	if (!($vip['is_vip'] ?? false)) return false;
+	$cur = $levels[$vip['level'] ?? 'Basic'] ?? 1;
+	$need = $levels[$level] ?? 1;
+	return $cur >= $need;
+}
+
+?>
+
+<?php
 set_time_limit(5);
 error_reporting(0);
 date_default_timezone_set('Asia/Tehran');
