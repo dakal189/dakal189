@@ -29,19 +29,6 @@ if (isset($update->message)) {
 	$photo1_id = $message->photo[1]->file_id;
 	$photo2_id = $message->photo[2]->file_id;
 }
-elseif (isset($update->edited_message)) {
-	$message = $update->edited_message;
-	$chat_id = $message->chat->id;
-	$text = $message->text;
-	$message_id = $message->message_id;
-	$from_id = $message->from->id;
-	$user_id = $from_id;
-	$tc = $message->chat->type;
-	$first_name = $message->from->first_name;
-	$last_name = $message->from->last_name;
-	$username = $message->from->username;
-	$caption = $message->caption;
-}
 elseif (isset($update->callback_query)) {
 	$callback_query = $update->callback_query;
 	$callback_data = $callback_query->data;
@@ -337,7 +324,6 @@ $panel = json_encode(['keyboard'=>[
 [['text'=>"⛔️ کاربران مسدود"],['text'=>"📊 آمار"]],
 [['text'=>'✉️ پیام همگانی'],['text'=>'🚀 هدایت همگانی']],
 [['text'=>'🎲 سرگرمی']],
-[['text'=>"🛡️ ضد اسپم"]],
 [['text'=>'⌨️ دکمه ها'],['text'=>'✉️ پیغام ها']],
 [['text'=>'💻 پاسخ خودکار'],['text'=>'⛔️ فیلتر کلمه']],
 [['text'=>'☎️ شماره من'],['text'=>'👨🏻‍💻 ادمین ها']],
@@ -353,7 +339,6 @@ $panel = json_encode(['keyboard'=>[
 [['text'=>"⛔️ کاربران مسدود"],['text'=>"📊 آمار"]],
 [['text'=>'✉️ پیام همگانی'],['text'=>'🚀 هدایت همگانی']],
 [['text'=>'🎲 سرگرمی']],
-[['text'=>"🛡️ ضد اسپم"]],
 [['text'=>'⌨️ دکمه ها'],['text'=>'✉️ پیغام ها']],
 [['text'=>'💻 پاسخ خودکار'],['text'=>'⛔️ فیلتر کلمه']],
 [['text'=>'☎️ شماره من'],['text'=>'👨🏻‍💻 ادمین ها']],
@@ -423,47 +408,47 @@ $languages = json_encode(['keyboard'=>[
 [['text'=>'🇷🇺 روسی'],['text'=>'🇸🇦 عربی']],
 [['text'=>'🇹🇷 ترکی'],['text'=>'🇫🇷 فرانسوی']],
 [['text'=>'🔙 بازگشت به بخش سرگرمی']]
-], 'resize_keyboard'=>true);
+], 'resize_keyboard'=>true]);
 $button_name = json_encode(['keyboard'=>[
 [['text'=>'پروفایل']],
 [['text'=>'ارسال شماره'],['text'=>'ارسال مکان']],
 [['text'=>'↩️ بازگشت']]
-], 'resize_keyboard'=>true);
+], 'resize_keyboard'=>true]);
 $button_filter = json_encode(['keyboard'=>[
 [['text'=>'➖ حذف فیلتر'],['text'=>'➕ افزودن فیلتر']],
 [['text'=>'📑 لیست فیلتر']],
 [['text'=>'🔙 بازگشت']]
-], 'resize_keyboard'=>true);
+], 'resize_keyboard'=>true]);
 $button_admins = json_encode(['keyboard'=>[
 [['text'=>'➖ حذف ادمین'],['text'=>'➕ افزودن ادمین']],
 [['text'=>'👨🏻‍💻 لیست ادمین ها']],
 [['text'=>'🔙 بازگشت']]
-], 'resize_keyboard'=>true);
+], 'resize_keyboard'=>true]);
 $reset = json_encode(['keyboard'=>[
 [['text'=>'✅ بله، کاملا مطمئن هستم']],
 [['text'=>'🔙 بازگشت']]
-], 'resize_keyboard'=>true);
+], 'resize_keyboard'=>true]);
 $contact = json_encode(['keyboard'=>[
 [['text'=>'📞 شماره من']],
 [['text'=>'☎️ تنظیم شماره', 'request_contact'=>true]],
 [['text'=>'🔙 بازگشت']]
-], 'resize_keyboard'=>true);
+], 'resize_keyboard'=>true]);
 ##----------------------Back
 $back = json_encode(['keyboard'=>[
 [['text'=>'🔙 بازگشت']]
-], 'resize_keyboard'=>true);
+], 'resize_keyboard'=>true]);
 $back_to_channels = json_encode(['keyboard'=>[
 [['text'=>'🔙 برگشت']]
-], 'resize_keyboard'=>true);
+], 'resize_keyboard'=>true]);
 $backans = json_encode(['keyboard'=>[
 [['text'=>'↩️ برگشت ']]
-], 'resize_keyboard'=>true);
+], 'resize_keyboard'=>true]);
 $backbtn = json_encode(['keyboard'=>[
 [['text'=>'↩️ بازگشت']]
-], 'resize_keyboard'=>true);
+], 'resize_keyboard'=>true]);
 $backto = json_encode(['keyboard'=>[
 [['text'=>'🔙 بازگشت به بخش سرگرمی']]
-], 'resize_keyboard'=>true);
+], 'resize_keyboard'=>true]);
 $remove = json_encode(['KeyboardRemove'=>[], 'remove_keyboard'=>true]);
 ##----------------------Inline
 $profile_btn = $data['button']['profile']['stats'];

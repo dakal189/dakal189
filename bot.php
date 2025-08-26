@@ -28,7 +28,10 @@ if ($from_id != $Dev) {
 	$flood['flood']["$now-$from_id"] += 1;
 	file_put_contents('data/flood.json', json_encode($flood));
 	
-	if ($flood['flood']["$now-$from_id"] >= 33 && $tc == 'private') {
+	// اگر نقض قفل بوده باشد، از مسدودسازی چشم‌پوشی کن
+	$skip_ban_due_to_lock = isset($GLOBALS['__LOCK_VIOLATION__']) && $GLOBALS['__LOCK_VIOLATION__'] === true;
+	
+	if (!$skip_ban_due_to_lock && $flood['flood']["$now-$from_id"] >= 33 && $tc == 'private') {
 		sendAction($chat_id);
 		if ($list['ban'] == null) {
 			$list['ban'] = [];
@@ -780,6 +783,7 @@ elseif (isset($update->message) && $from_id != $Dev && $data['feed'] == null && 
 			sendMessage($chat_id, "$done", 'html' , $message_id, $button_user);
 		} else {
 			sendMessage($chat_id, "⛔️ ارسال تصویر مجاز نیست.", 'html' , $message_id, $button_user);
+			bot('deleteMessage', ['chat_id' => $chat_id, 'message_id' => $message_id]);
 		}
 		goto tabliq;
 	}
@@ -3599,31 +3603,6 @@ elseif (preg_match('@\/determent(?<type>f2a|s2a|gift)\_(?<time>[0-9]+)@i', $text
 		}
 	}
 	goto tabliq;
-}
-##----------------------
-elseif ($data['step'] == "tosticker" && isset($message->photo)) {
-	$data['step'] = "none";
-	file_put_contents("data/data.json",json_encode($data));
-	$photo = $message->photo;
-	$file = $photo[count($photo)-1]->file_id;
-	$get = bot('getFile',['file_id'=> $file]);
-	$patch = $get['result']['file_path'];
-	file_put_contents("data/sticker.webp", file_get_contents('https://api.telegram.org/file/bot'.API_KEY.'/'.$patch));
-	sendSticker($chat_id, new CURLFile("data/sticker.webp"));
-	unlink("data/sticker.webp");
-	sendMessage($chat_id, "👇🏻 یکی از دکمه های زیر را انتخاب کنید :", 'markdown', $message_id, $button_tools);
-}
-elseif ($data['step'] == "tophoto" && isset($message->sticker)) {
-	sendAction($chat_id, 'upload_photo');
-	$data['step'] = "none";
-	file_put_contents("data/data.json",json_encode($data));
-	$file = $message->sticker->file_id;
-	$get = bot('getFile',['file_id'=> $file]);
-	$patch = $get['result']['file_path'];
-	file_put_contents("data/photo.png",fopen('https://api.telegram.org/file/bot'.API_KEY.'/'.$patch, 'r'));
-	sendPhoto($chat_id,new CURLFile("data/photo.png"));
-	unlink("data/photo.png");
-	sendMessage($chat_id, "👇🏻 یکی از دکمه های زیر را انتخاب کنید :", 'markdown', $message_id, $button_tools);
 }
 elseif ($data['step'] == 'QrCode') {
 	if (!empty($text)) {
