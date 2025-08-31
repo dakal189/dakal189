@@ -1773,14 +1773,7 @@ function deleteFile($chat_id, $file_id) {
     }
 }
 
-function deleteFile($file_id) {
-    global $pdo;
-    
-    $stmt = $pdo->prepare("DELETE FROM files WHERE id = ?");
-    $stmt->execute([$file_id]);
-    
-    return true;
-}
+// This function is now replaced by deleteFile($chat_id, $file_id)
 
 // Enhanced callback query handler
 function handleEnhancedCallbackQuery($callback_query) {
@@ -1800,27 +1793,19 @@ function handleEnhancedCallbackQuery($callback_query) {
     // Handle enhanced callback data
     if (strpos($data, 'folder_delete_confirm_') === 0) {
         $folder_id = str_replace('folder_delete_confirm_', '', $data);
-        if (deleteFolder($folder_id)) {
-            sendMessage($chat_id, "✅ فولدر با موفقیت حذف شد!");
-        } else {
-            sendMessage($chat_id, "❌ خطا در حذف فولدر!");
-        }
+        deleteFolder($chat_id, $folder_id);
     } elseif (strpos($data, 'folder_delete_cancel_') === 0) {
         $folder_id = str_replace('folder_delete_cancel_', '', $data);
         sendMessage($chat_id, "✅ عملیات حذف لغو شد!");
     } elseif (strpos($data, 'file_delete_confirm_') === 0) {
         $file_id = str_replace('file_delete_confirm_', '', $data);
-        if (deleteFile($file_id)) {
-            sendMessage($chat_id, "✅ فایل با موفقیت حذف شد!");
-        } else {
-            sendMessage($chat_id, "❌ خطا در حذف فایل!");
-        }
+        deleteFile($chat_id, $file_id);
     } elseif (strpos($data, 'file_delete_cancel_') === 0) {
         $file_id = str_replace('file_delete_cancel_', '', $data);
         sendMessage($chat_id, "✅ عملیات حذف لغو شد!");
     } elseif ($data === 'broadcast_send') {
         sendBroadcastMessage($chat_id);
-    } elseif ($data === 'broadcast_filter') {
+    } elseif (strpos($data, 'broadcast_filter') === 0) {
         showBroadcastFilterMenu($chat_id);
     } else {
         // Handle other callback data
