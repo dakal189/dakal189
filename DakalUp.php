@@ -1,6 +1,6 @@
 <?php
 
-// ==================== تنظيمات اوليه ربات (مهم) ====================
+// ==================== تنظیمات اولیه ربات (مهم) ====================
 define('TOKEN', '7657246591:AAF9b-UEuyypu5tIhQ-KrMvqnxn56vIxIXQ'); // توکن ربات
 define('ADMIN_ID', '5641303137'); // آیدی عددی ادمین اصلی
 
@@ -19,11 +19,13 @@ if ($db->connect_error) {
 }
 $db->set_charset("utf8mb4");
 
+// ایجاد جداول مورد نیاز
+createTables();
+
 // --- دریافت آپدیت‌ها ---
 $update = json_decode(file_get_contents('php://input'));
 $message = $update->message ?? null;
 $callback_query = $update->callback_query ?? null;
-$channel_post = $update->channel_post ?? null;
 $chat_id = $message->chat->id ?? $callback_query->message->chat->id ?? null;
 $from_id = $message->from->id ?? $callback_query->from->id ?? null;
 $text = $message->text ?? null;
@@ -31,6 +33,73 @@ $data = $callback_query->data ?? null;
 $message_id = $message->message_id ?? $callback_query->message->message_id ?? null;
 
 // ==================== توابع اصلی و کمکی ====================
+
+function createTables() {
+    global $db;
+    
+    // جدول کاربران
+    $db->query("CREATE TABLE IF NOT EXISTS users (
+        id BIGINT PRIMARY KEY,
+        first_name VARCHAR(255),
+        username VARCHAR(255),
+        step VARCHAR(100) DEFAULT 'none',
+        temp_data TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )");
+    
+    // جدول گروه‌های فایل
+    $db->query("CREATE TABLE IF NOT EXISTS file_groups (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(255),
+        description TEXT,
+        is_public BOOLEAN DEFAULT FALSE,
+        forward_lock BOOLEAN DEFAULT FALSE,
+        created_by BIGINT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )");
+    
+    // جدول فایل‌ها
+    $db->query("CREATE TABLE IF NOT EXISTS files (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        file_id VARCHAR(255),
+        file_unique_id VARCHAR(255),
+        file_type VARCHAR(50),
+        file_name VARCHAR(255),
+        file_size BIGINT,
+        caption TEXT,
+        group_id INT,
+        uploader_id BIGINT,
+        likes INT DEFAULT 0,
+        dislikes INT DEFAULT 0,
+        views INT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (group_id) REFERENCES file_groups(id) ON DELETE CASCADE
+    )");
+    
+    // جدول لایک‌ها
+    $db->query("CREATE TABLE IF NOT EXISTS likes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        file_id INT,
+        user_id BIGINT,
+        is_like BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+    )");
+    
+    // جدول ادمین‌ها
+    $db->query("CREATE TABLE IF NOT EXISTS admins (
+        id BIGINT PRIMARY KEY,
+        name VARCHAR(255),
+        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )");
+    
+    // جدول تنظیمات
+    $db->query("CREATE TABLE IF NOT EXISTS settings (
+        name VARCHAR(100) PRIMARY KEY,
+        value TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )");
+}
 
 function bot($method, $datas = []) {
     $url = "https://api.telegram.org/bot" . TOKEN . "/" . $method;
@@ -54,28 +123,8 @@ function editMessageText($chat_id, $message_id, $text, $keyboard = null) {
     return bot('editMessageText', $params);
 }
 
-function forwardMessage($chat_id, $from_chat_id, $message_id) {
-    return bot('forwardMessage', ['chat_id' => $chat_id, 'from_chat_id' => $from_chat_id, 'message_id' => $message_id]);
-}
-
 function answerCallbackQuery($callback_query_id, $text = '', $show_alert = false) {
     return bot('answerCallbackQuery', ['callback_query_id' => $callback_query_id, 'text' => $text, 'show_alert' => $show_alert]);
-}
-
-function getSetting($name) {
-    global $db;
-    $stmt = $db->prepare("SELECT value FROM settings WHERE name = ?");
-    $stmt->bind_param("s", $name);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    return $result->num_rows > 0 ? $result->fetch_assoc()['value'] : null;
-}
-
-function updateSetting($name, $value) {
-    global $db;
-    $stmt = $db->prepare("INSERT INTO settings (name, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = ?");
-    $stmt->bind_param("sss", $name, $value, $value);
-    return $stmt->execute();
 }
 
 function isAdmin($user_id) {
@@ -87,77 +136,52 @@ function isAdmin($user_id) {
     return $stmt->get_result()->num_rows > 0;
 }
 
-function checkJoin($user_id) {
-    $channel = getSetting('force_join_channel');
-    if (!$channel || $channel == '@YourChannelUsername') return true;
-    try {
-        $status = bot('getChatMember', ['chat_id' => $channel, 'user_id' => $user_id])['result']['status'] ?? 'left';
-        return in_array($status, ['member', 'administrator', 'creator']);
-    } catch (Exception $e) { return false; }
-}
-
-// ==================== تابع اصلاح شده ====================
-/**
- * @param int $user_id
- * @param string $step
- * @param string|null $data
- * @return bool
- */
 function setUserStep($user_id, $step, $data = null) {
     global $db;
     $stmt = $db->prepare("UPDATE users SET step = ?, temp_data = ? WHERE id = ?");
-    
-    // این بخش برای رفع خطا تغییر کرده است
-    // ما متغیرها را به صورت صریح به bind_param می‌دهیم تا مشکل رفرنس حل شود
-    $bound_step = $step;
-    $bound_data = $data;
-    $bound_user_id = $user_id;
-    
-    $stmt->bind_param("ssi", $bound_step, $bound_data, $bound_user_id);
+    $stmt->bind_param("ssi", $step, $data, $user_id);
     return $stmt->execute();
 }
-// =========================================================
 
-function generateRandomString($length = 10) {
-    return substr(str_shuffle(str_repeat($x='0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ', ceil($length/strlen($x)) )),1,$length);
+function getUserStep($user_id) {
+    global $db;
+    $stmt = $db->prepare("SELECT step, temp_data FROM users WHERE id = ?");
+    $stmt->bind_param("i", $user_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    return $result->num_rows > 0 ? $result->fetch_assoc() : ['step' => 'none', 'temp_data' => null];
 }
 
-function sendFileWithButtons($chat_id, $file) {
-    $keyboard = ['inline_keyboard' => []];
-    $buttons = [];
-    if (getSetting('show_views') == 'true') $buttons[] = ['text' => '👀 ' . $file['views'], 'callback_data' => 'noop'];
-    if (getSetting('show_likes') == 'true') $buttons[] = ['text' => '👍 ' . $file['likes'], 'callback_data' => 'like_' . $file['id']];
-    if (getSetting('show_comments') == 'true') $buttons[] = ['text' => '💬 ارسال نظر', 'callback_data' => 'comment_' . $file['id']];
-    if (!empty($buttons)) $keyboard['inline_keyboard'][] = $buttons;
-    
-    $file_type = $file['file_type'];
-    $method = 'send' . ucfirst($file_type);
-    
-    bot($method, [
-        'chat_id' => $chat_id,
-        $file_type => $file['file_id'],
-        'caption' => $file['caption'],
-        'reply_markup' => json_encode($keyboard)
-    ]);
+function formatFileSize($bytes) {
+    if ($bytes >= 1073741824) {
+        return number_format($bytes / 1073741824, 2) . ' GB';
+    } elseif ($bytes >= 1048576) {
+        return number_format($bytes / 1048576, 2) . ' MB';
+    } elseif ($bytes >= 1024) {
+        return number_format($bytes / 1024, 2) . ' KB';
+    } else {
+        return $bytes . ' bytes';
+    }
+}
+
+function getGroupStats($group_id) {
+    global $db;
+    $stmt = $db->prepare("SELECT COUNT(*) as file_count, SUM(file_size) as total_size FROM files WHERE group_id = ?");
+    $stmt->bind_param("i", $group_id);
+    $stmt->execute();
+    return $stmt->get_result()->fetch_assoc();
+}
+
+function generateShareLink($group_id) {
+    $bot_username = bot('getMe')['result']['username'];
+    return "https://t.me/$bot_username?start=group_$group_id";
 }
 
 // ==================== پردازش اصلی آپدیت‌ها ====================
 
-// 1. فوروارد پست از کانال
-if ($channel_post) {
-    $channel_username_setting = getSetting('force_join_channel');
-    if (strtolower('@' . $channel_post->chat->username) == strtolower($channel_username_setting)) {
-        $users_query = $db->query("SELECT id FROM users");
-        while ($user = $users_query->fetch_assoc()) {
-            forwardMessage($user['id'], $channel_post->chat->id, $channel_post->message_id);
-        }
-    }
-    exit();
-}
-
 if (!$from_id) exit();
 
-// 2. ثبت‌نام کاربر و چک کردن عضویت
+// ثبت‌نام کاربر
 $stmt = $db->prepare("SELECT * FROM users WHERE id = ?");
 $stmt->bind_param("i", $from_id);
 $stmt->execute();
@@ -172,114 +196,265 @@ if (!$user) {
     $user = ['id' => $from_id, 'step' => 'none', 'temp_data' => null];
 }
 
-if (!checkJoin($from_id)) {
-    $channel = getSetting('force_join_channel');
-    $channel_link = 'https://t.me/' . str_replace('@', '', $channel);
-    $keyboard = ['inline_keyboard' => [[['text' => 'عضویت در کانال', 'url' => $channel_link]], [['text' => '✅ بررسی عضویت', 'callback_data' => 'check_join']]]];
-    sendMessage($chat_id, "برای استفاده از ربات، لطفاً ابتدا در کانال ما عضو شوید:\n$channel\n\nسپس دکمه بررسی را بزنید.", $keyboard);
-    exit();
-}
-
-// 3. پردازش Callback Query ها (دکمه‌های شیشه‌ای)
+// پردازش Callback Query ها
 if ($data) {
     $parts = explode('_', $data);
     $action = $parts[0];
 
-    if ($action == 'check' && $parts[1] == 'join') {
-        if (checkJoin($from_id)) {
-            answerCallbackQuery($callback_query->id, 'عضویت شما تایید شد. خوش آمدید!', true);
-            editMessageText($chat_id, $message_id, "عضویت شما با موفقیت تایید شد. برای شروع /start را ارسال کنید.");
-        } else {
-            answerCallbackQuery($callback_query->id, 'هنوز در کانال عضو نشده‌اید!', true);
+    if ($action == 'user' && $parts[1] == 'file') {
+        switch ($parts[2]) {
+            case 'like':
+                $file_id = intval($parts[3]);
+                $stmt = $db->prepare("UPDATE files SET likes = likes + 1 WHERE id = ?");
+                $stmt->bind_param("i", $file_id);
+                $stmt->execute();
+                answerCallbackQuery($callback_query->id, "لایک شد!", true);
+                break;
+                
+            case 'dislike':
+                $file_id = intval($parts[3]);
+                $stmt = $db->prepare("UPDATE files SET dislikes = dislikes + 1 WHERE id = ?");
+                $stmt->bind_param("i", $file_id);
+                $stmt->execute();
+                answerCallbackQuery($callback_query->id, "دیسلایک شد!", true);
+                break;
         }
         exit();
     }
     
-    if ($action == 'like') {
-        $file_id = intval($parts[1]);
-        $stmt_check = $db->prepare("SELECT * FROM likes WHERE file_id = ? AND user_id = ?");
-        $stmt_check->bind_param("ii", $file_id, $from_id);
-        $stmt_check->execute();
-        if ($stmt_check->get_result()->num_rows == 0) {
-            $db->query("UPDATE files SET likes = likes + 1 WHERE id = $file_id");
-            $stmt_insert = $db->prepare("INSERT INTO likes (file_id, user_id) VALUES (?, ?)");
-            $stmt_insert->bind_param("ii", $file_id, $from_id);
-            $stmt_insert->execute();
-            answerCallbackQuery($callback_query->id, 'لایک شما ثبت شد!');
-        } else {
-            answerCallbackQuery($callback_query->id, 'شما قبلاً لایک کرده‌اید.');
-        }
-        exit();
-    }
-
-    if ($action == 'comment') {
-        setUserStep($from_id, 'awaiting_comment_' . intval($parts[1]));
-        sendMessage($chat_id, "نظر خود را برای این فایل بنویسید و ارسال کنید:");
-        answerCallbackQuery($callback_query->id);
-        exit();
-    }
-
-    // --- منطق دکمه‌های پنل ادمین ---
     if (isAdmin($from_id)) {
         if ($action == 'admin') {
             switch ($parts[1]) {
                 case 'panel':
-                    $admin_keyboard = [ 'inline_keyboard' => [
-                        [['text' => '📤 آپلود فایل جدید', 'callback_data' => 'admin_upload']],
-                        [['text' => '📂 مدیریت فایل‌ها', 'callback_data' => 'admin_files_0']],
-                        [['text' => '⚙️ تنظیمات ربات', 'callback_data' => 'admin_settings']],
-                        [['text' => '👥 مدیریت ادمین‌ها', 'callback_data' => 'admin_admins']],
-                        [['text' => '📊 آمار', 'callback_data' => 'admin_stats']]
-                    ]];
+                    $admin_keyboard = [
+                        'keyboard' => [
+                            ['📤 اپلود گروهی'],
+                            ['📤 اپلود فایل'],
+                            ['📢 ارسال پیام همگانی'],
+                            ['📊 مشاهده فایل و آمار'],
+                            ['⚙️ تنظیمات'],
+                            ['🔄 خاموش/روشن کردن ربات']
+                        ],
+                        'resize_keyboard' => true,
+                        'one_time_keyboard' => false
+                    ];
                     editMessageText($chat_id, $message_id, "به پنل مدیریت خوش آمدید. یکی از گزینه‌ها را انتخاب کنید:", $admin_keyboard);
                     break;
-                case 'upload':
-                    setUserStep($from_id, 'awaiting_file');
-                    answerCallbackQuery($callback_query->id);
-                    editMessageText($chat_id, $message_id, "لطفاً فایل مورد نظر خود را ارسال کنید (عکس، ویدیو، داکیومنت و...).");
-                    break;
-                case 'settings':
-                    $likes_status = getSetting('show_likes') == 'true' ? '✅' : '❌';
-                    $views_status = getSetting('show_views') == 'true' ? '✅' : '❌';
-                    $comments_status = getSetting('show_comments') == 'true' ? '✅' : '❌';
-                    $settings_keyboard = [ 'inline_keyboard' => [
-                        [['text' => "تغییر متن استارت", 'callback_data' => 'admin_set_start']],
-                        [['text' => "تغییر کانال عضویت", 'callback_data' => 'admin_set_channel']],
-                        [['text' => "$likes_status دکمه لایک", 'callback_data' => 'admin_toggle_likes']],
-                        [['text' => "$views_status دکمه بازدید", 'callback_data' => 'admin_toggle_views']],
-                        [['text' => "$comments_status دکمه نظر", 'callback_data' => 'admin_toggle_comments']],
-                        [['text' => ' بازگشت', 'callback_data' => 'admin_panel']]
-                    ]];
-                    editMessageText($chat_id, $message_id, "تنظیمات ربات:", $settings_keyboard);
-                    break;
-                case 'toggle':
-                    $setting_name = 'show_' . $parts[2];
-                    $current_value = getSetting($setting_name);
-                    updateSetting($setting_name, $current_value == 'true' ? 'false' : 'true');
-                    answerCallbackQuery($callback_query->id, 'تنظیمات با موفقیت تغییر کرد.');
                     
-                    // Redraw settings panel
-                    $likes_status = getSetting('show_likes') == 'true' ? '✅' : '❌';
-                    $views_status = getSetting('show_views') == 'true' ? '✅' : '❌';
-                    $comments_status = getSetting('show_comments') == 'true' ? '✅' : '❌';
-                    $settings_keyboard = [ 'inline_keyboard' => [
-                        [['text' => "تغییر متن استارت", 'callback_data' => 'admin_set_start']],
-                        [['text' => "تغییر کانال عضویت", 'callback_data' => 'admin_set_channel']],
-                        [['text' => "$likes_status دکمه لایک", 'callback_data' => 'admin_toggle_likes']],
-                        [['text' => "$views_status دکمه بازدید", 'callback_data' => 'admin_toggle_views']],
-                        [['text' => "$comments_status دکمه نظر", 'callback_data' => 'admin_toggle_comments']],
-                        [['text' => ' بازگشت', 'callback_data' => 'admin_panel']]
-                    ]];
-                    editMessageText($chat_id, $message_id, "تنظیمات ربات:", $settings_keyboard);
+                case 'group':
+                    switch ($parts[2]) {
+                        case 'upload':
+                            setUserStep($from_id, 'group_upload');
+                            $keyboard = [
+                                'keyboard' => [
+                                    ['✅ پایان'],
+                                    ['🔙 بازگشت']
+                                ],
+                                'resize_keyboard' => true,
+                                'one_time_keyboard' => false
+                            ];
+                            editMessageText($chat_id, $message_id, "فایل‌ها را ارسال کنید تا به گروه اضافه شوند...", $keyboard);
+                            break;
+                            
+                        case 'finish':
+                            $user_step = getUserStep($from_id);
+                            if ($user_step['step'] == 'group_upload' && $user_step['temp_data']) {
+                                $group_data = json_decode($user_step['temp_data'], true);
+                                if (isset($group_data['files']) && count($group_data['files']) > 0) {
+                                    $stats = getGroupStats($group_data['group_id']);
+                                    $share_link = generateShareLink($group_data['group_id']);
+                                    
+                                    $message_text = "فایل‌های شما آپلود شد✅\n\n";
+                                    $message_text .= "تعداد فایل‌ها: " . count($group_data['files']) . "\n";
+                                    $message_text .= "حجم فایل‌ها: " . formatFileSize($stats['total_size']) . "\n";
+                                    $message_text .= "شناسه: " . $group_data['group_id'] . "\n\n";
+                                    $message_text .= "لینک اشتراک گذاری: $share_link";
+                                    
+                                    $inline_keyboard = [
+                                        'inline_keyboard' => [
+                                            [['text' => '👁️ مشاهده فایل ها', 'callback_data' => 'admin_group_view_' . $group_data['group_id']]],
+                                            [['text' => '➕ افزودن فایل', 'callback_data' => 'admin_group_add_' . $group_data['group_id']]],
+                                            [['text' => '🔒 قفل فوروارد', 'callback_data' => 'admin_group_forward_' . $group_data['group_id']]],
+                                            [['text' => '📁 فولدر عمومی', 'callback_data' => 'admin_group_public_' . $group_data['group_id']]],
+                                            [['text' => '🗑️ حذف فولدر', 'callback_data' => 'admin_group_delete_' . $group_data['group_id']]]
+                                        ]
+                                    ];
+                                    
+                                    editMessageText($chat_id, $message_id, $message_text, $inline_keyboard);
+                                    setUserStep($from_id, 'none');
+                                }
+                            }
+                            break;
+                            
+                        case 'back':
+                            setUserStep($from_id, 'none');
+                            $admin_keyboard = [
+                                'keyboard' => [
+                                    ['📤 اپلود گروهی'],
+                                    ['📤 اپلود فایل'],
+                                    ['📢 ارسال پیام همگانی'],
+                                    ['📊 مشاهده فایل و آمار'],
+                                    ['⚙️ تنظیمات'],
+                                    ['🔄 خاموش/روشن کردن ربات']
+                                ],
+                                'resize_keyboard' => true,
+                                'one_time_keyboard' => false
+                            ];
+                            editMessageText($chat_id, $message_id, "به پنل مدیریت خوش آمدید. یکی از گزینه‌ها را انتخاب کنید:", $admin_keyboard);
+                            break;
+                            
+                        case 'view':
+                            $group_id = intval($parts[3]);
+                            $stmt = $db->prepare("SELECT * FROM files WHERE group_id = ? ORDER BY created_at ASC");
+                            $stmt->bind_param("i", $group_id);
+                            $stmt->execute();
+                            $files = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+                            
+                            if (count($files) > 0) {
+                                foreach ($files as $index => $file) {
+                                    $keyboard = [
+                                        'inline_keyboard' => [
+                                            [['text' => '🗑️ حذف', 'callback_data' => 'admin_file_delete_' . $file['id']]]
+                                        ]
+                                    ];
+                                    
+                                    // اضافه کردن دکمه‌های لایک/دیسلایک برای آخرین فایل
+                                    if ($index == count($files) - 1) {
+                                        $keyboard['inline_keyboard'][0][] = ['text' => '👍', 'callback_data' => 'admin_file_like_' . $file['id']];
+                                        $keyboard['inline_keyboard'][0][] = ['text' => '👎', 'callback_data' => 'admin_file_dislike_' . $file['id']];
+                                    }
+                                    
+                                    bot('send' . ucfirst($file['file_type']), [
+                                        'chat_id' => $chat_id,
+                                        $file['file_type'] => $file['file_id'],
+                                        'caption' => $file['caption'] ?? '',
+                                        'reply_markup' => json_encode($keyboard)
+                                    ]);
+                                }
+                            } else {
+                                editMessageText($chat_id, $message_id, "هیچ فایلی در این گروه یافت نشد.");
+                            }
+                            break;
+                            
+                        case 'add':
+                            $group_id = intval($parts[3]);
+                            setUserStep($from_id, 'group_add_' . $group_id);
+                            $keyboard = [
+                                'keyboard' => [
+                                    ['✅ پایان']
+                                ],
+                                'resize_keyboard' => true,
+                                'one_time_keyboard' => false
+                            ];
+                            editMessageText($chat_id, $message_id, "فایل ها را ارسال کنید تا به این فولدر اضافه شود...", $keyboard);
+                            break;
+                            
+                        case 'delete':
+                            $group_id = intval($parts[3]);
+                            $stmt = $db->prepare("DELETE FROM file_groups WHERE id = ?");
+                            $stmt->bind_param("i", $group_id);
+                            $stmt->execute();
+                            answerCallbackQuery($callback_query->id, "فولدر با موفقیت حذف شد.", true);
+                            break;
+                            
+                        case 'forward':
+                            $group_id = intval($parts[3]);
+                            $stmt = $db->prepare("UPDATE file_groups SET forward_lock = NOT forward_lock WHERE id = ?");
+                            $stmt->bind_param("i", $group_id);
+                            $stmt->execute();
+                            
+                            $stmt = $db->prepare("SELECT forward_lock FROM file_groups WHERE id = ?");
+                            $stmt->bind_param("i", $group_id);
+                            $stmt->execute();
+                            $result = $stmt->get_result()->fetch_assoc();
+                            $status = $result['forward_lock'] ? 'فعال' : 'غیرفعال';
+                            
+                            answerCallbackQuery($callback_query->id, "قفل فوروارد $status شد.", true);
+                            break;
+                            
+                        case 'public':
+                            $group_id = intval($parts[3]);
+                            $stmt = $db->prepare("UPDATE file_groups SET is_public = NOT is_public WHERE id = ?");
+                            $stmt->bind_param("i", $group_id);
+                            $stmt->execute();
+                            
+                            $stmt = $db->prepare("SELECT is_public FROM file_groups WHERE id = ?");
+                            $stmt->bind_param("i", $group_id);
+                            $stmt->execute();
+                            $result = $stmt->get_result()->fetch_assoc();
+                            $status = $result['is_public'] ? 'فعال' : 'غیرفعال';
+                            
+                            answerCallbackQuery($callback_query->id, "فولدر عمومی $status شد.", true);
+                            break;
+                    }
                     break;
-                case 'set':
-                    answerCallbackQuery($callback_query->id);
-                    if ($parts[2] == 'start') {
-                        setUserStep($from_id, 'awaiting_start_text');
-                        editMessageText($chat_id, $message_id, "لطفاً متن جدید خوشامدگویی (/start) را ارسال کنید:");
-                    } elseif ($parts[2] == 'channel') {
-                        setUserStep($from_id, 'awaiting_channel_username');
-                        editMessageText($chat_id, $message_id, "لطفاً یوزرنیم کانال جدید را با @ ارسال کنید (مثال: @MyChannel):");
+                    
+                case 'file':
+                    switch ($parts[2]) {
+                        case 'delete':
+                            $file_id = intval($parts[3]);
+                            // نمایش دکمه‌های تایید حذف
+                            $confirm_keyboard = [
+                                'inline_keyboard' => [
+                                    [['text' => '❌ خیر، انصراف می‌دهم', 'callback_data' => 'admin_file_cancel_delete_' . $file_id]],
+                                    [['text' => '✅ بله، مطمئنم', 'callback_data' => 'admin_file_confirm_delete_' . $file_id]]
+                                ]
+                            ];
+                            editMessageText($chat_id, $message_id, "آیا مطمئن هستید که می‌خواهید این فایل را حذف کنید؟", $confirm_keyboard);
+                            break;
+                            
+                        case 'confirm':
+                            if ($parts[3] == 'delete') {
+                                $file_id = intval($parts[4]);
+                                $stmt = $db->prepare("DELETE FROM files WHERE id = ?");
+                                $stmt->bind_param("i", $file_id);
+                                $stmt->execute();
+                                answerCallbackQuery($callback_query->id, "فایل با موفقیت حذف شد.", true);
+                                
+                                // بررسی اینکه آیا گروه خالی شده یا نه
+                                $stmt = $db->prepare("SELECT COUNT(*) as count FROM files WHERE group_id = (SELECT group_id FROM files WHERE id = ?)");
+                                $stmt->bind_param("i", $file_id);
+                                $stmt->execute();
+                                $result = $stmt->get_result()->fetch_assoc();
+                                
+                                if ($result['count'] == 0) {
+                                    // حذف گروه اگر خالی باشد
+                                    $stmt = $db->prepare("DELETE FROM file_groups WHERE id = (SELECT group_id FROM files WHERE id = ?)");
+                                    $stmt->bind_param("i", $file_id);
+                                    $stmt->execute();
+                                    answerCallbackQuery($callback_query->id, "گروه نیز حذف شد زیرا خالی بود.", true);
+                                }
+                            }
+                            break;
+                            
+                        case 'cancel':
+                            if ($parts[3] == 'delete') {
+                                $file_id = intval($parts[4]);
+                                // بازگشت به دکمه حذف اصلی
+                                $keyboard = [
+                                    'inline_keyboard' => [
+                                        [['text' => '🗑️ حذف', 'callback_data' => 'admin_file_delete_' . $file_id]]
+                                    ]
+                                ];
+                                editMessageText($chat_id, $message_id, "فایل:", $keyboard);
+                            }
+                            break;
+                            
+                        case 'like':
+                            $file_id = intval($parts[3]);
+                            $stmt = $db->prepare("UPDATE files SET likes = likes + 1 WHERE id = ?");
+                            $stmt->bind_param("i", $file_id);
+                            $stmt->execute();
+                            answerCallbackQuery($callback_query->id, "لایک شد!", true);
+                            break;
+                            
+                        case 'dislike':
+                            $file_id = intval($parts[3]);
+                            $stmt = $db->prepare("UPDATE files SET dislikes = dislikes + 1 WHERE id = ?");
+                            $stmt->bind_param("i", $file_id);
+                            $stmt->execute();
+                            answerCallbackQuery($callback_query->id, "دیسلایک شد!", true);
+                            break;
                     }
                     break;
             }
@@ -288,136 +463,179 @@ if ($data) {
     exit();
 }
 
-// 4. پردازش دستورات و پیام‌های متنی
-
-if (isset($text) && $text == '/cancel' && isAdmin($from_id)) {
-    setUserStep($from_id, 'none');
-    sendMessage($chat_id, "عملیات لغو شد.");
-    exit();
-}
-
-if (isset($text) && preg_match('/^\/start(?: (.+))?$/', $text, $matches)) {
-    setUserStep($from_id, 'none'); // Cancel any pending operations on /start
-    $payload = $matches[1] ?? null;
-    if ($payload) {
-        $stmt = $db->prepare("SELECT * FROM files WHERE public_link = ? AND (expire_time IS NULL OR expire_time > NOW())");
-        $stmt->bind_param("s", $payload);
-        $stmt->execute();
-        $file = $stmt->get_result()->fetch_assoc();
-        if ($file) {
-            $db->query("UPDATE files SET views = views + 1 WHERE id = " . $file['id']);
-            $file['views']++;
-            sendFileWithButtons($chat_id, $file);
+// پردازش دستورات و پیام‌های متنی
+if (isset($text)) {
+    if (preg_match('/^\/start(?: (.+))?$/', $text, $matches)) {
+        $payload = $matches[1] ?? null;
+        
+        if ($payload && strpos($payload, 'group_') === 0) {
+            $group_id = intval(str_replace('group_', '', $payload));
+            
+            // بررسی وجود گروه
+            $stmt = $db->prepare("SELECT * FROM file_groups WHERE id = ?");
+            $stmt->bind_param("i", $group_id);
+            $stmt->execute();
+            $group = $stmt->get_result()->fetch_assoc();
+            
+            if ($group) {
+                // دریافت فایل‌های گروه
+                $stmt = $db->prepare("SELECT * FROM files WHERE group_id = ? ORDER BY created_at ASC");
+                $stmt->bind_param("i", $group_id);
+                $stmt->execute();
+                $files = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+                
+                if (count($files) > 0) {
+                    foreach ($files as $index => $file) {
+                        $keyboard = null;
+                        
+                        // اضافه کردن دکمه‌های لایک/دیسلایک برای آخرین فایل
+                        if ($index == count($files) - 1) {
+                            $keyboard = [
+                                'inline_keyboard' => [
+                                    [['text' => '👍', 'callback_data' => 'user_file_like_' . $file['id']], 
+                                     ['text' => '👎', 'callback_data' => 'user_file_dislike_' . $file['id']]]
+                                ]
+                            ];
+                        }
+                        
+                        bot('send' . ucfirst($file['file_type']), [
+                            'chat_id' => $chat_id,
+                            $file['file_type'] => $file['file_id'],
+                            'caption' => $file['caption'] ?? '',
+                            'reply_markup' => $keyboard ? json_encode($keyboard) : null
+                        ]);
+                    }
+                } else {
+                    sendMessage($chat_id, "این گروه فایلی ندارد.");
+                }
+            } else {
+                sendMessage($chat_id, "گروه یافت نشد یا حذف شده است.");
+            }
         } else {
-            sendMessage($chat_id, "فایل یافت نشد، منقضی شده یا لینک اشتباه است.");
+            setUserStep($from_id, 'none');
+            if (isAdmin($from_id)) {
+                $admin_keyboard = [
+                    'keyboard' => [
+                        ['📤 اپلود گروهی'],
+                        ['📤 اپلود فایل'],
+                        ['📢 ارسال پیام همگانی'],
+                        ['📊 مشاهده فایل و آمار'],
+                        ['⚙️ تنظیمات'],
+                        ['🔄 خاموش/روشن کردن ربات']
+                    ],
+                    'resize_keyboard' => true,
+                    'one_time_keyboard' => false
+                ];
+                sendMessage($chat_id, "به پنل مدیریت خوش آمدید. یکی از گزینه‌ها را انتخاب کنید:", $admin_keyboard);
+            } else {
+                sendMessage($chat_id, "سلام! به ربات آپلودر خوش آمدید.");
+            }
         }
-    } else {
-        $start_text = getSetting('start_text');
-        $keyboard = [['text' => 'راهنما']];
-        if (isAdmin($from_id)) $keyboard[] = ['text' => '/admin'];
-        sendMessage($chat_id, $start_text, ['keyboard' => [$keyboard], 'resize_keyboard' => true, 'one_time_keyboard' => true]);
+        exit();
     }
-    exit();
-}
-
-if (isset($text) && $text == '/admin' && isAdmin($from_id)) {
-    setUserStep($from_id, 'none');
-    $admin_keyboard = [ 'inline_keyboard' => [
-        [['text' => '📤 آپلود فایل جدید', 'callback_data' => 'admin_upload']],
-        [['text' => '📂 مدیریت فایل‌ها', 'callback_data' => 'admin_files_0']],
-        [['text' => '⚙️ تنظیمات ربات', 'callback_data' => 'admin_settings']],
-        [['text' => '👥 مدیریت ادمین‌ها', 'callback_data' => 'admin_admins']],
-        [['text' => '📊 آمار', 'callback_data' => 'admin_stats']]
-    ]];
-    sendMessage($chat_id, "به پنل مدیریت خوش آمدید. یکی از گزینه‌ها را انتخاب کنید:", $admin_keyboard);
-    exit();
-}
-
-// 5. پردازش ورودی‌ها بر اساس "مرحله" کاربر
-if ($user['step'] != 'none') {
-    $step_parts = explode('_', $user['step']);
-    $main_step = $step_parts[0];
-
-    if ($main_step == 'awaiting') {
-        $action = $step_parts[1];
-        switch ($action) {
-            case 'file':
-                $file = $message->document ?? $message->video ?? $message->photo[count($message->photo)-1] ?? $message->audio ?? null;
-                if ($file) {
-                    $file_id = $file->file_id;
-                    $file_unique_id = $file->file_unique_id;
-                    $file_type = $message->document ? 'document' : ($message->video ? 'video' : ($message->photo ? 'photo' : 'audio'));
-                    $temp_data = json_encode(['file_id' => $file_id, 'file_unique_id' => $file_unique_id, 'file_type' => $file_type]);
-                    setUserStep($from_id, 'awaiting_caption', $temp_data);
-                    sendMessage($chat_id, "فایل دریافت شد. اکنون کپشن را ارسال کنید. برای رد شدن، /skip را بفرستید. برای لغو /cancel را ارسال کنید.");
-                } else {
-                    sendMessage($chat_id, "نوع فایل پشتیبانی نمی‌شود. لطفاً یک فایل دیگر ارسال کنید یا با /cancel لغو کنید.");
-                }
-                break;
-            case 'caption':
-                $caption = ($text == '/skip') ? null : $text;
-                $temp_data = json_decode($user['temp_data'], true);
-                $temp_data['caption'] = $caption;
-                setUserStep($from_id, 'awaiting_expire', json_encode($temp_data));
-                sendMessage($chat_id, "کپشن ثبت شد. مدت زمان انقضای فایل را به روز وارد کنید (مثلا: 7). برای دائمی بودن، عدد 0 را ارسال کنید. برای لغو /cancel را ارسال کنید.");
-                break;
-            case 'expire':
-                if (is_numeric($text)) {
-                    $days = intval($text);
-                    $expire_time = ($days == 0) ? null : date('Y-m-d H:i:s', strtotime("+$days days"));
-                    $temp_data = json_decode($user['temp_data'], true);
-                    $public_link = generateRandomString();
+    
+    if (isAdmin($from_id)) {
+        $user_step = getUserStep($from_id);
+        
+        if ($text == '📤 اپلود گروهی') {
+            // ایجاد گروه جدید
+            $stmt = $db->prepare("INSERT INTO file_groups (name, created_by) VALUES (?, ?)");
+            $group_name = "گروه " . date('Y-m-d H:i:s');
+            $stmt->bind_param("si", $group_name, $from_id);
+            $stmt->execute();
+            $group_id = $db->insert_id;
+            
+            setUserStep($from_id, 'group_upload', json_encode(['group_id' => $group_id, 'files' => []]));
+            $keyboard = [
+                'keyboard' => [
+                    ['✅ پایان'],
+                    ['🔙 بازگشت']
+                ],
+                'resize_keyboard' => true,
+                'one_time_keyboard' => false
+            ];
+            sendMessage($chat_id, "فایل‌ها را ارسال کنید تا به گروه اضافه شوند...", $keyboard);
+            exit();
+        }
+        
+        if ($text == '✅ پایان') {
+            if ($user_step['step'] == 'group_upload' || strpos($user_step['step'], 'group_add_') === 0) {
+                $group_data = json_decode($user_step['temp_data'], true);
+                if (isset($group_data['files']) && count($group_data['files']) > 0) {
+                    $stats = getGroupStats($group_data['group_id']);
+                    $share_link = generateShareLink($group_data['group_id']);
                     
-                    $stmt = $db->prepare("INSERT INTO files (file_id, file_unique_id, file_type, caption, public_link, uploader_id, expire_time) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                    $stmt->bind_param("sssssis", $temp_data['file_id'], $temp_data['file_unique_id'], $temp_data['file_type'], $temp_data['caption'], $public_link, $from_id, $expire_time);
-                    $stmt->execute();
+                    $message_text = "فایل‌های شما آپلود شد✅\n\n";
+                    $message_text .= "تعداد فایل‌ها: " . count($group_data['files']) . "\n";
+                    $message_text .= "حجم فایل‌ها: " . formatFileSize($stats['total_size']) . "\n";
+                    $message_text .= "شناسه: " . $group_data['group_id'] . "\n\n";
+                    $message_text .= "لینک اشتراک گذاری: $share_link";
                     
-                    $bot_username = bot('getMe')['result']['username'];
-                    $share_link = "https://t.me/$bot_username?start=$public_link";
+                    $inline_keyboard = [
+                        'inline_keyboard' => [
+                            [['text' => '👁️ مشاهده فایل ها', 'callback_data' => 'admin_group_view_' . $group_data['group_id']]],
+                            [['text' => '➕ افزودن فایل', 'callback_data' => 'admin_group_add_' . $group_data['group_id']]],
+                            [['text' => '🔒 قفل فوروارد', 'callback_data' => 'admin_group_forward_' . $group_data['group_id']]],
+                            [['text' => '📁 فولدر عمومی', 'callback_data' => 'admin_group_public_' . $group_data['group_id']]],
+                            [['text' => '🗑️ حذف فولدر', 'callback_data' => 'admin_group_delete_' . $group_data['group_id']]]
+                        ]
+                    ];
                     
-                    sendMessage($chat_id, "✅ فایل با موفقیت آپلود شد!\n\nلینک اشتراک‌گذاری:\n`$share_link`");
+                    sendMessage($chat_id, $message_text, $inline_keyboard);
                     setUserStep($from_id, 'none');
-                } else {
-                    sendMessage($chat_id, "لطفاً فقط یک عدد وارد کنید یا با /cancel لغو کنید.");
                 }
-                break;
-            case 'start':
-                if ($action == 'text') {
-                    updateSetting('start_text', $text);
-                    setUserStep($from_id, 'none');
-                    sendMessage($chat_id, "✅ متن خوشامدگویی با موفقیت تغییر کرد.");
-                }
-                break;
-            case 'channel':
-                if ($action == 'username' && preg_match('/^@[\w_]{5,}$/', $text)) {
-                    updateSetting('force_join_channel', $text);
-                    setUserStep($from_id, 'none');
-                    sendMessage($chat_id, "✅ کانال عضویت اجباری به $text تغییر یافت.");
-                } else {
-                    sendMessage($chat_id, "فرمت یوزرنیم اشتباه است. با @ وارد کنید (مثال: @MyChannel) یا با /cancel لغو کنید.");
-                }
-                break;
-            case 'comment':
-                $file_id_to_comment = intval($step_parts[2]);
-                $file_owner_stmt = $db->prepare("SELECT uploader_id FROM files WHERE id = ?");
-                $file_owner_stmt->bind_param("i", $file_id_to_comment);
-                $file_owner_stmt->execute();
-                $uploader_id = $file_owner_stmt->get_result()->fetch_assoc()['uploader_id'] ?? ADMIN_ID;
-
-                $user_info = $message->from;
-                $user_full_name = trim(($user_info->first_name ?? '') . ' ' . ($user_info->last_name ?? ''));
-                
-                $comment_text = "یک نظر جدید برای فایل شما ارسال شد:\n\n👤 کاربر: [$user_full_name](tg://user?id=$from_id)\n💬 نظر: $text";
-                
-                sendMessage($uploader_id, $comment_text);
-                if ($uploader_id != ADMIN_ID) {
-                    sendMessage(ADMIN_ID, $comment_text);
-                }
-                
-                setUserStep($from_id, 'none');
-                sendMessage($chat_id, "نظر شما با موفقیت برای مدیر ارسال شد. ممنون!");
-                break;
+            }
+            exit();
+        }
+        
+        if ($text == '🔙 بازگشت') {
+            setUserStep($from_id, 'none');
+            $admin_keyboard = [
+                'keyboard' => [
+                    ['📤 اپلود گروهی'],
+                    ['📤 اپلود فایل'],
+                    ['📢 ارسال پیام همگانی'],
+                    ['📊 مشاهده فایل و آمار'],
+                    ['⚙️ تنظیمات'],
+                    ['🔄 خاموش/روشن کردن ربات']
+                ],
+                'resize_keyboard' => true,
+                'one_time_keyboard' => false
+            ];
+            sendMessage($chat_id, "به پنل مدیریت خوش آمدید. یکی از گزینه‌ها را انتخاب کنید:", $admin_keyboard);
+            exit();
         }
     }
-    exit();
+}
+
+// پردازش فایل‌های ارسالی
+if ($message && (isset($message->document) || isset($message->video) || isset($message->photo) || isset($message->audio))) {
+    $user_step = getUserStep($from_id);
+    
+    if (isAdmin($from_id) && ($user_step['step'] == 'group_upload' || strpos($user_step['step'], 'group_add_') === 0)) {
+        $file = $message->document ?? $message->video ?? $message->photo[count($message->photo)-1] ?? $message->audio ?? null;
+        
+        if ($file) {
+            $file_id = $file->file_id;
+            $file_unique_id = $file->file_unique_id;
+            $file_type = $message->document ? 'document' : ($message->video ? 'video' : ($message->photo ? 'photo' : 'audio'));
+            $file_name = $file->file_name ?? $file->file_unique_id;
+            $file_size = $file->file_size ?? 0;
+            
+            $group_data = json_decode($user_step['temp_data'], true);
+            $group_id = $group_data['group_id'];
+            
+            // ذخیره فایل در دیتابیس
+            $stmt = $db->prepare("INSERT INTO files (file_id, file_unique_id, file_type, file_name, file_size, group_id, uploader_id) VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("sssssii", $file_id, $file_unique_id, $file_type, $file_name, $file_size, $group_id, $from_id);
+            $stmt->execute();
+            
+            $file_id_db = $db->insert_id;
+            $group_data['files'][] = $file_id_db;
+            
+            setUserStep($from_id, $user_step['step'], json_encode($group_data));
+            
+            sendMessage($chat_id, "این فایل به لیست شما اضافه شد✔️\nبرای اتمام عملیات بر روی پایان کلیک کنید یا فایل جدیدی ارسال کنید.👇");
+        }
+    }
 }
