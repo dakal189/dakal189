@@ -179,6 +179,87 @@ function handleMessage($message) {
     handleTextMessage($message);
 }
 
+function handleStartWithPayload($chat_id, $user_id, $payload) {
+    global $pdo;
+    
+    // Check if payload is a folder ID
+    if (strpos($payload, 'folder_') === 0) {
+        $folder_id = str_replace('folder_', '', $payload);
+        
+        // Get folder info
+        $stmt = $pdo->prepare("SELECT * FROM folders WHERE folder_id = ?");
+        $stmt->execute([$folder_id]);
+        $folder = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$folder) {
+            sendMessage($chat_id, "❌ فولدر یافت نشد!");
+            return;
+        }
+        
+        // Increment views
+        $stmt = $pdo->prepare("UPDATE folders SET views = views + 1 WHERE folder_id = ?");
+        $stmt->execute([$folder_id]);
+        
+        // Get files in folder
+        $stmt = $pdo->prepare("SELECT * FROM files WHERE folder_id = ? ORDER BY uploaded_at ASC");
+        $stmt->execute([$folder_id]);
+        $files = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        if (empty($files)) {
+            sendMessage($chat_id, "❌ هیچ فایلی در این فولدر یافت نشد!");
+            return;
+        }
+        
+        // Show folder info for admin
+        if ($user_id == ADMIN_ID) {
+            $message = "🔎اطلاعات این فولدر🔎\n\n";
+            $message .= "عنوان فولدر📝: " . $folder['title'] . "\n";
+            $message .= "نوع فولدر: " . ($folder['is_public'] ? '🌐عمومی' : '🔒خصوصی') . "\n";
+            $message .= "تعداد بازدید👀: " . $folder['views'] . "\n";
+            $message .= "تعداد لایک👍: " . $folder['likes'] . "\n";
+            $message .= "تعداد دیسلایک👎: " . $folder['dislikes'] . "\n";
+            $message .= "شناسه فایل🆔: " . $folder_id . "\n\n";
+            $message .= "(این پیام فقط برای ادمین ها نمایش داده می‌شود)\n\n";
+            
+            $keyboard = [
+                [
+                    ['text' => 'مشاهده فایل ها', 'callback_data' => "folder_view_$folder_id"],
+                    ['text' => 'افزودن فایل', 'callback_data' => "folder_view_$folder_id"]
+                ],
+                [
+                    ['text' => 'قفل فوروارد', 'callback_data' => "folder_forward_lock_$folder_id"],
+                    ['text' => 'فولدر عمومی', 'callback_data' => "folder_public_$folder_id"]
+                ],
+                [['text' => 'حذف فولدر', 'callback_data' => "folder_delete_$folder_id"]]
+            ];
+            
+            $reply_markup = ['inline_keyboard' => $keyboard];
+            sendMessage($chat_id, $message, $reply_markup);
+        } else {
+            // For regular users, show files with download buttons
+            foreach ($files as $index => $file) {
+                $message = "📁 " . $folder['title'] . "\n";
+                $message .= "📄 " . $file['file_name'] . "\n";
+                $message .= "📏 " . formatFileSize($file['file_size']) . "\n";
+                $message .= "👁️ " . $file['views'] . " بازدید\n";
+                $message .= "👍 " . $file['likes'] . " لایک | 👎 " . $file['dislikes'] . " دیسلایک\n";
+                
+                $keyboard = [
+                    [
+                        ['text' => '👍 لایک', 'callback_data' => "file_like_" . $file['id']],
+                        ['text' => '👎 دیسلایک', 'callback_data' => "file_dislike_" . $file['id']]
+                    ]
+                ];
+                
+                $reply_markup = ['inline_keyboard' => $keyboard];
+                
+                // Send file with buttons
+                sendFileWithButtons($chat_id, $file, $reply_markup);
+            }
+        }
+    }
+}
+
 function handleCommand($message) {
     $chat_id = $message['chat']['id'];
     $user_id = $message['from']['id'];
@@ -186,6 +267,16 @@ function handleCommand($message) {
     
     switch ($text) {
         case '/start':
+            // Check if there's a payload (folder link)
+            if (isset($message['text']) && strpos($message['text'], ' ') !== false) {
+                $parts = explode(' ', $message['text']);
+                if (count($parts) > 1) {
+                    $payload = $parts[1];
+                    handleStartWithPayload($chat_id, $user_id, $payload);
+                    return;
+                }
+            }
+            
             if ($user_id == ADMIN_ID) {
                 showAdminMainMenu($chat_id);
             } else {
@@ -197,7 +288,15 @@ function handleCommand($message) {
             if ($user_id == ADMIN_ID) {
                 showAdminMainMenu($chat_id);
             } else {
-                showUserMainMenu($chat_id);
+                showUserStep($chat_id, 'none');
+            }
+            break;
+            
+        case '/admin':
+            if ($user_id == ADMIN_ID) {
+                showAdminMainMenu($chat_id);
+            } else {
+                sendMessage($chat_id, "❌ شما دسترسی ادمین ندارید!");
             }
             break;
     }
@@ -241,15 +340,27 @@ function handleCallbackQuery($callback_query) {
     
     switch ($data) {
         case 'group_upload_start':
-            startGroupUpload($chat_id, $user_id);
+            if ($user_id == ADMIN_ID) {
+                startGroupUpload($chat_id, $user_id);
+            } else {
+                sendMessage($chat_id, "❌ فقط ادمین‌ها می‌توانند از این قابلیت استفاده کنند!");
+            }
             break;
             
         case 'group_upload_finish':
-            finishGroupUpload($chat_id, $user_id);
+            if ($user_id == ADMIN_ID) {
+                finishGroupUpload($chat_id, $user_id);
+            } else {
+                sendMessage($chat_id, "❌ فقط ادمین‌ها می‌توانند از این قابلیت استفاده کنند!");
+            }
             break;
             
         case 'group_upload_back':
-            showGroupUploadMenu($chat_id);
+            if ($user_id == ADMIN_ID) {
+                showGroupUploadMenu($chat_id);
+            } else {
+                sendMessage($chat_id, "❌ فقط ادمین‌ها می‌توانند از این قابلیت استفاده کنند!");
+            }
             break;
             
         default:
@@ -324,6 +435,12 @@ function finishGroupUpload($chat_id, $user_id) {
 function handleFileUpload($message) {
     $chat_id = $message['chat']['id'];
     $user_id = $message['from']['id'];
+    
+    // Check if user is admin
+    if ($user_id != ADMIN_ID) {
+        sendMessage($chat_id, "❌ فقط ادمین‌ها می‌توانند فایل آپلود کنند!");
+        return;
+    }
     
     // Get file info
     $file_info = extractFileInfo($message);
@@ -433,7 +550,31 @@ function addFileToFolder($folder_id, $file_info) {
 }
 
 function getShareLink($folder_id) {
-    return "https://t.me/" . str_replace('bot', '', BOT_TOKEN) . "?start=folder_$folder_id";
+    // Get bot username from token
+    $bot_username = getBotUsername();
+    return "https://t.me/$bot_username?start=folder_$folder_id";
+}
+
+function getBotUsername() {
+    // Get bot username from Telegram API
+    $url = "https://api.telegram.org/bot" . BOT_TOKEN . "/getMe";
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    
+    $result = curl_exec($ch);
+    curl_close($ch);
+    
+    $data = json_decode($result, true);
+    
+    if ($data && isset($data['result']['username'])) {
+        return $data['result']['username'];
+    }
+    
+    // Fallback to default username
+    return "DakalUpBot";
 }
 
 function formatFileSize($bytes) {
@@ -1363,6 +1504,12 @@ function showStartAsUser($chat_id) {
 
 // Folder and file action handlers
 function handleFolderAction($chat_id, $data, $user_id) {
+    // Check if user is admin
+    if ($user_id != ADMIN_ID) {
+        sendMessage($chat_id, "❌ فقط ادمین‌ها می‌توانند از این قابلیت استفاده کنند!");
+        return;
+    }
+    
     $action = explode('_', $data);
     $folder_id = end($action);
     
@@ -1373,7 +1520,7 @@ function handleFolderAction($chat_id, $data, $user_id) {
         case 'add':
             showAddFileToFolder($chat_id, $folder_id);
             break;
-        case 'forward':
+        case 'forward_lock':
             toggleForwardLock($chat_id, $folder_id);
             break;
         case 'public':
@@ -1381,6 +1528,12 @@ function handleFolderAction($chat_id, $data, $user_id) {
             break;
         case 'delete':
             showDeleteFolderConfirm($chat_id, $folder_id);
+            break;
+        case 'delete_confirm':
+            deleteFolder($chat_id, $folder_id);
+            break;
+        case 'delete_cancel':
+            // Just ignore, user cancelled
             break;
     }
 }
@@ -1397,7 +1550,21 @@ function handleFileAction($chat_id, $data, $user_id) {
             toggleFileDislike($chat_id, $file_id, $user_id);
             break;
         case 'delete':
-            showDeleteFileConfirm($chat_id, $file_id);
+            if ($user_id == ADMIN_ID) {
+                showDeleteFileConfirm($chat_id, $file_id);
+            } else {
+                sendMessage($chat_id, "❌ فقط ادمین‌ها می‌توانند فایل‌ها را حذف کنند!");
+            }
+            break;
+        case 'delete_confirm':
+            if ($user_id == ADMIN_ID) {
+                deleteFile($chat_id, $file_id);
+            } else {
+                sendMessage($chat_id, "❌ فقط ادمین‌ها می‌توانند فایل‌ها را حذف کنند!");
+            }
+            break;
+        case 'delete_cancel':
+            // Just ignore, user cancelled
             break;
     }
 }
@@ -1499,18 +1666,22 @@ function showDeleteFolderConfirm($chat_id, $folder_id) {
     sendMessage($chat_id, "⚠️ آیا از حذف این فولدر اطمینان دارید؟\n\nاین عمل غیرقابل بازگشت است!", $reply_markup);
 }
 
-function deleteFolder($folder_id) {
+function deleteFolder($chat_id, $folder_id) {
     global $pdo;
     
-    // Delete all files in the folder
-    $stmt = $pdo->prepare("DELETE FROM files WHERE folder_id = ?");
-    $stmt->execute([$folder_id]);
-    
-    // Delete the folder
-    $stmt = $pdo->prepare("DELETE FROM folders WHERE folder_id = ?");
-    $stmt->execute([$folder_id]);
-    
-    return true;
+    try {
+        // Delete all files in the folder first
+        $stmt = $pdo->prepare("DELETE FROM files WHERE folder_id = ?");
+        $stmt->execute([$folder_id]);
+        
+        // Delete the folder
+        $stmt = $pdo->prepare("DELETE FROM folders WHERE folder_id = ?");
+        $stmt->execute([$folder_id]);
+        
+        sendMessage($chat_id, "✅ فولدر با موفقیت حذف شد!");
+    } catch (Exception $e) {
+        sendMessage($chat_id, "❌ خطا در حذف فولدر: " . $e->getMessage());
+    }
 }
 
 // Complete file functions
@@ -1586,6 +1757,20 @@ function showDeleteFileConfirm($chat_id, $file_id) {
     
     $reply_markup = ['inline_keyboard' => $keyboard];
     sendMessage($chat_id, "⚠️ آیا از حذف این فایل اطمینان دارید؟", $reply_markup);
+}
+
+function deleteFile($chat_id, $file_id) {
+    global $pdo;
+    
+    try {
+        // Delete the file
+        $stmt = $pdo->prepare("DELETE FROM files WHERE id = ?");
+        $stmt->execute([$file_id]);
+        
+        sendMessage($chat_id, "✅ فایل با موفقیت حذف شد!");
+    } catch (Exception $e) {
+        sendMessage($chat_id, "❌ خطا در حذف فایل: " . $e->getMessage());
+    }
 }
 
 function deleteFile($file_id) {
@@ -1770,4 +1955,44 @@ function clearUserStateEnhanced($user_id) {
 
 // Initialize enhanced tables
 createEnhancedTables();
+
+function sendFileWithButtons($chat_id, $file, $reply_markup = null) {
+    global $pdo;
+    
+    // Increment file views
+    $stmt = $pdo->prepare("UPDATE files SET views = views + 1 WHERE id = ?");
+    $stmt->execute([$file['id']]);
+    
+    $file_type = $file['file_type'];
+    $method = 'send' . ucfirst($file_type);
+    
+    $data = [
+        'chat_id' => $chat_id,
+        $file_type => $file['file_id']
+    ];
+    
+    if ($reply_markup) {
+        $data['reply_markup'] = json_encode($reply_markup);
+    }
+    
+    $url = "https://api.telegram.org/bot" . BOT_TOKEN . "/" . $method;
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    
+    $result = curl_exec($ch);
+    curl_close($ch);
+    
+    return $result;
+}
+
+function showUserStep($chat_id, $step) {
+    // This function should show user step
+    // For now, do nothing - implement based on your requirements
+    return;
+}
 ?>
