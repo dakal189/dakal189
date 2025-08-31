@@ -14,6 +14,13 @@ define('DB_PASS', 'hosyarww123');
 try {
     $pdo = new PDO("mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=utf8mb4", DB_USER, DB_PASS);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    
+    // Set charset and collation for the connection
+    $pdo->exec("SET NAMES utf8mb4");
+    $pdo->exec("SET CHARACTER SET utf8mb4");
+    $pdo->exec("SET character_set_connection=utf8mb4");
+    $pdo->exec("SET collation_connection=utf8mb4_unicode_ci");
+    
 } catch(PDOException $e) {
     die("Database connection failed: " . $e->getMessage());
 }
@@ -21,11 +28,29 @@ try {
 // Create tables if they don't exist
 createTables();
 
+// Fix existing tables encoding if needed
+fixTableEncoding();
+
 // Get updates from Telegram
 $update = json_decode(file_get_contents('php://input'), true);
 
 if ($update) {
     handleUpdate($update);
+}
+
+function fixTableEncoding() {
+    global $pdo;
+    
+    // Fix encoding for existing tables
+    $tables = ['users', 'folders', 'files', 'bot_settings', 'forced_membership', 'file_likes', 'user_sessions'];
+    
+    foreach ($tables as $table) {
+        try {
+            $pdo->exec("ALTER TABLE `$table` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+        } catch (Exception $e) {
+            // Table might not exist yet, ignore error
+        }
+    }
 }
 
 function createTables() {
@@ -35,19 +60,19 @@ function createTables() {
     $pdo->exec("CREATE TABLE IF NOT EXISTS users (
         id INT AUTO_INCREMENT PRIMARY KEY,
         user_id BIGINT UNIQUE,
-        username VARCHAR(255),
-        first_name VARCHAR(255),
-        last_name VARCHAR(255),
+        username VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+        first_name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+        last_name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
         join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         is_active BOOLEAN DEFAULT TRUE,
         last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )");
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
     
     // Folders table
     $pdo->exec("CREATE TABLE IF NOT EXISTS folders (
         id INT AUTO_INCREMENT PRIMARY KEY,
         folder_id VARCHAR(32) UNIQUE,
-        title VARCHAR(255),
+        title VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
         is_public BOOLEAN DEFAULT FALSE,
         forward_lock BOOLEAN DEFAULT FALSE,
         created_by BIGINT,
@@ -55,13 +80,13 @@ function createTables() {
         views INT DEFAULT 0,
         likes INT DEFAULT 0,
         dislikes INT DEFAULT 0
-    )");
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
     
     // Files table
     $pdo->exec("CREATE TABLE IF NOT EXISTS files (
         id INT AUTO_INCREMENT PRIMARY KEY,
         file_id VARCHAR(255),
-        file_name VARCHAR(255),
+        file_name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
         file_size BIGINT,
         file_type VARCHAR(50),
         folder_id VARCHAR(32),
@@ -70,27 +95,27 @@ function createTables() {
         views INT DEFAULT 0,
         likes INT DEFAULT 0,
         dislikes INT DEFAULT 0
-    )");
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
     
     // Bot settings table
     $pdo->exec("CREATE TABLE IF NOT EXISTS bot_settings (
         id INT AUTO_INCREMENT PRIMARY KEY,
         setting_key VARCHAR(100) UNIQUE,
-        setting_value TEXT,
+        setting_value TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )");
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
     
     // Forced membership channels
     $pdo->exec("CREATE TABLE IF NOT EXISTS forced_membership (
         id INT AUTO_INCREMENT PRIMARY KEY,
         channel_id VARCHAR(255),
-        channel_name VARCHAR(255),
+        channel_name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
         channel_link VARCHAR(255),
         membership_limit INT DEFAULT -1,
         expiry_days INT DEFAULT -1,
         check_membership BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )");
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
     
     // Insert default settings
     $defaultSettings = [
@@ -1685,17 +1710,17 @@ function createEnhancedTables() {
         like_type ENUM('like', 'dislike'),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY unique_like (file_id, user_id, like_type)
-    )");
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
     
     // User sessions table for temporary storage
     $pdo->exec("CREATE TABLE IF NOT EXISTS user_sessions (
         id INT AUTO_INCREMENT PRIMARY KEY,
         user_id BIGINT,
         session_key VARCHAR(100),
-        session_value TEXT,
+        session_value TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
         expires_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )");
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 }
 
 // Enhanced user state management
