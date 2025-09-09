@@ -80,6 +80,8 @@ function bootstrapDatabase(PDO $pdo): void {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
     // Optional columns for assets/money (idempotent)
     try { $pdo->exec("ALTER TABLE users ADD COLUMN assets_text TEXT NULL"); } catch (Exception $e) {}
+    // Per-user toggle to enable/disable daily profit accrual and profit-yielding purchases
+    try { $pdo->exec("ALTER TABLE users ADD COLUMN daily_profit_enabled TINYINT(1) NOT NULL DEFAULT 1"); } catch (Exception $e) {}
 
     // Admin users
     $pdo->exec("CREATE TABLE IF NOT EXISTS admin_users (
@@ -933,7 +935,7 @@ function applyDailyProfitsIfDue(): void {
     $hour = (int)$now->format('H');
     $last = getSetting('last_profit_apply_date', '');
     if ($hour >= 9 && $last !== $today) {
-        db()->exec("UPDATE users SET money = money + daily_profit WHERE daily_profit > 0");
+        db()->exec("UPDATE users SET money = money + daily_profit WHERE daily_profit > 0 AND daily_profit_enabled = 1");
         setSetting('last_profit_apply_date', $today);
     }
 }
@@ -1401,7 +1403,8 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $stmt = db()->prepare("SELECT id, telegram_id, username, country FROM users WHERE is_registered=1 ORDER BY id DESC LIMIT ?,?");
             $stmt->bindValue(1,$offset,PDO::PARAM_INT); $stmt->bindValue(2,$limit,PDO::PARAM_INT); $stmt->execute(); $rows=$stmt->fetchAll();
             $kbRows=[]; foreach($rows as $r){ $label = ($r['username']?'@'.$r['username']:$r['telegram_id']).' | '.($r['country']?:'—'); $kbRows[]=[ ['text'=>$label,'callback_data'=>'admin:asset_user_view|id='.$r['id'].'|page='.$page] ]; }
-            $kb = array_merge($kbRows, paginationKeyboard('admin:assets', $page, ($offset+count($rows))<$total, 'nav:admin')['inline_keyboard']);
+            $extra=[[ ['text'=>'مقدار ثروت بازیکن‌ها','callback_data'=>'admin:assets_wealth'] ]];
+            $kb = array_merge($extra, $kbRows, paginationKeyboard('admin:assets', $page, ($offset+count($rows))<$total, 'nav:admin')['inline_keyboard']);
             editMessageText($chatId,$messageId,'انتخاب کاربر برای مشاهده/ویرایش دارایی',['inline_keyboard'=>$kb]);
             break;
         case 'asset_edit':
@@ -1412,16 +1415,35 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             if ($fr && $fr['photo_file_id']) { sendPhoto($chatId, $fr['photo_file_id'], 'پرچم کشور '.e($country).'\nلطفاً متن دارایی را ارسال کنید.'); }
             else { sendMessage($chatId,'متن دارایی را ارسال کنید.'); }
             break;
+        case 'assets_wealth':
+            // List all players wealth and daily profits, with totals
+            $rows = db()->query("SELECT id, username, telegram_id, country, money, daily_profit FROM users WHERE is_registered=1 ORDER BY id ASC")->fetchAll();
+            if (!$rows) { answerCallback($_POST['callback_query']['id'] ?? '', 'کاربری ثبت نشده است', true); return; }
+            $totalMoney = 0; $totalProfit = 0; $lines=[]; $idx=1;
+            foreach($rows as $r){ $totalMoney += (int)$r['money']; $totalProfit += (int)$r['daily_profit']; $country = $r['country']?:'—'; $name = $r['username']?'@'.$r['username']:$r['telegram_id']; $lines[] = '#'.$idx.' '+$country+' - مقدار پول: '.(int)$r['money'].' | سود روزانه: '.(int)$r['daily_profit'].' - '+$name; $idx++; }
+            $header = 'جمع پول: '.(int)$totalMoney.' | جمع سود روزانه: '.(int)$totalProfit;
+            $kb=[ [ ['text'=>'بازگشت','callback_data'=>'admin:assets'] ] ];
+            editMessageText($chatId,$messageId, $header."\n\n".implode("\n", $lines), ['inline_keyboard'=>$kb]);
+            break;
         case 'asset_user_view':
             $uid=(int)($params['id']??0); $page=(int)($params['page']??1);
-            $u = db()->prepare("SELECT username, telegram_id, country, assets_text, money, daily_profit FROM users WHERE id=?"); $u->execute([$uid]); $ur=$u->fetch(); if(!$ur){ answerCallback($_POST['callback_query']['id']??'','کاربر یافت نشد',true); return; }
-            $hdr = 'کاربر: '.($ur['username']?'@'.$ur['username']:$ur['telegram_id'])."\nکشور: ".($ur['country']?:'—')."\nپول: ".$ur['money']." | سود روزانه: ".$ur['daily_profit'];
+            $u = db()->prepare("SELECT username, telegram_id, country, assets_text, money, daily_profit, daily_profit_enabled FROM users WHERE id=?"); $u->execute([$uid]); $ur=$u->fetch(); if(!$ur){ answerCallback($_POST['callback_query']['id']??'','کاربر یافت نشد',true); return; }
+            $hdr = 'کاربر: '.($ur['username']?'@'.$ur['username']:$ur['telegram_id'])."\nکشور: ".($ur['country']?:'—')."\nپول: ".$ur['money']." | سود روزانه: ".$ur['daily_profit']." | وضعیت سود روزانه: ".(((int)$ur['daily_profit_enabled']===1)?'فعال':'غیرفعال');
             $text = $ur['assets_text'] ?: '—';
-            $kb=[ [ ['text'=>'تغییر دارایی متنی','callback_data'=>'admin:asset_user_edit|id='.$uid.'|page='.$page], ['text'=>'کپی دارایی','copy_text'=>['text'=>$text]] ], [ ['text'=>'بازگشت','callback_data'=>'admin:assets|page='.$page] ] ];
+            $toggleLbl = ((int)$ur['daily_profit_enabled']===1)?'غیرفعال کردن سود روزانه':'فعال کردن سود روزانه';
+            $kb=[ [ ['text'=>'تغییر دارایی متنی','callback_data'=>'admin:asset_user_edit|id='.$uid.'|page='.$page], ['text'=>$toggleLbl,'callback_data'=>'admin:asset_user_toggle_profit|id='.$uid.'|page='.$page] ], [ ['text'=>'کپی دارایی','copy_text'=>['text'=>$text]] ], [ ['text'=>'بازگشت','callback_data'=>'admin:assets|page='.$page] ] ];
             if (!empty($messageId)) { @deleteMessage($chatId,$messageId); }
             $body = $hdr."\n\n".e($text);
             $resp = sendMessage($chatId, $body, ['inline_keyboard'=>$kb]);
             if ($resp && ($resp['ok']??false)) { setSetting('asset_msg_'.$chatId, (string)($resp['result']['message_id']??0)); }
+            break;
+        case 'asset_user_toggle_profit':
+            $uid=(int)($params['id']??0); $page=(int)($params['page']??1);
+            $r = db()->prepare("SELECT daily_profit_enabled FROM users WHERE id=?"); $r->execute([$uid]); $ur=$r->fetch(); if(!$ur){ answerCallback($_POST['callback_query']['id']??'','کاربر یافت نشد',true); return; }
+            $new = ((int)$ur['daily_profit_enabled']===1)?0:1;
+            db()->prepare("UPDATE users SET daily_profit_enabled=? WHERE id=?")->execute([$new,$uid]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'به‌روزرسانی شد');
+            handleAdminNav($chatId,$messageId,'asset_user_view',['id'=>$uid,'page'=>$page],$userRow);
             break;
         case 'asset_user_edit':
             $uid=(int)($params['id']??0); $page=(int)($params['page']??1);
@@ -1469,13 +1491,29 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             sendMessage($chatId,'بازه ساعت را ارسال کنید به فرم HH:MM-HH:MM (مثلاً 09:00-22:00). برای همیشه 00:00-00:00 بفرستید.');
             break;
         case 'users':
-            $kb=[ [ ['text'=>'ثبت کاربر','callback_data'=>'admin:user_register'] , ['text'=>'لیست کاربران','callback_data'=>'admin:user_list|page=1'] ], [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ] ];
+            $kb=[ [ ['text'=>'ثبت کاربر','callback_data'=>'admin:user_register'] , ['text'=>'لیست کاربران','callback_data'=>'admin:user_list|page=1'] ], [ ['text'=>'تنظیم استارتر پک','callback_data'=>'admin:starter_pack'] ], [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ] ];
             editMessageText($chatId,$messageId,'مدیریت کاربران',['inline_keyboard'=>$kb]);
             break;
         case 'user_register':
             setAdminState($chatId,'await_user_ident',[]);
             answerCallback($_POST['callback_query']['id'] ?? '', 'آیدی عددی یا پیام فوروارد شده کاربر را ارسال کنید');
             sendMessage($chatId,'آیدی عددی یا پیام فوروارد کاربر را ارسال کنید تا ثبت شود. سپس نام کشور را بفرستید.');
+            break;
+        case 'starter_pack':
+            // Show current defaults and options to set
+            $defMoney = (int)(getSetting('starter_default_money','0') ?: 0);
+            $defProfit = (int)(getSetting('starter_default_daily_profit','0') ?: 0);
+            $txt = "استارتر پک پیش‌فرض:\n\n- مقدار پول: ".$defMoney."\n- سود روزانه: ".$defProfit;
+            $kb=[ [ ['text'=>'تنظیم مقدار پول','callback_data'=>'admin:starter_set_money'], ['text'=>'تنظیم سود روزانه','callback_data'=>'admin:starter_set_profit'] ], [ ['text'=>'بازگشت','callback_data'=>'admin:users'] ] ];
+            editMessageText($chatId,$messageId,$txt,['inline_keyboard'=>$kb]);
+            break;
+        case 'starter_set_money':
+            setAdminState($chatId,'await_starter_money',[]);
+            sendMessage($chatId,'عدد مقدار پول پیش‌فرض برای کاربران جدید را ارسال کنید (فقط عدد). مقدار فعلی: '.((int)(getSetting('starter_default_money','0')?:0)));
+            break;
+        case 'starter_set_profit':
+            setAdminState($chatId,'await_starter_profit',[]);
+            sendMessage($chatId,'عدد سود روزانه پیش‌فرض برای کاربران جدید را ارسال کنید (فقط عدد). مقدار فعلی: '.((int)(getSetting('starter_default_daily_profit','0')?:0)));
             break;
         case 'user_list':
             $page=(int)($params['page']??1); $perPage=10; [$offset,$limit]=paginate($page,$perPage);
@@ -2304,6 +2342,20 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             sendMessage($chatId,'بازه ساعت تنظیم شد.');
             clearAdminState($chatId);
             break;
+        case 'await_starter_money':
+            $val = (string)trim((string)$text);
+            if (!preg_match('/^-?\d+$/',$val)) { sendMessage($chatId,'فقط عدد معتبر وارد کنید.'); return; }
+            setSetting('starter_default_money', (string)intval($val));
+            sendMessage($chatId,'مقدار پول پیش‌فرض ذخیره شد.');
+            clearAdminState($chatId);
+            break;
+        case 'await_starter_profit':
+            $val = (string)trim((string)$text);
+            if (!preg_match('/^-?\d+$/',$val)) { sendMessage($chatId,'فقط عدد معتبر وارد کنید.'); return; }
+            setSetting('starter_default_daily_profit', (string)intval($val));
+            sendMessage($chatId,'سود روزانه پیش‌فرض ذخیره شد.');
+            clearAdminState($chatId);
+            break;
         case 'await_user_ident':
             $tgid = extractTelegramIdFromMessage($message);
             if (!$tgid) { sendMessage($chatId,'آیدی نامعتبر. مجدد ارسال کنید یا پیام کاربر را فوروارد کنید.'); return; }
@@ -2314,7 +2366,8 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             $tgid = (int)$data['tgid']; $country = trim((string)$text);
             if ($country===''){ sendMessage($chatId,'نام کشور نامعتبر.'); return; }
             $u = ensureUser(['id'=>$tgid]);
-            db()->prepare("UPDATE users SET is_registered=1, country=? WHERE telegram_id=?")->execute([$country,$tgid]);
+            db()->prepare("UPDATE users SET is_registered=1, country=?, money=COALESCE(money,0)+?, daily_profit=COALESCE(daily_profit,0)+? WHERE telegram_id=?")
+                ->execute([$country,(int)(getSetting('starter_default_money','0')?:0),(int)(getSetting('starter_default_daily_profit','0')?:0),$tgid]);
             // refresh to ensure username is current
             $u = ensureUser(['id'=>$tgid]);
             sendMessage($chatId,'کاربر ثبت شد.');
@@ -2978,6 +3031,11 @@ function processCallback(array $callback): void {
         if ($route === 'checkout') {
             $items = db()->prepare("SELECT uci.item_id, uci.quantity, si.unit_price, si.pack_size, si.daily_profit_per_pack FROM user_cart_items uci JOIN shop_items si ON si.id=uci.item_id WHERE uci.user_id=?");
             $items->execute([$uid]); $rows=$items->fetchAll(); if(!$rows){ answerCallback($callback['id'],'سبد خالی است', true); return; }
+            // If user disabled from daily profit, prevent buying items that add daily profit unless admin will add manually
+            $uProfit = db()->prepare("SELECT daily_profit_enabled FROM users WHERE id=?"); $uProfit->execute([$uid]); $urpf=$uProfit->fetch(); $profitEnabled = (int)($urpf['daily_profit_enabled']??1)===1;
+            if (!$profitEnabled) {
+                foreach($rows as $r){ if ((int)$r['daily_profit_per_pack']>0) { answerCallback($callback['id'],'خرید آیتم‌های دارای سود روزانه برای شما غیرفعال است. فقط توسط ادمین قابل اضافه است.', true); return; } }
+            }
             $total = getCartTotalForUser($uid);
             // apply discount if set and valid
             $ds = getSetting('cart_disc_'.$uid); $appliedDisc = 0; if($ds){ $appliedDisc=(int)$ds; $discAmt=(int)floor($total*$appliedDisc/100); $total=max(0,$total-$discAmt); }
@@ -2985,7 +3043,7 @@ function processCallback(array $callback): void {
             db()->beginTransaction();
             try {
                 db()->prepare("UPDATE users SET money = money - ? WHERE id=?")->execute([$total, $uid]);
-                foreach($rows as $r){ addInventoryForUser($uid, (int)$r['item_id'], (int)$r['quantity'], (int)$r['pack_size']); $dp=(int)$r['daily_profit_per_pack']; if($dp>0) increaseUserDailyProfit($uid, $dp * (int)$r['quantity']); db()->prepare("INSERT INTO user_item_purchases (user_id,item_id,packs_bought) VALUES (?,?,0) ON DUPLICATE KEY UPDATE packs_bought=packs_bought")->execute([$uid,(int)$r['item_id']]); db()->prepare("UPDATE user_item_purchases SET packs_bought = packs_bought + ? WHERE user_id=? AND item_id=?")->execute([(int)$r['quantity'],$uid,(int)$r['item_id']]); }
+                foreach($rows as $r){ addInventoryForUser($uid, (int)$r['item_id'], (int)$r['quantity'], (int)$r['pack_size']); $dp=(int)$r['daily_profit_per_pack']; if($dp>0 && $profitEnabled) increaseUserDailyProfit($uid, $dp * (int)$r['quantity']); db()->prepare("INSERT INTO user_item_purchases (user_id,item_id,packs_bought) VALUES (?,?,0) ON DUPLICATE KEY UPDATE packs_bought=packs_bought")->execute([$uid,(int)$r['item_id']]); db()->prepare("UPDATE user_item_purchases SET packs_bought = packs_bought + ? WHERE user_id=? AND item_id=?")->execute([(int)$r['quantity'],$uid,(int)$r['item_id']]); }
                 // record discount usage if any
                 $dcId = getSetting('cart_disc_code_'.$uid); if ($dcId){ db()->prepare("INSERT INTO discount_usages (code_id,user_id) VALUES (?,?)")->execute([(int)$dcId,$uid]); db()->prepare("UPDATE discount_codes SET used_count = used_count + 1 WHERE id=?")->execute([(int)$dcId]); setSetting('cart_disc_'.$uid,''); setSetting('cart_disc_code_'.$uid,''); }
                 db()->prepare("DELETE FROM user_cart_items WHERE user_id=?")->execute([$uid]);
