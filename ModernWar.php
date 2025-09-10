@@ -168,6 +168,7 @@ function bootstrapDatabase(PDO $pdo): void {
 
     // M Coin system for users (admin configurable token)
     try { $pdo->exec("ALTER TABLE users ADD COLUMN m_coins BIGINT NOT NULL DEFAULT 0"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE shop_items ADD COLUMN mcoin_price BIGINT NOT NULL DEFAULT 0"); } catch (Exception $e) {}
 
 
 
@@ -693,6 +694,16 @@ $defaults = [
 
         price_l2 BIGINT NOT NULL DEFAULT 0,
 
+        price_l3 BIGINT NOT NULL DEFAULT 0,
+
+        price_l4 BIGINT NOT NULL DEFAULT 0,
+
+        price_l5 BIGINT NOT NULL DEFAULT 0,
+
+        price_l6 BIGINT NOT NULL DEFAULT 0,
+
+        max_level TINYINT NOT NULL DEFAULT 6,
+
         UNIQUE KEY uq_factory_name (name)
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
@@ -759,9 +770,109 @@ $defaults = [
 
         qty_l2 INT NOT NULL DEFAULT 0,
 
+        qty_l3 INT NOT NULL DEFAULT 0,
+
+        qty_l4 INT NOT NULL DEFAULT 0,
+
+        qty_l5 INT NOT NULL DEFAULT 0,
+
+        qty_l6 INT NOT NULL DEFAULT 0,
+
         CONSTRAINT fk_fp_factory FOREIGN KEY (factory_id) REFERENCES factories(id) ON DELETE CASCADE,
 
         CONSTRAINT fk_fp_item FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
+
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS factory_custom_items (
+
+        id INT AUTO_INCREMENT PRIMARY KEY,
+
+        factory_id INT NOT NULL,
+
+        name VARCHAR(128) NOT NULL,
+
+        qty_l1 INT NOT NULL DEFAULT 0,
+
+        qty_l2 INT NOT NULL DEFAULT 0,
+
+        qty_l3 INT NOT NULL DEFAULT 0,
+
+        qty_l4 INT NOT NULL DEFAULT 0,
+
+        qty_l5 INT NOT NULL DEFAULT 0,
+
+        qty_l6 INT NOT NULL DEFAULT 0,
+
+        CONSTRAINT fk_fci_factory FOREIGN KEY (factory_id) REFERENCES factories(id) ON DELETE CASCADE
+
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS factory_level_costs (
+
+        id INT AUTO_INCREMENT PRIMARY KEY,
+
+        factory_id INT NOT NULL,
+
+        level TINYINT NOT NULL,
+
+        mcoin_cost BIGINT NOT NULL DEFAULT 0,
+
+        CONSTRAINT fk_flc_factory FOREIGN KEY (factory_id) REFERENCES factories(id) ON DELETE CASCADE,
+
+        UNIQUE KEY uq_factory_level (factory_id, level)
+
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS factory_daily_selections (
+
+        id INT AUTO_INCREMENT PRIMARY KEY,
+
+        user_factory_id INT NOT NULL,
+
+        for_date DATE NOT NULL,
+
+        selected_items TEXT,
+
+        CONSTRAINT fk_fds_user_factory FOREIGN KEY (user_factory_id) REFERENCES user_factories(id) ON DELETE CASCADE,
+
+        UNIQUE KEY uq_user_factory_date (user_factory_id, for_date)
+
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS factory_timing_config (
+
+        id INT AUTO_INCREMENT PRIMARY KEY,
+
+        factory_id INT NOT NULL,
+
+        claim_interval_hours INT NOT NULL DEFAULT 24,
+
+        max_claims_per_day INT NOT NULL DEFAULT 1,
+
+        CONSTRAINT fk_ftc_factory FOREIGN KEY (factory_id) REFERENCES factories(id) ON DELETE CASCADE,
+
+        UNIQUE KEY uq_factory_timing (factory_id)
+
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS user_mcoin_cart_items (
+
+        id INT AUTO_INCREMENT PRIMARY KEY,
+
+        user_id INT NOT NULL,
+
+        item_id INT NOT NULL,
+
+        quantity INT NOT NULL DEFAULT 1,
+
+        unit_price BIGINT NOT NULL DEFAULT 0,
+
+        UNIQUE KEY uq_mcoin_cart_item (user_id, item_id),
+
+        CONSTRAINT fk_mcoin_uci_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+
+        CONSTRAINT fk_mcoin_uci_item FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
@@ -2285,6 +2396,8 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
             if ($vipEnabled) {
                 $kb[]=[ ['text'=>'VIP Shop','callback_data'=>'user_shop:vip_shop'] ];
             }
+            // Add M Coin Shop button
+            $kb[]=[ ['text'=>'M Coin Shop','callback_data'=>'user_shop:mcoin_shop'] ];
 
             $kb[]=[ ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
 
@@ -3580,7 +3693,11 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
 
                 [ ['text'=>'+10 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=10'], ['text'=>'+100 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=100'], ['text'=>'-10 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=-10'], ['text'=>'-100 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=-100'] ],
 
+                [ ['text'=>'+100 M Coin','callback_data'=>'admin:user_mcoin_delta|id='.$id.'|d=100'], ['text'=>'+1000 M Coin','callback_data'=>'admin:user_mcoin_delta|id='.$id.'|d=1000'], ['text'=>'-100 M Coin','callback_data'=>'admin:user_mcoin_delta|id='.$id.'|d=-100'], ['text'=>'-1000 M Coin','callback_data'=>'admin:user_mcoin_delta|id='.$id.'|d=-1000'] ],
+
                 [ ['text'=>'تنظیم مستقیم پول','callback_data'=>'admin:user_money_set|id='.$id.'|page='.$page], ['text'=>'تنظیم مستقیم سود','callback_data'=>'admin:user_profit_set|id='.$id.'|page='.$page] ],
+
+                [ ['text'=>'تنظیم مستقیم M Coin','callback_data'=>'admin:user_mcoin_set|id='.$id.'|page='.$page] ],
 
                 [ ['text'=>'مدیریت آیتم‌های فروشگاه','callback_data'=>'admin:user_items|id='.$id.'|page='.$page] ],
 
@@ -3618,6 +3735,16 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
 
             break;
 
+        case 'user_mcoin_delta':
+
+            $id=(int)$params['id']; $d=(int)($params['d']??0);
+
+            db()->prepare("UPDATE users SET m_coins = GREATEST(0, m_coins + ?) WHERE id=?")->execute([$d,$id]);
+
+            handleAdminNav($chatId,$messageId,'user_assets',['id'=>$id],$userRow);
+
+            break;
+
         case 'user_money_set':
 
             $id=(int)$params['id']; setAdminState($chatId,'await_user_money',['id'=>$id]); sendMessage($chatId,'عدد پول را ارسال کنید.'); break;
@@ -3625,6 +3752,10 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
         case 'user_profit_set':
 
             $id=(int)$params['id']; setAdminState($chatId,'await_user_profit',['id'=>$id]); sendMessage($chatId,'عدد سود روزانه را ارسال کنید.'); break;
+
+        case 'user_mcoin_set':
+
+            $id=(int)$params['id']; setAdminState($chatId,'await_user_mcoin',['id'=>$id]); sendMessage($chatId,'عدد M Coin را ارسال کنید.'); break;
 
         case 'set_flag':
 
@@ -3676,6 +3807,8 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
 
                 [ ['text'=>'کدهای تخفیف','callback_data'=>'admin:disc_list|page=1'] ],
                 [ ['text'=>'VIP Shop','callback_data'=>'admin:vip_shop'] ],
+
+                [ ['text'=>'تنظیمات کارخانه','callback_data'=>'admin:factory_settings'] ],
 
                 [ ['text'=>'بازگشت','callback_data'=>'nav:admin'] ]
 
@@ -3767,9 +3900,9 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
 
             $it = db()->prepare("SELECT * FROM shop_items WHERE id=?"); $it->execute([$iid]); $r=$it->fetch(); if(!$r){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
 
-            $body = 'نام: '.e($r['name'])."\nقیمت واحد: ".formatPrice((int)$r['unit_price'])."\nاندازه بسته: ".$r['pack_size']."\nمحدودیت هر کاربر: ".((int)$r['per_user_limit']===0?'∞':$r['per_user_limit'])."\nسود روزانه هر بسته: ".$r['daily_profit_per_pack']."\nوضعیت: ".($r['enabled']?'روشن':'خاموش');
+            $body = 'نام: '.e($r['name'])."\nقیمت واحد: ".formatPrice((int)$r['unit_price'])."\nقیمت M Coin: ".formatPrice((int)$r['mcoin_price'])."\nاندازه بسته: ".$r['pack_size']."\nمحدودیت هر کاربر: ".((int)$r['per_user_limit']===0?'∞':$r['per_user_limit'])."\nسود روزانه هر بسته: ".$r['daily_profit_per_pack']."\nوضعیت: ".($r['enabled']?'روشن':'خاموش');
 
-            $kb=[ [ ['text'=>$r['enabled']?'خاموش کردن':'روشن کردن','callback_data'=>'admin:shop_item_toggle|id='.$iid.'|cid='.$cid.'|page='.$page] , ['text'=>'حذف','callback_data'=>'admin:shop_item_del|id='.$iid.'|cid='.$cid.'|page='.$page] ], [ ['text'=>'بازگشت','callback_data'=>'admin:shop_cat_view|id='.$cid.'|page='.$page] ] ];
+            $kb=[ [ ['text'=>$r['enabled']?'خاموش کردن':'روشن کردن','callback_data'=>'admin:shop_item_toggle|id='.$iid.'|cid='.$cid.'|page='.$page] , ['text'=>'تنظیم قیمت M Coin','callback_data'=>'admin:shop_item_mcoin_price|id='.$iid.'|cid='.$cid.'|page='.$page] ], [ ['text'=>'حذف','callback_data'=>'admin:shop_item_del|id='.$iid.'|cid='.$cid.'|page='.$page] ], [ ['text'=>'بازگشت','callback_data'=>'admin:shop_cat_view|id='.$cid.'|page='.$page] ] ];
 
             editMessageText($chatId,$messageId,$body,['inline_keyboard'=>$kb]);
 
@@ -3797,15 +3930,91 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
 
             break;
 
+        case 'shop_item_mcoin_price':
+
+            $iid=(int)($params['id']??0); $cid=(int)($params['cid']??0); $page=(int)($params['page']??1);
+
+            setAdminState($chatId,'await_shop_item_mcoin_price',['id'=>$iid,'cid'=>$cid,'page'=>$page]);
+
+            sendMessage($chatId,'قیمت M Coin را ارسال کنید.');
+
+            break;
+
+        case 'vip_shop_item_add':
+
+            $cid=(int)($params['cid']??0); setAdminState($chatId,'await_vip_shop_item_name',['cid'=>$cid]); sendMessage($chatId,'نام آیتم VIP را ارسال کنید.'); break;
+
+        case 'vip_shop_item_view':
+
+            $iid=(int)($params['id']??0); $cid=(int)($params['cid']??0); $page=(int)($params['page']??1);
+
+            $it = db()->prepare("SELECT * FROM vip_shop_items WHERE id=?"); $it->execute([$iid]); $r=$it->fetch(); if(!$r){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
+
+            $body = 'نام: '.e($r['name'])."\nقیمت M Coin: ".formatPrice((int)$r['mcoin_price'])."\nاندازه بسته: ".$r['pack_size']."\nمحدودیت هر کاربر: ".((int)$r['per_user_limit']===0?'∞':$r['per_user_limit'])."\nسود روزانه هر بسته: ".$r['daily_profit_per_pack']."\nوضعیت: ".($r['enabled']?'روشن':'خاموش');
+
+            $kb=[
+
+                [ ['text'=>($r['enabled']?'خاموش کردن':'روشن کردن'),'callback_data'=>'admin:vip_shop_item_toggle|id='.$iid.'|cid='.$cid.'|page='.$page] ],
+
+                [ ['text'=>'حذف','callback_data'=>'admin:vip_shop_item_del|id='.$iid.'|cid='.$cid.'|page='.$page] ],
+
+                [ ['text'=>'بازگشت','callback_data'=>'admin:vip_shop_cat_view|id='.$cid.'|page='.$page] ]
+
+            ];
+
+            editMessageText($chatId,$messageId,$body,['inline_keyboard'=>$kb]);
+
+            break;
+
+        case 'vip_shop_item_toggle':
+
+            $iid=(int)($params['id']??0); $cid=(int)($params['cid']??0); $page=(int)($params['page']??1);
+
+            db()->prepare("UPDATE vip_shop_items SET enabled = NOT enabled WHERE id=?")->execute([$iid]);
+
+            answerCallback($_POST['callback_query']['id'] ?? '', 'تغییر کرد');
+
+            handleAdminNav($chatId,$messageId,'vip_shop_item_view',['id'=>$iid,'cid'=>$cid,'page'=>$page],$userRow);
+
+            break;
+
+        case 'vip_shop_item_del':
+
+            $iid=(int)($params['id']??0); $cid=(int)($params['cid']??0); $page=(int)($params['page']??1);
+
+            db()->prepare("DELETE FROM vip_shop_items WHERE id=?")->execute([$iid]);
+
+            answerCallback($_POST['callback_query']['id'] ?? '', 'حذف شد');
+
+            handleAdminNav($chatId,$messageId,'vip_shop_cat_view',['id'=>$cid,'page'=>$page],$userRow);
+
+            break;
+
         case 'user_items':
 
             $id=(int)$params['id']; $page=(int)($params['page']??1);
 
+            // Regular shop items
             $st = db()->prepare("SELECT ui.item_id, ui.quantity, si.name, sc.name AS cat FROM user_items ui JOIN shop_items si ON si.id=ui.item_id JOIN shop_categories sc ON sc.id=si.category_id WHERE ui.user_id=? AND ui.quantity>0 ORDER BY sc.sort_order ASC, sc.name ASC, si.name ASC");
-
             $st->execute([$id]); $rows=$st->fetchAll();
 
-            $kb=[]; $lines=['آیتم‌های فروشگاه کاربر:']; foreach($rows as $r){ $lines[] = e($r['cat']).' | '.e($r['name']).' : '.$r['quantity']; $kb[]=[ ['text'=>e($r['name']).' +1','callback_data'=>'admin:user_item_delta|id='.$id.'|item='.$r['item_id'].'|d=1'], ['text'=>'-1','callback_data'=>'admin:user_item_delta|id='.$id.'|item='.$r['item_id'].'|d=-1'], ['text'=>'تنظیم سریع','callback_data'=>'admin:user_item_set|id='.$id.'|item='.$r['item_id'].'|page='.$page] ]; }
+            // VIP shop items
+            $vip_st = db()->prepare("SELECT uvi.item_id, uvi.quantity, vsi.name, vsc.name AS cat FROM user_vip_items uvi JOIN vip_shop_items vsi ON vsi.id=uvi.item_id JOIN vip_shop_categories vsc ON vsc.id=vsi.category_id WHERE uvi.user_id=? AND uvi.quantity>0 ORDER BY vsc.sort_order ASC, vsc.name ASC, vsi.name ASC");
+            $vip_st->execute([$id]); $vip_rows=$vip_st->fetchAll();
+
+            $kb=[]; $lines=['آیتم‌های فروشگاه کاربر:']; 
+            
+            if(empty($rows) && empty($vip_rows)){ $lines[]='هیچ آیتمی یافت نشد'; }
+            
+            foreach($rows as $r){ 
+                $lines[] = '🛒 '.e($r['cat']).' | '.e($r['name']).' : '.$r['quantity']; 
+                $kb[]=[ ['text'=>e($r['name']).' +1','callback_data'=>'admin:user_item_delta|id='.$id.'|item='.$r['item_id'].'|d=1'], ['text'=>'-1','callback_data'=>'admin:user_item_delta|id='.$id.'|item='.$r['item_id'].'|d=-1'], ['text'=>'تنظیم سریع','callback_data'=>'admin:user_item_set|id='.$id.'|item='.$r['item_id'].'|page='.$page] ]; 
+            }
+            
+            foreach($vip_rows as $r){ 
+                $lines[] = '💎 '.e($r['cat']).' | '.e($r['name']).' : '.$r['quantity']; 
+                $kb[]=[ ['text'=>e($r['name']).' +1','callback_data'=>'admin:user_vip_item_delta|id='.$id.'|item='.$r['item_id'].'|d=1'], ['text'=>'-1','callback_data'=>'admin:user_vip_item_delta|id='.$id.'|item='.$r['item_id'].'|d=-1'], ['text'=>'تنظیم سریع','callback_data'=>'admin:user_vip_item_set|id='.$id.'|item='.$r['item_id'].'|page='.$page] ]; 
+            }
 
             $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:user_assets|id='.$id.'|page='.$page] ];
 
@@ -3835,6 +4044,27 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
 
             break;
 
+        case 'user_vip_item_delta':
+
+            $id=(int)$params['id']; $item=(int)($params['item']??0); $d=(int)($params['d']??0);
+
+            $st = db()->prepare("UPDATE user_vip_items SET quantity=quantity+? WHERE user_id=? AND item_id=?");
+            $st->execute([$d,$id,$item]);
+
+            handleAdminNav($chatId,$messageId,'user_items',['id'=>$id,'page'=>$page],$userRow);
+
+            break;
+
+        case 'user_vip_item_set':
+
+            $id=(int)$params['id']; $item=(int)($params['item']??0); $page=(int)($params['page']??1);
+
+            setAdminState($chatId,'await_user_vip_item_set',['id'=>$id,'item'=>$item,'page'=>$page]);
+
+            sendMessage($chatId,'عدد مقدار جدید آیتم VIP را ارسال کنید (مثلاً 1000). برای حذف، 0 بفرستید.');
+
+            break;
+
         case 'shop_factories':
 
             if (!hasPerm($chatId,'shop') && !in_array('all', getAdminPermissions($chatId), true)) { answerCallback($_POST['callback_query']['id'] ?? '', 'دسترسی ندارید', true); return; }
@@ -3859,7 +4089,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
 
             setAdminState($chatId,'await_factory_name',[]);
 
-            sendGuide($chatId,'نام کارخانه را ارسال کنید. سپس قیمت لول ۱ و لول ۲ را در دو خط جدا بفرستید.');
+            sendGuide($chatId,'نام کارخانه را ارسال کنید. سپس قیمت‌های لول ۱ تا ۶ را در ۶ خط جدا بفرستید.');
 
             break;
 
@@ -3869,13 +4099,23 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
 
             $f = db()->prepare("SELECT * FROM factories WHERE id=?"); $f->execute([$fid]); $fr=$f->fetch(); if(!$fr){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
 
-            $prods = db()->prepare("SELECT fp.id, si.name, fp.qty_l1, fp.qty_l2 FROM factory_products fp JOIN shop_items si ON si.id=fp.item_id WHERE fp.factory_id=? ORDER BY si.name ASC"); $prods->execute([$fid]); $ps=$prods->fetchAll();
+            $prods = db()->prepare("SELECT fp.id, si.name, fp.qty_l1, fp.qty_l2, fp.qty_l3, fp.qty_l4, fp.qty_l5, fp.qty_l6 FROM factory_products fp JOIN shop_items si ON si.id=fp.item_id WHERE fp.factory_id=? ORDER BY si.name ASC"); $prods->execute([$fid]); $ps=$prods->fetchAll();
 
-            $lines = ['کارخانه: '.e($fr['name']), 'قیمت لول ۱: '.formatPrice((int)$fr['price_l1']), 'قیمت لول ۲: '.formatPrice((int)$fr['price_l2']), '', 'محصولات:']; if(!$ps){ $lines[]='—'; }
+            $custom_items = db()->prepare("SELECT id, name, qty_l1, qty_l2, qty_l3, qty_l4, qty_l5, qty_l6 FROM factory_custom_items WHERE factory_id=? ORDER BY name ASC"); $custom_items->execute([$fid]); $cis=$custom_items->fetchAll();
 
-            $kb=[]; foreach($ps as $p){ $lines[]='- '.e($p['name']).' | L1: '.$p['qty_l1'].' | L2: '.$p['qty_l2']; $kb[]=[ ['text'=>'حذف ' . e($p['name']), 'callback_data'=>'admin:shop_factory_prod_del|id='.$p['id'].'|fid='.$fid.'|page='.$page] ]; }
+            $lines = ['کارخانه: '.e($fr['name']), 'قیمت لول ۱: '.formatPrice((int)$fr['price_l1']), 'قیمت لول ۲: '.formatPrice((int)$fr['price_l2']), 'قیمت لول ۳: '.formatPrice((int)$fr['price_l3']), 'قیمت لول ۴: '.formatPrice((int)$fr['price_l4']), 'قیمت لول ۵: '.formatPrice((int)$fr['price_l5']), 'قیمت لول ۶: '.formatPrice((int)$fr['price_l6']), '', 'محصولات شاپی:']; if(!$ps){ $lines[]='—'; }
 
-            $kb[]=[ ['text'=>'افزودن محصول','callback_data'=>'admin:shop_factory_prod_add|fid='.$fid] ];
+            $kb=[]; foreach($ps as $p){ $lines[]='- '.e($p['name']).' | L1: '.$p['qty_l1'].' | L2: '.$p['qty_l2'].' | L3: '.$p['qty_l3'].' | L4: '.$p['qty_l4'].' | L5: '.$p['qty_l5'].' | L6: '.$p['qty_l6']; $kb[]=[ ['text'=>'حذف ' . e($p['name']), 'callback_data'=>'admin:shop_factory_prod_del|id='.$p['id'].'|fid='.$fid.'|page='.$page] ]; }
+
+            $lines[]=''; $lines[]='آیتم‌های اختصاصی:'; if(!$cis){ $lines[]='—'; }
+
+            foreach($cis as $ci){ $lines[]='- '.e($ci['name']).' | L1: '.$ci['qty_l1'].' | L2: '.$ci['qty_l2'].' | L3: '.$ci['qty_l3'].' | L4: '.$ci['qty_l4'].' | L5: '.$ci['qty_l5'].' | L6: '.$ci['qty_l6']; $kb[]=[ ['text'=>'حذف ' . e($ci['name']), 'callback_data'=>'admin:shop_factory_custom_del|id='.$ci['id'].'|fid='.$fid.'|page='.$page] ]; }
+
+            $kb[]=[ ['text'=>'افزودن محصول','callback_data'=>'admin:shop_factory_prod_add|fid='.$fid], ['text'=>'افزودن آیتم اختصاصی','callback_data'=>'admin:shop_factory_custom_add|fid='.$fid] ];
+
+            $kb[]=[ ['text'=>'مدیریت هزینه‌های لول','callback_data'=>'admin:shop_factory_level_costs|fid='.$fid] ];
+
+            $kb[]=[ ['text'=>'تنظیمات زمان‌بندی','callback_data'=>'admin:shop_factory_timing|fid='.$fid.'|page='.$page] ];
 
             $kb[]=[ ['text'=>'حذف کارخانه','callback_data'=>'admin:shop_factory_del|id='.$fid.'|page='.$page] ];
 
@@ -3894,6 +4134,164 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             answerCallback($_POST['callback_query']['id'] ?? '', 'حذف شد');
 
             handleAdminNav($chatId,$messageId,'shop_factories',['page'=>$page],$userRow);
+
+            break;
+
+        case 'shop_factory_custom_add':
+
+            $fid=(int)($params['fid']??0); setAdminState($chatId,'await_factory_custom_name',['fid'=>$fid]); sendMessage($chatId,'نام آیتم اختصاصی را ارسال کنید.'); break;
+
+        case 'shop_factory_custom_del':
+
+            $cid=(int)($params['id']??0); $fid=(int)($params['fid']??0); $page=(int)($params['page']??1);
+
+            db()->prepare("DELETE FROM factory_custom_items WHERE id=?")->execute([$cid]);
+
+            answerCallback($_POST['callback_query']['id'] ?? '', 'حذف شد');
+
+            handleAdminNav($chatId,$messageId,'shop_factory_view',['id'=>$fid,'page'=>$page],$userRow);
+
+            break;
+
+        case 'shop_factory_level_costs':
+
+            $fid=(int)($params['fid']??0); $page=(int)($params['page']??1);
+
+            $f = db()->prepare("SELECT name FROM factories WHERE id=?"); $f->execute([$fid]); $fr=$f->fetch(); if(!$fr){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
+
+            $costs = db()->prepare("SELECT level, mcoin_cost FROM factory_level_costs WHERE factory_id=? ORDER BY level ASC"); $costs->execute([$fid]); $cs=$costs->fetchAll();
+
+            $lines = ['هزینه‌های لول کارخانه: '.e($fr['name']), ''];
+
+            for($i=1; $i<=6; $i++){
+
+                $found = false;
+
+                foreach($cs as $c){ if($c['level']==$i){ $lines[]='لول '.$i.': '.formatPrice((int)$c['mcoin_cost']).' M Coin'; $found=true; break; } }
+
+                if(!$found){ $lines[]='لول '.$i.': تنظیم نشده'; }
+
+            }
+
+            $kb=[]; for($i=1; $i<=6; $i++){ $kb[]=[ ['text'=>'تنظیم لول '.$i, 'callback_data'=>'admin:shop_factory_level_set|fid='.$fid.'|level='.$i.'|page='.$page] ]; }
+
+            $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:shop_factory_view|id='.$fid.'|page='.$page] ];
+
+            editMessageText($chatId,$messageId,implode("\n",$lines),['inline_keyboard'=>$kb]);
+
+            break;
+
+        case 'shop_factory_level_set':
+
+            $fid=(int)($params['fid']??0); $level=(int)($params['level']??1); $page=(int)($params['page']??1);
+
+            setAdminState($chatId,'await_factory_level_cost',['fid'=>$fid,'level'=>$level,'page'=>$page]);
+
+            sendMessage($chatId,'هزینه M Coin برای لول '.$level.' را ارسال کنید.');
+
+            break;
+
+        case 'shop_factory_timing':
+
+            $fid=(int)($params['fid']??0); $page=(int)($params['page']??1);
+
+            $f = db()->prepare("SELECT name FROM factories WHERE id=?"); $f->execute([$fid]); $fr=$f->fetch(); if(!$fr){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
+
+            $timing = db()->prepare("SELECT claim_interval_hours, max_claims_per_day FROM factory_timing_config WHERE factory_id=?"); $timing->execute([$fid]); $t=$timing->fetch();
+
+            $lines = ['تنظیمات زمان‌بندی کارخانه: '.e($fr['name']), ''];
+            if($t){
+                $lines[] = 'فاصله زمانی دریافت: '.$t['claim_interval_hours'].' ساعت';
+                $lines[] = 'حداکثر دریافت در روز: '.$t['max_claims_per_day'];
+            } else {
+                $lines[] = 'فاصله زمانی دریافت: 24 ساعت (پیش‌فرض)';
+                $lines[] = 'حداکثر دریافت در روز: 1 (پیش‌فرض)';
+            }
+
+            $kb = [
+                [ ['text'=>'تنظیم فاصله زمانی', 'callback_data'=>'admin:shop_factory_set_interval|fid='.$fid.'|page='.$page] ],
+                [ ['text'=>'تنظیم حداکثر دریافت روزانه', 'callback_data'=>'admin:shop_factory_set_max_claims|fid='.$fid.'|page='.$page] ],
+                [ ['text'=>'بازگشت', 'callback_data'=>'admin:shop_factory_view|id='.$fid.'|page='.$page] ]
+            ];
+
+            editMessageText($chatId,$messageId,implode("\n",$lines),['inline_keyboard'=>$kb]);
+
+            break;
+
+        case 'shop_factory_set_interval':
+
+            $fid=(int)($params['fid']??0); $page=(int)($params['page']??1);
+
+            setAdminState($chatId,'await_factory_interval',['fid'=>$fid,'page'=>$page]);
+
+            sendMessage($chatId,'فاصله زمانی دریافت (به ساعت) را ارسال کنید. مثلاً 24 برای یک روز.');
+
+            break;
+
+        case 'shop_factory_set_max_claims':
+
+            $fid=(int)($params['fid']??0); $page=(int)($params['page']??1);
+
+            setAdminState($chatId,'await_factory_max_claims',['fid'=>$fid,'page'=>$page]);
+
+            sendMessage($chatId,'حداکثر تعداد دریافت در روز را ارسال کنید.');
+
+            break;
+
+        case 'factory_settings':
+
+            $factory_enabled = (int)(getSetting('factory_system_enabled', '1') ?: 1);
+            $factory_leveling_enabled = (int)(getSetting('factory_leveling_enabled', '1') ?: 1);
+            $factory_daily_selection_enabled = (int)(getSetting('factory_daily_selection_enabled', '1') ?: 1);
+            $factory_preview_enabled = (int)(getSetting('factory_preview_enabled', '1') ?: 1);
+
+            $lines = ['تنظیمات سیستم کارخانه:', ''];
+            $lines[] = 'سیستم کارخانه: '.($factory_enabled ? 'فعال' : 'غیرفعال');
+            $lines[] = 'سیستم لول‌بندی: '.($factory_leveling_enabled ? 'فعال' : 'غیرفعال');
+            $lines[] = 'انتخاب روزانه آیتم‌ها: '.($factory_daily_selection_enabled ? 'فعال' : 'غیرفعال');
+            $lines[] = 'پیش‌نمایش کارخانه: '.($factory_preview_enabled ? 'فعال' : 'غیرفعال');
+
+            $kb = [
+                [ ['text'=>($factory_enabled ? 'غیرفعال کردن سیستم کارخانه' : 'فعال کردن سیستم کارخانه'), 'callback_data'=>'admin:factory_toggle_system'] ],
+                [ ['text'=>($factory_leveling_enabled ? 'غیرفعال کردن لول‌بندی' : 'فعال کردن لول‌بندی'), 'callback_data'=>'admin:factory_toggle_leveling'] ],
+                [ ['text'=>($factory_daily_selection_enabled ? 'غیرفعال کردن انتخاب روزانه' : 'فعال کردن انتخاب روزانه'), 'callback_data'=>'admin:factory_toggle_daily_selection'] ],
+                [ ['text'=>($factory_preview_enabled ? 'غیرفعال کردن پیش‌نمایش' : 'فعال کردن پیش‌نمایش'), 'callback_data'=>'admin:factory_toggle_preview'] ],
+                [ ['text'=>'بازگشت', 'callback_data'=>'admin:shop'] ]
+            ];
+
+            editMessageText($chatId,$messageId,implode("\n",$lines),['inline_keyboard'=>$kb]);
+
+            break;
+
+        case 'factory_toggle_system':
+
+            $enabled = (int)(getSetting('factory_system_enabled', '1') ?: 1);
+            setSetting('factory_system_enabled', $enabled ? '0' : '1');
+            handleAdminNav($chatId,$messageId,'factory_settings',[],$userRow);
+
+            break;
+
+        case 'factory_toggle_leveling':
+
+            $enabled = (int)(getSetting('factory_leveling_enabled', '1') ?: 1);
+            setSetting('factory_leveling_enabled', $enabled ? '0' : '1');
+            handleAdminNav($chatId,$messageId,'factory_settings',[],$userRow);
+
+            break;
+
+        case 'factory_toggle_daily_selection':
+
+            $enabled = (int)(getSetting('factory_daily_selection_enabled', '1') ?: 1);
+            setSetting('factory_daily_selection_enabled', $enabled ? '0' : '1');
+            handleAdminNav($chatId,$messageId,'factory_settings',[],$userRow);
+
+            break;
+
+        case 'factory_toggle_preview':
+
+            $enabled = (int)(getSetting('factory_preview_enabled', '1') ?: 1);
+            setSetting('factory_preview_enabled', $enabled ? '0' : '1');
+            handleAdminNav($chatId,$messageId,'factory_settings',[],$userRow);
 
             break;
 
@@ -3921,7 +4319,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
 
             $fid=(int)($params['fid']??0); $item=(int)($params['item']??0); setAdminState($chatId,'await_factory_prod_qty',['fid'=>$fid,'item'=>$item]);
 
-            sendMessage($chatId,'مقادیر تولید روزانه را در دو خط بفرستید: خط اول لول ۱، خط دوم لول ۲ (مثلاً 5\n10).');
+            sendMessage($chatId,'مقادیر تولید روزانه را در شش خط بفرستید: لول ۱ تا ۶ (مثلاً 5\n10\n15\n20\n25\n30).');
 
             break;
 
@@ -4026,6 +4424,26 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
             $type = $params['type'] ?? 'item';
             setAdminState($chatId,'await_vip_shop_cat_name',['type'=>$type]);
             sendMessage($chatId,'نام دسته‌بندی VIP Shop ('.$type.') را ارسال کنید.');
+            break;
+
+        case 'vip_shop_cat_view':
+            $cid=(int)($params['id']??0); $page=(int)($params['page']??1);
+            $cat = db()->prepare("SELECT * FROM vip_shop_categories WHERE id=?"); $cat->execute([$cid]); $c=$cat->fetch(); if(!$c){ answerCallback($_POST['callback_query']['id']??'','پیدا نشد',true); return; }
+            $items = db()->prepare("SELECT id,name,mcoin_price,pack_size,enabled FROM vip_shop_items WHERE category_id=? ORDER BY name ASC"); $items->execute([$cid]); $its=$items->fetchAll();
+            $lines = ['دسته‌بندی: '.e($c['name']).' ('.$c['type'].')', 'ترتیب: '.$c['sort_order'], '', 'آیتم‌ها:'];
+            if(!$its){ $lines[]='—'; }
+            $kb=[]; foreach($its as $it){ $lines[]='- '.e($it['name']).' | قیمت: '.formatPrice((int)$it['mcoin_price']).' M Coin | بسته: '.$it['pack_size'].' | وضعیت: '.($it['enabled']?'روشن':'خاموش'); $kb[]=[ ['text'=>e($it['name']), 'callback_data'=>'admin:vip_shop_item_view|id='.$it['id'].'|cid='.$cid.'|page='.$page] ]; }
+            $kb[]=[ ['text'=>'افزودن آیتم','callback_data'=>'admin:vip_shop_item_add|cid='.$cid] ];
+            $kb[]=[ ['text'=>'حذف دسته‌بندی','callback_data'=>'admin:vip_shop_cat_del|id='.$cid.'|page='.$page] ];
+            $kb[]=[ ['text'=>'بازگشت','callback_data'=>'admin:vip_shop_cats|page='.$page] ];
+            editMessageText($chatId,$messageId,implode("\n",$lines),['inline_keyboard'=>$kb]);
+            break;
+
+        case 'vip_shop_cat_del':
+            $cid=(int)($params['id']??0); $page=(int)($params['page']??1);
+            db()->prepare("DELETE FROM vip_shop_categories WHERE id=?")->execute([$cid]);
+            answerCallback($_POST['callback_query']['id'] ?? '', 'حذف شد');
+            handleAdminNav($chatId,$messageId,'vip_shop_cats',['page'=>$page],$userRow);
             break;
 
         case 'info_users':
@@ -5115,6 +5533,18 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
 
             break;
 
+        case 'await_user_mcoin':
+
+            $id=(int)$data['id']; $val = (int)preg_replace('/\D+/', '', (string)$text);
+
+            db()->prepare("UPDATE users SET m_coins=? WHERE id=?")->execute([$val, $id]);
+
+            sendMessage($chatId,'M Coin کاربر تنظیم شد: '.$val);
+
+            clearAdminState($chatId);
+
+            break;
+
         case 'await_user_profit':
 
             $id=(int)$data['id']; $val = (int)preg_replace('/\D+/', '', (string)$text);
@@ -5393,13 +5823,145 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
 
             break;
 
+        case 'await_shop_item_mcoin_price':
+
+            $iid=(int)$data['id']; $cid=(int)$data['cid']; $page=(int)$data['page'];
+
+            $mcoin_price = (int)preg_replace('/\D+/', '', (string)$text);
+
+            db()->prepare("UPDATE shop_items SET mcoin_price=? WHERE id=?")->execute([$mcoin_price, $iid]);
+
+            sendMessage($chatId,'قیمت M Coin تنظیم شد: '.formatPrice($mcoin_price));
+
+            clearAdminState($chatId);
+
+            break;
+
+        case 'await_vip_shop_item_name':
+
+            $cid=(int)$data['cid']; $name=trim((string)$text); if($name===''){ sendMessage($chatId,'نام نامعتبر'); return; }
+
+            setAdminState($chatId,'await_vip_shop_item_fields',['cid'=>$cid,'name'=>$name]);
+
+            sendMessage($chatId,'به ترتیب در خطوط جدا قیمت M Coin، اندازه بسته، محدودیت هر کاربر (۰=بی‌نهایت)، سود روزانه هر بسته را ارسال کنید.');
+
+            break;
+
+        case 'await_vip_shop_item_fields':
+
+            $cid=(int)$data['cid']; $name=$data['name'];
+
+            $lines = preg_split('/\n+/', (string)$text);
+
+            if (count($lines) < 4) { sendMessage($chatId,'فرمت نامعتبر. ۴ خط لازم است.'); return; }
+
+            $mcoin_price = (int)preg_replace('/\D+/','',$lines[0]);
+
+            $pack = max(1,(int)preg_replace('/\D+/','',$lines[1]));
+
+            $limit = (int)preg_replace('/\D+/','',$lines[2]);
+
+            $profit = (int)preg_replace('/\D+/','',$lines[3]);
+
+            db()->prepare("INSERT INTO vip_shop_items (category_id,name,mcoin_price,pack_size,per_user_limit,daily_profit_per_pack) VALUES (?,?,?,?,?,?)")
+
+              ->execute([$cid,$name,$mcoin_price,$pack,$limit,$profit]);
+
+            sendMessage($chatId,'آیتم VIP اضافه شد.'); clearAdminState($chatId);
+
+            break;
+
+        case 'await_factory_custom_name':
+
+            $fid=(int)$data['fid']; $name=trim((string)$text); if($name===''){ sendMessage($chatId,'نام نامعتبر'); return; }
+
+            setAdminState($chatId,'await_factory_custom_quantities',['fid'=>$fid,'name'=>$name]);
+
+            sendMessage($chatId,'مقادیر لول ۱ تا ۶ را در ۶ خط جدا بفرستید.');
+
+            break;
+
+        case 'await_factory_custom_quantities':
+
+            $fid=(int)$data['fid']; $name=$data['name'];
+
+            $lines = preg_split('/\n+/', (string)$text);
+
+            if (count($lines) < 6) { sendMessage($chatId,'فرمت نامعتبر. ۶ خط لازم است.'); return; }
+
+            $q1 = max(0,(int)preg_replace('/\D+/','',$lines[0]));
+
+            $q2 = max(0,(int)preg_replace('/\D+/','',$lines[1]));
+
+            $q3 = max(0,(int)preg_replace('/\D+/','',$lines[2]));
+
+            $q4 = max(0,(int)preg_replace('/\D+/','',$lines[3]));
+
+            $q5 = max(0,(int)preg_replace('/\D+/','',$lines[4]));
+
+            $q6 = max(0,(int)preg_replace('/\D+/','',$lines[5]));
+
+            db()->prepare("INSERT INTO factory_custom_items (factory_id,name,qty_l1,qty_l2,qty_l3,qty_l4,qty_l5,qty_l6) VALUES (?,?,?,?,?,?,?,?)")
+
+              ->execute([$fid,$name,$q1,$q2,$q3,$q4,$q5,$q6]);
+
+            sendMessage($chatId,'آیتم اختصاصی اضافه شد.'); clearAdminState($chatId);
+
+            break;
+
+        case 'await_factory_level_cost':
+
+            $fid=(int)$data['fid']; $level=(int)$data['level']; $page=(int)$data['page'];
+
+            $cost = (int)preg_replace('/\D+/', '', (string)$text);
+
+            db()->prepare("INSERT INTO factory_level_costs (factory_id,level,mcoin_cost) VALUES (?,?,?) ON DUPLICATE KEY UPDATE mcoin_cost=VALUES(mcoin_cost)")->execute([$fid,$level,$cost]);
+
+            sendMessage($chatId,'هزینه لول '.$level.' تنظیم شد: '.formatPrice($cost).' M Coin');
+
+            clearAdminState($chatId);
+
+            break;
+
+        case 'await_factory_interval':
+
+            $fid=(int)$data['fid']; $page=(int)$data['page'];
+
+            $hours = (int)preg_replace('/\D+/', '', (string)$text);
+
+            if($hours < 1){ sendMessage($chatId,'ساعت باید حداقل 1 باشد'); return; }
+
+            db()->prepare("INSERT INTO factory_timing_config (factory_id,claim_interval_hours,max_claims_per_day) VALUES (?,?,1) ON DUPLICATE KEY UPDATE claim_interval_hours=VALUES(claim_interval_hours)")->execute([$fid,$hours]);
+
+            sendMessage($chatId,'فاصله زمانی تنظیم شد: '.$hours.' ساعت');
+
+            clearAdminState($chatId);
+
+            break;
+
+        case 'await_factory_max_claims':
+
+            $fid=(int)$data['fid']; $page=(int)$data['page'];
+
+            $max_claims = (int)preg_replace('/\D+/', '', (string)$text);
+
+            if($max_claims < 1){ sendMessage($chatId,'حداکثر دریافت باید حداقل 1 باشد'); return; }
+
+            db()->prepare("INSERT INTO factory_timing_config (factory_id,claim_interval_hours,max_claims_per_day) VALUES (?,24,?) ON DUPLICATE KEY UPDATE max_claims_per_day=VALUES(max_claims_per_day)")->execute([$fid,$max_claims]);
+
+            sendMessage($chatId,'حداکثر دریافت روزانه تنظیم شد: '.$max_claims);
+
+            clearAdminState($chatId);
+
+            break;
+
         case 'await_factory_name':
 
             $name = trim((string)$text); if($name===''){ sendMessage($chatId,'نام نامعتبر'); return; }
 
             setAdminState($chatId,'await_factory_prices',['name'=>$name]);
 
-            sendMessage($chatId,'قیمت لول ۱ و سپس لول ۲ را در دو خط بفرستید.');
+            sendMessage($chatId,'قیمت‌های لول ۱ تا ۶ را در ۶ خط جدا بفرستید.');
 
             break;
 
@@ -5409,13 +5971,21 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
 
             $parts = preg_split('/\n+/', (string)$text);
 
-            if (count($parts) < 2) { sendMessage($chatId,'دو عدد در دو خط ارسال کنید.'); return; }
+            if (count($parts) < 6) { sendMessage($chatId,'شش عدد در شش خط ارسال کنید.'); return; }
 
             $p1 = (int)preg_replace('/\D+/','',$parts[0]);
 
             $p2 = (int)preg_replace('/\D+/','',$parts[1]);
 
-            db()->prepare("INSERT INTO factories (name, price_l1, price_l2) VALUES (?,?,?)")->execute([$name,$p1,$p2]);
+            $p3 = (int)preg_replace('/\D+/','',$parts[2]);
+
+            $p4 = (int)preg_replace('/\D+/','',$parts[3]);
+
+            $p5 = (int)preg_replace('/\D+/','',$parts[4]);
+
+            $p6 = (int)preg_replace('/\D+/','',$parts[5]);
+
+            db()->prepare("INSERT INTO factories (name, price_l1, price_l2, price_l3, price_l4, price_l5, price_l6) VALUES (?,?,?,?,?,?,?)")->execute([$name,$p1,$p2,$p3,$p4,$p5,$p6]);
 
             $fid = (int)db()->lastInsertId();
 
@@ -5437,13 +6007,17 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
 
             $parts = preg_split('/\n+/', (string)$text);
 
-            if (count($parts) < 2) { sendMessage($chatId,'دو عدد در دو خط ارسال کنید.'); return; }
+            if (count($parts) < 6) { sendMessage($chatId,'شش عدد در شش خط ارسال کنید.'); return; }
 
             $q1 = (int)preg_replace('/\D+/','',$parts[0]); $q2 = (int)preg_replace('/\D+/','',$parts[1]);
 
-            db()->prepare("INSERT INTO factory_products (factory_id,item_id,qty_l1,qty_l2) VALUES (?,?,?,?)")
+            $q3 = (int)preg_replace('/\D+/','',$parts[2]); $q4 = (int)preg_replace('/\D+/','',$parts[3]);
 
-              ->execute([$fid,$item,$q1,$q2]);
+            $q5 = (int)preg_replace('/\D+/','',$parts[4]); $q6 = (int)preg_replace('/\D+/','',$parts[5]);
+
+            db()->prepare("INSERT INTO factory_products (factory_id,item_id,qty_l1,qty_l2,qty_l3,qty_l4,qty_l5,qty_l6) VALUES (?,?,?,?,?,?,?,?)")
+
+              ->execute([$fid,$item,$q1,$q2,$q3,$q4,$q5,$q6]);
 
             sendMessage($chatId,'محصول اضافه شد.');
 
@@ -5468,6 +6042,32 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
             db()->prepare("UPDATE user_items SET quantity=? WHERE user_id=? AND item_id=?")->execute([$val,$id,$item]);
 
             sendMessage($chatId,'مقدار آیتم تنظیم شد: '.$val);
+
+            clearAdminState($chatId);
+
+            // refresh list
+
+            handleAdminNav($chatId, $message['message_id'] ?? 0, 'user_items', ['id'=>$id,'page'=>$page], ['telegram_id'=>$chatId]);
+
+            break;
+
+        case 'await_user_vip_item_set':
+
+            $id=(int)$data['id']; $item=(int)$data['item']; $page=(int)($data['page']??1);
+
+            $valRaw = trim((string)($text ?: ($message['caption'] ?? '')));
+
+            if ($valRaw === '') { sendMessage($chatId,'یک عدد ارسال کنید.'); return; }
+
+            $val = (int)preg_replace('/\D+/', '', $valRaw);
+
+            // allow zero to clear
+
+            db()->prepare("INSERT INTO user_vip_items (user_id,item_id,quantity) VALUES (?,?,0) ON DUPLICATE KEY UPDATE quantity=VALUES(quantity)")->execute([$id,$item]);
+
+            db()->prepare("UPDATE user_vip_items SET quantity=? WHERE user_id=? AND item_id=?")->execute([$val,$id,$item]);
+
+            sendMessage($chatId,'مقدار آیتم VIP تنظیم شد: '.$val);
 
             clearAdminState($chatId);
 
@@ -5912,7 +6512,10 @@ function processCallback(array $callback): void {
 
         if ($route === 'factories') {
 
-            $rows = db()->query("SELECT id,name,price_l1,price_l2 FROM factories ORDER BY id DESC")->fetchAll();
+            $factory_enabled = (int)(getSetting('factory_system_enabled', '1') ?: 1);
+            if (!$factory_enabled) { answerCallback($callback['id'], 'سیستم کارخانه غیرفعال است', true); return; }
+
+            $rows = db()->query("SELECT id,name,price_l1,price_l2,price_l3,price_l4,price_l5,price_l6 FROM factories ORDER BY id DESC")->fetchAll();
 
             if (!$rows) { editMessageText($chatId,$messageId,'کارخانه‌ای موجود نیست.', ['inline_keyboard'=>[[['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop']], [['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]] ); return; }
 
@@ -5920,9 +6523,15 @@ function processCallback(array $callback): void {
 
             foreach($rows as $r){
 
-                $lines[] = '- '.e($r['name']).' | L1: '.formatPrice((int)$r['price_l1']).' | L2: '.formatPrice((int)$r['price_l2']);
+                $lines[] = '- '.e($r['name']).' | L1: '.formatPrice((int)$r['price_l1']).' | L2: '.formatPrice((int)$r['price_l2']).' | L3: '.formatPrice((int)$r['price_l3']).' | L4: '.formatPrice((int)$r['price_l4']).' | L5: '.formatPrice((int)$r['price_l5']).' | L6: '.formatPrice((int)$r['price_l6']);
 
                 $kb[]=[ ['text'=>'خرید L1 - '.e($r['name']),'callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=1'], ['text'=>'خرید L2','callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=2'] ];
+
+                $kb[]=[ ['text'=>'خرید L3','callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=3'], ['text'=>'خرید L4','callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=4'] ];
+
+                $kb[]=[ ['text'=>'خرید L5','callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=5'], ['text'=>'خرید L6','callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=6'] ];
+
+                $kb[]=[ ['text'=>'🔍 پیش‌نمایش آیتم‌ها - '.e($r['name']),'callback_data'=>'user_shop:factory_preview|id='.$r['id']] ];
 
             }
 
@@ -5946,7 +6555,7 @@ function processCallback(array $callback): void {
 
             $kb=[]; $lines=['کارخانه‌های من:'];
 
-            foreach($fs as $f){ $lines[]='- '.e($f['name']).' | لول: '.$f['level']; $kb[]=[ ['text'=>'دریافت تولید امروز - '.e($f['name']), 'callback_data'=>'user_shop:factory_claim|fid='.$f['fid']] ]; }
+            foreach($fs as $f){ $lines[]='- '.e($f['name']).' | لول: '.$f['level']; $kb[]=[ ['text'=>'دریافت تولید امروز - '.e($f['name']), 'callback_data'=>'user_shop:factory_claim|fid='.$f['fid']] ]; $kb[]=[ ['text'=>'انتخاب آیتم‌های روزانه - '.e($f['name']), 'callback_data'=>'user_shop:factory_daily_select|fid='.$f['fid']] ]; }
 
             $kb[]=[ ['text'=>'بازگشت','callback_data'=>'user_shop:factories'] ];
 
@@ -5958,29 +6567,56 @@ function processCallback(array $callback): void {
 
         if (strpos($route,'factory_buy')===0) {
 
-            $fid=(int)($params['id']??0); $lvl=(int)($params['lvl']??1); if($lvl!==1 && $lvl!==2){ $lvl=1; }
+            $factory_enabled = (int)(getSetting('factory_system_enabled', '1') ?: 1);
+            if (!$factory_enabled) { answerCallback($callback['id'], 'سیستم کارخانه غیرفعال است', true); return; }
 
-            $f = db()->prepare("SELECT id,name,price_l1,price_l2 FROM factories WHERE id=?"); $f->execute([$fid]); $fr=$f->fetch(); if(!$fr){ answerCallback($callback['id'],'ناموجود', true); return; }
+            $fid=(int)($params['id']??0); $lvl=(int)($params['lvl']??1); if($lvl<1 || $lvl>6){ $lvl=1; }
+
+            $f = db()->prepare("SELECT id,name,price_l1,price_l2,price_l3,price_l4,price_l5,price_l6 FROM factories WHERE id=?"); $f->execute([$fid]); $fr=$f->fetch(); if(!$fr){ answerCallback($callback['id'],'ناموجود', true); return; }
 
             $owned = db()->prepare("SELECT id, level FROM user_factories WHERE user_id=? AND factory_id=?"); $owned->execute([$uid,$fid]); $ow=$owned->fetch();
 
-            $price = $lvl===1 ? (int)$fr['price_l1'] : (int)$fr['price_l2'];
+            $price = 0;
+            switch($lvl){
+                case 1: $price = (int)$fr['price_l1']; break;
+                case 2: $price = (int)$fr['price_l2']; break;
+                case 3: $price = (int)$fr['price_l3']; break;
+                case 4: $price = (int)$fr['price_l4']; break;
+                case 5: $price = (int)$fr['price_l5']; break;
+                case 6: $price = (int)$fr['price_l6']; break;
+            }
 
             if ($ow) {
 
                 if ((int)$ow['level'] >= $lvl) { answerCallback($callback['id'],'قبلاً این سطح را دارید', true); return; }
 
-                // upgrade to level 2
+                // Check if leveling is enabled
+                $leveling_enabled = (int)(getSetting('factory_leveling_enabled', '1') ?: 1);
+                if ($leveling_enabled) {
+                    // Check if user has enough M coins for leveling
+                    $level_cost = db()->prepare("SELECT mcoin_cost FROM factory_level_costs WHERE factory_id=? AND level=?"); $level_cost->execute([$fid,$lvl]); $lc=$level_cost->fetch();
+                    $mcoin_cost = $lc ? (int)$lc['mcoin_cost'] : 0;
 
-                if ((int)$urow['money'] < $price) { answerCallback($callback['id'],'موجودی کافی نیست', true); return; }
+                    if ($mcoin_cost > 0) {
+                        if ((int)$urow['m_coins'] < $mcoin_cost) { answerCallback($callback['id'],'M Coin کافی نیست', true); return; }
+                    } else {
+                        if ((int)$urow['money'] < $price) { answerCallback($callback['id'],'موجودی کافی نیست', true); return; }
+                    }
+                } else {
+                    if ((int)$urow['money'] < $price) { answerCallback($callback['id'],'موجودی کافی نیست', true); return; }
+                }
 
                 db()->beginTransaction();
 
                 try {
 
-                    db()->prepare("UPDATE users SET money = money - ? WHERE id=?")->execute([$price, $uid]);
+                    if ($leveling_enabled && $mcoin_cost > 0) {
+                        db()->prepare("UPDATE users SET m_coins = m_coins - ? WHERE id=?")->execute([$mcoin_cost, $uid]);
+                    } else {
+                        db()->prepare("UPDATE users SET money = money - ? WHERE id=?")->execute([$price, $uid]);
+                    }
 
-                    db()->prepare("UPDATE user_factories SET level=2 WHERE id=?")->execute([(int)$ow['id']]);
+                    db()->prepare("UPDATE user_factories SET level=? WHERE id=?")->execute([$lvl, (int)$ow['id']]);
 
                     db()->commit();
 
@@ -6010,9 +6646,9 @@ function processCallback(array $callback): void {
 
             // refresh factory list
 
-            $rows = db()->query("SELECT id,name,price_l1,price_l2 FROM factories ORDER BY id DESC")->fetchAll();
+            $rows = db()->query("SELECT id,name,price_l1,price_l2,price_l3,price_l4,price_l5,price_l6 FROM factories ORDER BY id DESC")->fetchAll();
 
-            $kb=[]; $lines=['کارخانه‌های نظامی:']; foreach($rows as $r){ $lines[]='- '.e($r['name']).' | L1: '.formatPrice((int)$r['price_l1']).' | L2: '.formatPrice((int)$r['price_l2']); $kb[]=[ ['text'=>'خرید L1 - '.e($r['name']),'callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=1'], ['text'=>'خرید L2','callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=2'] ]; }
+            $kb=[]; $lines=['کارخانه‌های نظامی:']; foreach($rows as $r){ $lines[]='- '.e($r['name']).' | L1: '.formatPrice((int)$r['price_l1']).' | L2: '.formatPrice((int)$r['price_l2']).' | L3: '.formatPrice((int)$r['price_l3']).' | L4: '.formatPrice((int)$r['price_l4']).' | L5: '.formatPrice((int)$r['price_l5']).' | L6: '.formatPrice((int)$r['price_l6']); $kb[]=[ ['text'=>'خرید L1 - '.e($r['name']),'callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=1'], ['text'=>'خرید L2','callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=2'] ]; $kb[]=[ ['text'=>'خرید L3','callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=3'], ['text'=>'خرید L4','callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=4'] ]; $kb[]=[ ['text'=>'خرید L5','callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=5'], ['text'=>'خرید L6','callback_data'=>'user_shop:factory_buy|id='.$r['id'].'|lvl=6'] ]; }
 
             $kb[]=[ ['text'=>'کارخانه‌های من','callback_data'=>'user_shop:myfactories'] ];
 
@@ -6038,9 +6674,18 @@ function processCallback(array $callback): void {
 
             $uf = db()->prepare("SELECT uf.level, uf.factory_id FROM user_factories uf WHERE uf.id=? AND uf.user_id=?"); $uf->execute([$ufid,$uid]); $ufo=$uf->fetch(); if(!$ufo){ answerCallback($callback['id'],'یافت نشد', true); return; }
 
-            $lvl=(int)$ufo['level']; $fp = db()->prepare("SELECT qty_l1, qty_l2 FROM factory_products WHERE factory_id=? AND item_id=?"); $fp->execute([(int)$ufo['factory_id'],$item]); $pr=$fp->fetch(); if(!$pr){ answerCallback($callback['id'],'محصول یافت نشد', true); return; }
+            $lvl=(int)$ufo['level']; $fp = db()->prepare("SELECT qty_l1, qty_l2, qty_l3, qty_l4, qty_l5, qty_l6 FROM factory_products WHERE factory_id=? AND item_id=?"); $fp->execute([(int)$ufo['factory_id'],$item]); $pr=$fp->fetch(); if(!$pr){ answerCallback($callback['id'],'محصول یافت نشد', true); return; }
 
-            $units = $lvl===2 ? (int)$pr['qty_l2'] : (int)$pr['qty_l1']; if($units<=0){ answerCallback($callback['id'],'تولیدی تعریف نشده', true); return; }
+            $units = 0;
+            switch($lvl){
+                case 1: $units = (int)$pr['qty_l1']; break;
+                case 2: $units = (int)$pr['qty_l2']; break;
+                case 3: $units = (int)$pr['qty_l3']; break;
+                case 4: $units = (int)$pr['qty_l4']; break;
+                case 5: $units = (int)$pr['qty_l5']; break;
+                case 6: $units = (int)$pr['qty_l6']; break;
+            }
+            if($units<=0){ answerCallback($callback['id'],'تولیدی تعریف نشده', true); return; }
 
             addUnitsForUser($uid, $item, $units);
 
@@ -6064,15 +6709,106 @@ function processCallback(array $callback): void {
 
             $today = (new DateTime('now', new DateTimeZone('Asia/Tehran')))->format('Y-m-d');
 
-            $chk = db()->prepare("SELECT granted FROM user_factory_grants WHERE user_factory_id=? AND for_date=?"); $chk->execute([$ufid,$today]); $ex=$chk->fetch(); if($ex && (int)$ex['granted']===1){ answerCallback($callback['id'],'قبلاً دریافت شده', true); return; }
+            // Check timing configuration
+            $timing = db()->prepare("SELECT claim_interval_hours, max_claims_per_day FROM factory_timing_config WHERE factory_id=?"); $timing->execute([$fid]); $t=$timing->fetch();
+            $interval_hours = $t ? (int)$t['claim_interval_hours'] : 24;
+            $max_claims = $t ? (int)$t['max_claims_per_day'] : 1;
 
-            // list products
+            // Check if user can claim now based on interval
+            $last_claim = db()->prepare("SELECT MAX(created_at) as last_claim FROM user_factory_grants WHERE user_factory_id=? AND granted=1"); $last_claim->execute([$ufid]); $lc=$last_claim->fetch();
+            if($lc && $lc['last_claim']){
+                $last_claim_time = new DateTime($lc['last_claim'], new DateTimeZone('Asia/Tehran'));
+                $now = new DateTime('now', new DateTimeZone('Asia/Tehran'));
+                $hours_since_last = ($now->getTimestamp() - $last_claim_time->getTimestamp()) / 3600;
+                if($hours_since_last < $interval_hours){
+                    $remaining = ceil($interval_hours - $hours_since_last);
+                    answerCallback($callback['id'],'باید '.$remaining.' ساعت دیگر صبر کنید', true); return;
+                }
+            }
 
-            $ps = db()->prepare("SELECT fp.item_id, si.name, fp.qty_l1, fp.qty_l2 FROM factory_products fp JOIN shop_items si ON si.id=fp.item_id WHERE fp.factory_id=? ORDER BY si.name ASC"); $ps->execute([$fid]); $rows=$ps->fetchAll(); if(!$rows){ answerCallback($callback['id'],'محصولی ثبت نشده', true); return; }
+            // Check daily claim limit
+            $today_claims = db()->prepare("SELECT COUNT(*) as count FROM user_factory_grants WHERE user_factory_id=? AND DATE(created_at)=? AND granted=1"); $today_claims->execute([$ufid,$today]); $tc=$today_claims->fetch();
+            if($tc && (int)$tc['count'] >= $max_claims){
+                answerCallback($callback['id'],'حداکثر دریافت روزانه رسیده است', true); return;
+            }
+
+            // Check for daily selections first
+            $daily_selection = db()->prepare("SELECT selected_items FROM factory_daily_selections WHERE user_factory_id=? AND for_date=?"); $daily_selection->execute([$ufid,$today]); $ds=$daily_selection->fetch();
+            
+            if($ds && $ds['selected_items']){
+                $selected_items = json_decode($ds['selected_items'], true);
+                if(!empty($selected_items)){
+                    // Process daily selections
+                    $total_added = 0;
+                    foreach($selected_items as $item_key){
+                        list($type, $id) = explode('_', $item_key, 2);
+                        $id = (int)$id;
+                        
+                        if($type === 'shop'){
+                            $item = db()->prepare("SELECT fp.qty_l1, fp.qty_l2, fp.qty_l3, fp.qty_l4, fp.qty_l5, fp.qty_l6, si.name FROM factory_products fp JOIN shop_items si ON si.id=fp.item_id WHERE fp.factory_id=? AND fp.item_id=?"); $item->execute([$fid,$id]); $item_row=$item->fetch();
+                            if($item_row){
+                                $units = 0;
+                                switch($lvl){
+                                    case 1: $units = (int)$item_row['qty_l1']; break;
+                                    case 2: $units = (int)$item_row['qty_l2']; break;
+                                    case 3: $units = (int)$item_row['qty_l3']; break;
+                                    case 4: $units = (int)$item_row['qty_l4']; break;
+                                    case 5: $units = (int)$item_row['qty_l5']; break;
+                                    case 6: $units = (int)$item_row['qty_l6']; break;
+                                }
+                                if($units > 0){
+                                    addUnitsForUser($uid, $id, $units);
+                                    $total_added += $units;
+                                }
+                            }
+                        } else if($type === 'custom'){
+                            $item = db()->prepare("SELECT qty_l1, qty_l2, qty_l3, qty_l4, qty_l5, qty_l6, name FROM factory_custom_items WHERE factory_id=? AND id=?"); $item->execute([$fid,$id]); $item_row=$item->fetch();
+                            if($item_row){
+                                $units = 0;
+                                switch($lvl){
+                                    case 1: $units = (int)$item_row['qty_l1']; break;
+                                    case 2: $units = (int)$item_row['qty_l2']; break;
+                                    case 3: $units = (int)$item_row['qty_l3']; break;
+                                    case 4: $units = (int)$item_row['qty_l4']; break;
+                                    case 5: $units = (int)$item_row['qty_l5']; break;
+                                    case 6: $units = (int)$item_row['qty_l6']; break;
+                                }
+                                if($units > 0){
+                                    // Add custom item to user's assets
+                                    $user_assets = db()->prepare("SELECT assets_text FROM users WHERE id=?"); $user_assets->execute([$uid]); $ua=$user_assets->fetch();
+                                    $current_assets = $ua['assets_text'] ?: '';
+                                    $new_assets = $current_assets . "\n" . $item_row['name'] . ": " . $units;
+                                    db()->prepare("UPDATE users SET assets_text=? WHERE id=?")->execute([trim($new_assets), $uid]);
+                                    $total_added += $units;
+                                }
+                            }
+                        }
+                    }
+                    
+                    if($total_added > 0){
+                        db()->prepare("INSERT INTO user_factory_grants (user_factory_id,for_date,granted,chosen_item_id) VALUES (?,?,1,?) ON DUPLICATE KEY UPDATE granted=VALUES(granted), chosen_item_id=VALUES(chosen_item_id)")->execute([$ufid,$today,0]);
+                        answerCallback($callback['id'],'آیتم‌های انتخاب شده اضافه شدند');
+                        editMessageText($chatId,$messageId,'آیتم‌های انتخاب شده اضافه شدند.',['inline_keyboard'=>[[['text'=>'بازگشت','callback_data'=>'user_shop:myfactories']]]] );
+                        return;
+                    }
+                }
+            }
+
+            // Fallback to old system if no daily selections
+            $ps = db()->prepare("SELECT fp.item_id, si.name, fp.qty_l1, fp.qty_l2, fp.qty_l3, fp.qty_l4, fp.qty_l5, fp.qty_l6 FROM factory_products fp JOIN shop_items si ON si.id=fp.item_id WHERE fp.factory_id=? ORDER BY si.name ASC"); $ps->execute([$fid]); $rows=$ps->fetchAll(); if(!$rows){ answerCallback($callback['id'],'محصولی ثبت نشده', true); return; }
 
             if (count($rows)===1) {
 
-                $units = $lvl===2 ? (int)$rows[0]['qty_l2'] : (int)$rows[0]['qty_l1']; if($units<=0){ answerCallback($callback['id'],'تولیدی تعریف نشده', true); return; }
+                $units = 0;
+                switch($lvl){
+                    case 1: $units = (int)$rows[0]['qty_l1']; break;
+                    case 2: $units = (int)$rows[0]['qty_l2']; break;
+                    case 3: $units = (int)$rows[0]['qty_l3']; break;
+                    case 4: $units = (int)$rows[0]['qty_l4']; break;
+                    case 5: $units = (int)$rows[0]['qty_l5']; break;
+                    case 6: $units = (int)$rows[0]['qty_l6']; break;
+                }
+                if($units<=0){ answerCallback($callback['id'],'تولیدی تعریف نشده', true); return; }
 
                 addUnitsForUser($uid, (int)$rows[0]['item_id'], $units);
 
@@ -6088,7 +6824,18 @@ function processCallback(array $callback): void {
 
             // ask user to pick one product
 
-            $kb=[]; $lines=['یک محصول انتخاب کنید:']; foreach($rows as $r){ $units = $lvl===2 ? (int)$r['qty_l2'] : (int)$r['qty_l1']; $lines[]='- '.e($r['name']).' | مقدار: '.$units; $kb[]=[ ['text'=>e($r['name']), 'callback_data'=>'user_shop:factory_claim_pick|ufid='.$ufid.'|item='.$r['item_id']] ]; }
+            $kb=[]; $lines=['یک محصول انتخاب کنید:']; foreach($rows as $r){ 
+                $units = 0;
+                switch($lvl){
+                    case 1: $units = (int)$r['qty_l1']; break;
+                    case 2: $units = (int)$r['qty_l2']; break;
+                    case 3: $units = (int)$r['qty_l3']; break;
+                    case 4: $units = (int)$r['qty_l4']; break;
+                    case 5: $units = (int)$r['qty_l5']; break;
+                    case 6: $units = (int)$r['qty_l6']; break;
+                }
+                $lines[]='- '.e($r['name']).' | مقدار: '.$units; $kb[]=[ ['text'=>e($r['name']), 'callback_data'=>'user_shop:factory_claim_pick|ufid='.$ufid.'|item='.$r['item_id']] ]; 
+            }
 
             $kb[]=[ ['text'=>'بازگشت','callback_data'=>'user_shop:myfactories'] ];
 
@@ -6096,6 +6843,279 @@ function processCallback(array $callback): void {
 
             return;
 
+        }
+
+        if (strpos($route,'factory_daily_select')===0) {
+
+            $daily_selection_enabled = (int)(getSetting('factory_daily_selection_enabled', '1') ?: 1);
+            if (!$daily_selection_enabled) { answerCallback($callback['id'], 'انتخاب روزانه آیتم‌ها غیرفعال است', true); return; }
+
+            $fid=(int)($params['fid']??0);
+
+            $uf = db()->prepare("SELECT id, level FROM user_factories WHERE user_id=? AND factory_id=?"); $uf->execute([$uid,$fid]); $ufo=$uf->fetch(); if(!$ufo){ answerCallback($callback['id'],'ندارید', true); return; }
+
+            $ufid=(int)$ufo['id']; $lvl=(int)$ufo['level'];
+
+            // Get all available items for this factory
+            $shop_items = db()->prepare("SELECT fp.item_id, si.name, fp.qty_l1, fp.qty_l2, fp.qty_l3, fp.qty_l4, fp.qty_l5, fp.qty_l6 FROM factory_products fp JOIN shop_items si ON si.id=fp.item_id WHERE fp.factory_id=? ORDER BY si.name ASC"); $shop_items->execute([$fid]); $shop_rows=$shop_items->fetchAll();
+
+            $custom_items = db()->prepare("SELECT id, name, qty_l1, qty_l2, qty_l3, qty_l4, qty_l5, qty_l6 FROM factory_custom_items WHERE factory_id=? ORDER BY name ASC"); $custom_items->execute([$fid]); $custom_rows=$custom_items->fetchAll();
+
+            $all_items = [];
+            foreach($shop_rows as $r){
+                $units = 0;
+                switch($lvl){
+                    case 1: $units = (int)$r['qty_l1']; break;
+                    case 2: $units = (int)$r['qty_l2']; break;
+                    case 3: $units = (int)$r['qty_l3']; break;
+                    case 4: $units = (int)$r['qty_l4']; break;
+                    case 5: $units = (int)$r['qty_l5']; break;
+                    case 6: $units = (int)$r['qty_l6']; break;
+                }
+                if($units > 0){
+                    $all_items[] = ['type'=>'shop', 'id'=>$r['item_id'], 'name'=>$r['name'], 'units'=>$units];
+                }
+            }
+
+            foreach($custom_rows as $r){
+                $units = 0;
+                switch($lvl){
+                    case 1: $units = (int)$r['qty_l1']; break;
+                    case 2: $units = (int)$r['qty_l2']; break;
+                    case 3: $units = (int)$r['qty_l3']; break;
+                    case 4: $units = (int)$r['qty_l4']; break;
+                    case 5: $units = (int)$r['qty_l5']; break;
+                    case 6: $units = (int)$r['qty_l6']; break;
+                }
+                if($units > 0){
+                    $all_items[] = ['type'=>'custom', 'id'=>$r['id'], 'name'=>$r['name'], 'units'=>$units];
+                }
+            }
+
+            if(empty($all_items)){ answerCallback($callback['id'],'آیتمی برای انتخاب موجود نیست', true); return; }
+
+            // Get current selections for today
+            $today = (new DateTime('now', new DateTimeZone('Asia/Tehran')))->format('Y-m-d');
+            $current = db()->prepare("SELECT selected_items FROM factory_daily_selections WHERE user_factory_id=? AND for_date=?"); $current->execute([$ufid,$today]); $current_row=$current->fetch();
+            $selected = $current_row ? json_decode($current_row['selected_items'], true) : [];
+
+            $lines = ['انتخاب آیتم‌های روزانه (لول '.$lvl.'):', ''];
+            $kb = [];
+
+            foreach($all_items as $item){
+                $is_selected = in_array($item['type'].'_'.$item['id'], $selected);
+                $lines[] = ($is_selected ? '✓ ' : '○ ').e($item['name']).' | مقدار: '.$item['units'];
+                $kb[] = [ ['text'=>($is_selected ? '✓ ' : '○ ').e($item['name']), 'callback_data'=>'user_shop:factory_toggle_item|fid='.$fid.'|type='.$item['type'].'|id='.$item['id']] ];
+            }
+
+            $kb[] = [ ['text'=>'تأیید انتخاب', 'callback_data'=>'user_shop:factory_confirm_selection|fid='.$fid] ];
+            $kb[] = [ ['text'=>'بازگشت', 'callback_data'=>'user_shop:myfactories'] ];
+
+            editMessageText($chatId,$messageId,implode("\n",$lines), ['inline_keyboard'=>$kb]);
+
+            return;
+
+        }
+
+        if (strpos($route,'factory_toggle_item')===0) {
+
+            $fid=(int)($params['fid']??0); $type=$params['type']; $id=(int)($params['id']??0);
+
+            $uf = db()->prepare("SELECT id FROM user_factories WHERE user_id=? AND factory_id=?"); $uf->execute([$uid,$fid]); $ufo=$uf->fetch(); if(!$ufo){ answerCallback($callback['id'],'ندارید', true); return; }
+
+            $ufid=(int)$ufo['id'];
+
+            $today = (new DateTime('now', new DateTimeZone('Asia/Tehran')))->format('Y-m-d');
+            $current = db()->prepare("SELECT selected_items FROM factory_daily_selections WHERE user_factory_id=? AND for_date=?"); $current->execute([$ufid,$today]); $current_row=$current->fetch();
+            $selected = $current_row ? json_decode($current_row['selected_items'], true) : [];
+
+            $item_key = $type.'_'.$id;
+            if(in_array($item_key, $selected)){
+                $selected = array_diff($selected, [$item_key]);
+            } else {
+                $selected[] = $item_key;
+            }
+
+            db()->prepare("INSERT INTO factory_daily_selections (user_factory_id,for_date,selected_items) VALUES (?,?,?) ON DUPLICATE KEY UPDATE selected_items=VALUES(selected_items)")->execute([$ufid,$today,json_encode($selected)]);
+
+            answerCallback($callback['id'],'تغییر کرد');
+
+            // Refresh the selection page
+            $fakeMsgId = $messageId ?: 0;
+            handleAdminNav($chatId, $fakeMsgId, 'factory_daily_select', ['fid'=>$fid], ['telegram_id'=>$chatId]);
+
+            return;
+
+        }
+
+        if (strpos($route,'factory_confirm_selection')===0) {
+
+            $fid=(int)($params['fid']??0);
+
+            $uf = db()->prepare("SELECT id FROM user_factories WHERE user_id=? AND factory_id=?"); $uf->execute([$uid,$fid]); $ufo=$uf->fetch(); if(!$ufo){ answerCallback($callback['id'],'ندارید', true); return; }
+
+            $ufid=(int)$ufo['id'];
+
+            $today = (new DateTime('now', new DateTimeZone('Asia/Tehran')))->format('Y-m-d');
+            $current = db()->prepare("SELECT selected_items FROM factory_daily_selections WHERE user_factory_id=? AND for_date=?"); $current->execute([$ufid,$today]); $current_row=$current->fetch();
+            $selected = $current_row ? json_decode($current_row['selected_items'], true) : [];
+
+            if(empty($selected)){ answerCallback($callback['id'],'هیچ آیتمی انتخاب نشده', true); return; }
+
+            answerCallback($callback['id'],'انتخاب تأیید شد');
+
+            editMessageText($chatId,$messageId,'انتخاب آیتم‌های روزانه تأیید شد.', ['inline_keyboard'=>[[['text'=>'بازگشت', 'callback_data'=>'user_shop:myfactories']]]]);
+
+            return;
+
+        }
+
+        if (strpos($route,'factory_preview')===0) {
+
+            $preview_enabled = (int)(getSetting('factory_preview_enabled', '1') ?: 1);
+            if (!$preview_enabled) { answerCallback($callback['id'], 'پیش‌نمایش کارخانه غیرفعال است', true); return; }
+
+            $fid=(int)($params['id']??0);
+
+            $f = db()->prepare("SELECT name, price_l1, price_l2, price_l3, price_l4, price_l5, price_l6 FROM factories WHERE id=?"); $f->execute([$fid]); $fr=$f->fetch(); if(!$fr){ answerCallback($callback['id'],'ناموجود', true); return; }
+
+            // Get shop items
+            $shop_items = db()->prepare("SELECT fp.item_id, si.name, fp.qty_l1, fp.qty_l2, fp.qty_l3, fp.qty_l4, fp.qty_l5, fp.qty_l6 FROM factory_products fp JOIN shop_items si ON si.id=fp.item_id WHERE fp.factory_id=? ORDER BY si.name ASC"); $shop_items->execute([$fid]); $shop_rows=$shop_items->fetchAll();
+
+            // Get custom items
+            $custom_items = db()->prepare("SELECT id, name, qty_l1, qty_l2, qty_l3, qty_l4, qty_l5, qty_l6 FROM factory_custom_items WHERE factory_id=? ORDER BY name ASC"); $custom_items->execute([$fid]); $custom_rows=$custom_items->fetchAll();
+
+            $lines = ['🔍 پیش‌نمایش کارخانه: '.e($fr['name']), '', 'قیمت‌ها:'];
+            $lines[] = 'L1: '.formatPrice((int)$fr['price_l1']).' | L2: '.formatPrice((int)$fr['price_l2']).' | L3: '.formatPrice((int)$fr['price_l3']));
+            $lines[] = 'L4: '.formatPrice((int)$fr['price_l4']).' | L5: '.formatPrice((int)$fr['price_l5']).' | L6: '.formatPrice((int)$fr['price_l6']));
+
+            $lines[] = ''; $lines[] = 'آیتم‌های شاپی:';
+            if(empty($shop_rows)){ $lines[] = '—'; }
+            foreach($shop_rows as $r){
+                $lines[] = '• '.e($r['name']);
+                $lines[] = '  L1: '.$r['qty_l1'].' | L2: '.$r['qty_l2'].' | L3: '.$r['qty_l3'];
+                $lines[] = '  L4: '.$r['qty_l4'].' | L5: '.$r['qty_l5'].' | L6: '.$r['qty_l6'];
+            }
+
+            $lines[] = ''; $lines[] = 'آیتم‌های اختصاصی:';
+            if(empty($custom_rows)){ $lines[] = '—'; }
+            foreach($custom_rows as $r){
+                $lines[] = '• '.e($r['name']);
+                $lines[] = '  L1: '.$r['qty_l1'].' | L2: '.$r['qty_l2'].' | L3: '.$r['qty_l3'];
+                $lines[] = '  L4: '.$r['qty_l4'].' | L5: '.$r['qty_l5'].' | L6: '.$r['qty_l6'];
+            }
+
+            $kb = [
+                [ ['text'=>'خرید L1', 'callback_data'=>'user_shop:factory_buy|id='.$fid.'|lvl=1'], ['text'=>'خرید L2', 'callback_data'=>'user_shop:factory_buy|id='.$fid.'|lvl=2'] ],
+                [ ['text'=>'خرید L3', 'callback_data'=>'user_shop:factory_buy|id='.$fid.'|lvl=3'], ['text'=>'خرید L4', 'callback_data'=>'user_shop:factory_buy|id='.$fid.'|lvl=4'] ],
+                [ ['text'=>'خرید L5', 'callback_data'=>'user_shop:factory_buy|id='.$fid.'|lvl=5'], ['text'=>'خرید L6', 'callback_data'=>'user_shop:factory_buy|id='.$fid.'|lvl=6'] ],
+                [ ['text'=>'بازگشت', 'callback_data'=>'user_shop:factories'] ]
+            ];
+
+            editMessageText($chatId,$messageId,implode("\n",$lines), ['inline_keyboard'=>$kb]);
+
+            return;
+
+        }
+
+        if ($route === 'mcoin_shop') {
+            $cats = db()->query("SELECT id, name FROM shop_categories ORDER BY sort_order ASC, name ASC")->fetchAll();
+            $kb=[]; 
+            foreach($cats as $c){ 
+                $kb[]=[ ['text'=>$c['name'], 'callback_data'=>'user_shop:mcoin_cat|id='.$c['id']] ]; 
+            }
+            $kb[]=[ ['text'=>'سبد خرید M Coin','callback_data'=>'user_shop:mcoin_cart'] ];
+            $kb[]=[ ['text'=>'بازگشت به فروشگاه','callback_data'=>'nav:shop'], ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
+            editMessageText($chatId,$messageId,'M Coin Shop',['inline_keyboard'=>$kb]);
+            return;
+        }
+
+        if (strpos($route,'mcoin_cat')===0) {
+            $cid=(int)($params['id']??0);
+            $st = db()->prepare("SELECT id,name,unit_price,mcoin_price,pack_size,per_user_limit,daily_profit_per_pack FROM shop_items WHERE category_id=? AND enabled=1 AND mcoin_price>0 ORDER BY name ASC"); 
+            $st->execute([$cid]); $rows=$st->fetchAll();
+            if (!$rows) { editMessageText($chatId,$messageId,'این دسته خالی است.', ['inline_keyboard'=>[[['text'=>'بازگشت به M Coin Shop','callback_data'=>'user_shop:mcoin_shop']], [['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]] ); return; }
+            $kb=[]; $lines=['آیتم‌های M Coin:']; 
+            foreach($rows as $r){ 
+                $line = e($r['name']).' | قیمت: '.formatPrice((int)$r['mcoin_price']).' M Coin | بسته: '.$r['pack_size']; 
+                if((int)$r['daily_profit_per_pack']>0){ $line.=' | سود روزانه/بسته: '.$r['daily_profit_per_pack']; } 
+                $lines[]=$line; 
+                $kb[]=[ ['text'=>'افزودن به سبد - '.$r['name'], 'callback_data'=>'user_shop:mcoin_add|id='.$r['id']] ]; 
+            }
+            $kb[]=[ ['text'=>'مشاهده سبد خرید M Coin','callback_data'=>'user_shop:mcoin_cart'] ];
+            $kb[]=[ ['text'=>'بازگشت به M Coin Shop','callback_data'=>'user_shop:mcoin_shop'], ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
+            editMessageText($chatId,$messageId,implode("\n",$lines),['inline_keyboard'=>$kb]);
+            return;
+        }
+
+        if (strpos($route,'mcoin_add')===0) {
+            $item_id=(int)($params['id']??0);
+            $item = db()->prepare("SELECT name,mcoin_price,pack_size FROM shop_items WHERE id=? AND enabled=1 AND mcoin_price>0"); $item->execute([$item_id]); $it=$item->fetch();
+            if(!$it){ answerCallback($callback['id'],'آیتم یافت نشد', true); return; }
+            
+            // Add to M coin cart
+            db()->prepare("INSERT INTO user_mcoin_cart_items (user_id,item_id,quantity,unit_price) VALUES (?,?,1,?) ON DUPLICATE KEY UPDATE quantity=quantity+1")->execute([$uid,$item_id,(int)$it['mcoin_price']]);
+            answerCallback($callback['id'],'اضافه شد');
+            return;
+        }
+
+        if ($route === 'mcoin_cart') {
+            $rows = db()->prepare("SELECT umci.item_id, umci.quantity, si.name, umci.unit_price FROM user_mcoin_cart_items umci JOIN shop_items si ON si.id=umci.item_id WHERE umci.user_id=? ORDER BY si.name ASC");
+            $rows->execute([$uid]); $items=$rows->fetchAll();
+            if (!$items) { editMessageText($chatId,$messageId,'سبد خرید M Coin شما خالی است.', ['inline_keyboard'=>[[['text'=>'بازگشت به M Coin Shop','callback_data'=>'user_shop:mcoin_shop']], [['text'=>'بازگشت به منو','callback_data'=>'nav:home']]]] ); return; }
+            $lines=['سبد خرید M Coin:']; $kb=[]; foreach($items as $it){ $lines[]='- '.e($it['name']).' | تعداد: '.$it['quantity'].' | قیمت: '.formatPrice((int)$it['unit_price']*$it['quantity']).' M Coin'; $kb[]=[ ['text'=>'+','callback_data'=>'user_shop:mcoin_inc|id='.$it['item_id']], ['text'=>'-','callback_data'=>'user_shop:mcoin_dec|id='.$it['item_id']] ]; }
+            $total = 0; foreach($items as $it){ $total += (int)$it['unit_price']*$it['quantity']; }
+            $lines[]=''; $lines[]='جمع کل: '.formatPrice($total).' M Coin';
+            $kb[]=[ ['text'=>'خرید','callback_data'=>'user_shop:mcoin_checkout'] ];
+            $kb[]=[ ['text'=>'بازگشت به M Coin Shop','callback_data'=>'user_shop:mcoin_shop'], ['text'=>'بازگشت به منو','callback_data'=>'nav:home'] ];
+            editMessageText($chatId,$messageId,implode("\n",$lines), ['inline_keyboard'=>$kb]);
+            return;
+        }
+
+        if (strpos($route,'mcoin_inc')===0) {
+            $item_id=(int)($params['id']??0);
+            db()->prepare("UPDATE user_mcoin_cart_items SET quantity=quantity+1 WHERE user_id=? AND item_id=?")->execute([$uid,$item_id]);
+            answerCallback($callback['id'],'افزوده شد');
+            return;
+        }
+
+        if (strpos($route,'mcoin_dec')===0) {
+            $item_id=(int)($params['id']??0);
+            $current = db()->prepare("SELECT quantity FROM user_mcoin_cart_items WHERE user_id=? AND item_id=?"); $current->execute([$uid,$item_id]); $qty=$current->fetch();
+            if($qty && (int)$qty['quantity']>1){
+                db()->prepare("UPDATE user_mcoin_cart_items SET quantity=quantity-1 WHERE user_id=? AND item_id=?")->execute([$uid,$item_id]);
+                answerCallback($callback['id'],'کاهش یافت');
+            } else {
+                db()->prepare("DELETE FROM user_mcoin_cart_items WHERE user_id=? AND item_id=?")->execute([$uid,$item_id]);
+                answerCallback($callback['id'],'حذف شد');
+            }
+            return;
+        }
+
+        if ($route === 'mcoin_checkout') {
+            $items = db()->prepare("SELECT umci.item_id, umci.quantity, si.name, umci.unit_price, si.pack_size FROM user_mcoin_cart_items umci JOIN shop_items si ON si.id=umci.item_id WHERE umci.user_id=?");
+            $items->execute([$uid]); $rows=$items->fetchAll();
+            if(!$rows){ answerCallback($callback['id'],'سبد خالی است', true); return; }
+            
+            $total = 0; foreach($rows as $r){ $total += (int)$r['unit_price']*$r['quantity']; }
+            if((int)$urow['m_coins'] < $total){ answerCallback($callback['id'],'M Coin کافی نیست', true); return; }
+            
+            db()->beginTransaction();
+            try {
+                db()->prepare("UPDATE users SET m_coins = m_coins - ? WHERE id=?")->execute([$total, $uid]);
+                foreach($rows as $r){
+                    $units = (int)$r['quantity'] * (int)$r['pack_size'];
+                    addUnitsForUser($uid, (int)$r['item_id'], $units);
+                }
+                db()->prepare("DELETE FROM user_mcoin_cart_items WHERE user_id=?")->execute([$uid]);
+                db()->commit();
+                answerCallback($callback['id'],'خرید موفق');
+                editMessageText($chatId,$messageId,'خرید با موفقیت انجام شد.', ['inline_keyboard'=>[[['text'=>'بازگشت به M Coin Shop','callback_data'=>'user_shop:mcoin_shop']]]]);
+            } catch (Exception $e) { 
+                db()->rollBack(); 
+                answerCallback($callback['id'],'خطا در خرید', true); 
+            }
+            return;
         }
 
         if ($route === 'cart') {
