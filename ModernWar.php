@@ -1,7 +1,5 @@
 <?php
 
-
-
 /**
 
  * Single-file Telegram Bot in PHP with MySQL
@@ -18,11 +16,7 @@
 
  */
 
-
-
 // --------------------- CONFIGURATION ---------------------
-
-
 
 // Telegram bot token
 
@@ -30,19 +24,13 @@ const BOT_TOKEN = '7657246591:AAF9b-UEuyypu5tIhQ-KrMvqnxn56vIxIXQ';
 
 const API_URL   = 'https://api.telegram.org/bot' . BOT_TOKEN . '/';
 
-
-
 // Main (owner) admin numeric ID
 
 const MAIN_ADMIN_ID = 5641303137; // Replace with your Telegram numeric ID
 
-
-
 // Channel ID for posting statements/war announcements and wheel winners (e.g., -1001234567890)
 
 const CHANNEL_ID = -1002647850307; // Replace with your channel ID
-
-
 
 // Database credentials
 
@@ -56,29 +44,19 @@ const DB_PASS = 'hosyarww123';
 
 const DB_CHARSET = 'utf8mb4';
 
-
-
 // Debugging
 
 const DEBUG = true;
-
-
 
 // Security: optional secret path token for webhook URL validation (set to '' to disable)
 
 const WEBHOOK_SECRET = '';
 
-
-
 // Misc
 
 date_default_timezone_set('Asia/Tehran');
 
-
-
 // --------------------- INITIALIZATION ---------------------
-
-
 
 ini_set('log_errors', 1);
 
@@ -97,8 +75,6 @@ if (DEBUG) {
     error_reporting(E_ALL & ~E_NOTICE & ~E_WARNING);
 
 }
-
-
 
 function db(): PDO {
 
@@ -123,8 +99,6 @@ function db(): PDO {
     return $pdo;
 
 }
-
-
 
 function bootstrapDatabase(PDO $pdo): void {
 
@@ -169,8 +143,6 @@ function bootstrapDatabase(PDO $pdo): void {
     // M Coin system for users (admin configurable token)
     try { $pdo->exec("ALTER TABLE users ADD COLUMN m_coins BIGINT NOT NULL DEFAULT 0"); } catch (Exception $e) {}
 
-
-
     // Admin users
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS admin_users (
@@ -187,15 +159,11 @@ function bootstrapDatabase(PDO $pdo): void {
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
-
-
     // Ensure main admin exists
 
     $stmt = $pdo->prepare("INSERT IGNORE INTO admin_users (admin_telegram_id, is_owner, permissions) VALUES (?, 1, ?)");
 
     $stmt->execute([MAIN_ADMIN_ID, json_encode(["all"]) ]);
-
-
 
     // Settings (key-value)
 
@@ -207,8 +175,6 @@ function bootstrapDatabase(PDO $pdo): void {
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
-
-
     // Country flags
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS country_flags (
@@ -218,8 +184,6 @@ function bootstrapDatabase(PDO $pdo): void {
         photo_file_id VARCHAR(256) NOT NULL
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
-
 
     // User states (user-side wizards)
 
@@ -235,8 +199,6 @@ function bootstrapDatabase(PDO $pdo): void {
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
-
-
     // Admin states (admin-side wizards)
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS admin_states (
@@ -250,8 +212,6 @@ function bootstrapDatabase(PDO $pdo): void {
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
-
 
     // Support messages
 
@@ -275,8 +235,6 @@ function bootstrapDatabase(PDO $pdo): void {
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
-
-
     // Support replies
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS support_replies (
@@ -296,8 +254,6 @@ function bootstrapDatabase(PDO $pdo): void {
         CONSTRAINT fk_supprep_support FOREIGN KEY (support_id) REFERENCES support_messages(id) ON DELETE CASCADE
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
-
 
     // Submissions (army, missile, defense, statement, war, role)
 
@@ -333,8 +289,6 @@ function bootstrapDatabase(PDO $pdo): void {
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
-
-
     // Approved roles
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS approved_roles (
@@ -359,8 +313,6 @@ function bootstrapDatabase(PDO $pdo): void {
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
-
-
     // Assets by country
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS assets (
@@ -374,8 +326,6 @@ function bootstrapDatabase(PDO $pdo): void {
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
-
 
     // Button settings
 
@@ -499,8 +449,6 @@ $defaults = [
 
     }
 
-
-
     // Wheel settings (single row)
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS wheel_settings (
@@ -512,8 +460,6 @@ $defaults = [
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
     $pdo->exec("INSERT IGNORE INTO wheel_settings (id, current_prize) VALUES (1, NULL)");
-
-
 
     // Alliances
 
@@ -535,8 +481,6 @@ $defaults = [
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
-
-
     $pdo->exec("CREATE TABLE IF NOT EXISTS alliance_members (
 
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -557,8 +501,6 @@ $defaults = [
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
-
-
     // Shop categories
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS shop_categories (
@@ -572,8 +514,6 @@ $defaults = [
         UNIQUE KEY uq_cat_name (name)
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
-
 
     // Shop items
 
@@ -601,8 +541,6 @@ $defaults = [
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
-
-
     // User carts (simple: keyed by user_id)
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS user_carts (
@@ -614,8 +552,6 @@ $defaults = [
         CONSTRAINT fk_cart_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
-
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS user_cart_items (
 
@@ -634,8 +570,6 @@ $defaults = [
         CONSTRAINT fk_uci_item FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
-
 
     // User owned items (inventory)
 
@@ -657,8 +591,6 @@ $defaults = [
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
-
-
     // Track packs purchased per user per item to enforce per_user_limit
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS user_item_purchases (
@@ -678,8 +610,6 @@ $defaults = [
         CONSTRAINT fk_uip_item FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
-
 
     // Factories
 
@@ -745,8 +675,6 @@ $defaults = [
         CONSTRAINT fk_vip_uip_item FOREIGN KEY (item_id) REFERENCES vip_shop_items(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 
-
-
     $pdo->exec("CREATE TABLE IF NOT EXISTS factory_products (
 
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -764,8 +692,6 @@ $defaults = [
         CONSTRAINT fk_fp_item FOREIGN KEY (item_id) REFERENCES shop_items(id) ON DELETE CASCADE
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
-
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS user_factories (
 
@@ -786,8 +712,6 @@ $defaults = [
         CONSTRAINT fk_uf_factory FOREIGN KEY (factory_id) REFERENCES factories(id) ON DELETE CASCADE
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
-
 
     // Daily production grants
 
@@ -810,8 +734,6 @@ $defaults = [
         CONSTRAINT fk_ufg_item FOREIGN KEY (chosen_item_id) REFERENCES shop_items(id) ON DELETE SET NULL
 
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
-
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS alliance_invites (
 
@@ -837,8 +759,6 @@ $defaults = [
 
 }
 
-
-
 function rebuildDatabase(bool $dropAll = false): void {
 
     $pdo = db();
@@ -859,11 +779,7 @@ function rebuildDatabase(bool $dropAll = false): void {
 
 }
 
-
-
 // --------------------- TELEGRAM HELPERS ---------------------
-
-
 
 function apiRequest(string $method, array $params = []) {
 
@@ -893,8 +809,6 @@ function apiRequest(string $method, array $params = []) {
 
 }
 
-
-
 function apiRequestMultipart(string $method, array $params = []) {
 
     $ch = curl_init();
@@ -923,8 +837,6 @@ function apiRequestMultipart(string $method, array $params = []) {
 
 }
 
-
-
 function sendMessage($chatId, $text, $replyMarkup = null, $parseMode = 'HTML', $replyToMessageId = null) {
 
     $params = [
@@ -947,15 +859,11 @@ function sendMessage($chatId, $text, $replyMarkup = null, $parseMode = 'HTML', $
 
 }
 
-
-
 function deleteMessage($chatId, $messageId) {
 
     return apiRequest('deleteMessage', [ 'chat_id' => $chatId, 'message_id' => $messageId ]);
 
 }
-
-
 
 function editMessageText($chatId, $messageId, $text, $replyMarkup = null, $parseMode = 'HTML') {
 
@@ -1003,8 +911,6 @@ function editMessageText($chatId, $messageId, $text, $replyMarkup = null, $parse
 
 }
 
-
-
 function editMessageCaption($chatId, $messageId, $caption, $replyMarkup = null, $parseMode = 'HTML') {
 
     $params = [
@@ -1024,8 +930,6 @@ function editMessageCaption($chatId, $messageId, $caption, $replyMarkup = null, 
     return apiRequest('editMessageCaption', $params);
 
 }
-
-
 
 function sendPhoto($chatId, $fileIdOrUrl, $caption = '', $replyMarkup = null, $parseMode = 'HTML') {
 
@@ -1047,8 +951,6 @@ function sendPhoto($chatId, $fileIdOrUrl, $caption = '', $replyMarkup = null, $p
 
 }
 
-
-
 function sendPhotoFile($chatId, $filePath, $caption = '', $replyMarkup = null, $parseMode = 'HTML') {
 
     $params = [
@@ -1069,8 +971,6 @@ function sendPhotoFile($chatId, $filePath, $caption = '', $replyMarkup = null, $
 
 }
 
-
-
 function answerCallback($callbackId, $text = '', $alert = false) {
 
     return apiRequest('answerCallbackQuery', [
@@ -1084,8 +984,6 @@ function answerCallback($callbackId, $text = '', $alert = false) {
     ]);
 
 }
-
-
 
 function sendToChannel($text, $parseMode = 'HTML') {
 
@@ -1103,8 +1001,6 @@ function sendToChannel($text, $parseMode = 'HTML') {
 
 }
 
-
-
 function sendPhotoToChannel($fileIdOrUrl, $caption = '', $parseMode = 'HTML') {
 
     return apiRequest('sendPhoto', [
@@ -1121,15 +1017,9 @@ function sendPhotoToChannel($fileIdOrUrl, $caption = '', $parseMode = 'HTML') {
 
 }
 
-
-
 // --------------------- UTILS ---------------------
 
-
-
 function e($str): string { return htmlspecialchars((string)$str, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
-
-
 
 function buildWarCaption(array $submission, string $attCountry, string $defCountry): string {
 
@@ -1163,8 +1053,6 @@ function buildWarCaption(array $submission, string $attCountry, string $defCount
 
 }
 
-
-
 function sendWarWithMode(int $submissionId, int $attTid, int $defTid, string $mode='auto'): bool {
 
     $stmt = db()->prepare("SELECT * FROM submissions WHERE id=? AND type='war'");
@@ -1185,8 +1073,6 @@ function sendWarWithMode(int $submissionId, int $attTid, int $defTid, string $mo
 
     $f2 = db()->prepare("SELECT photo_file_id FROM country_flags WHERE country=?"); $f2->execute([$defCountry]); $r2=$f2->fetch(); if($r2) $defFlag=$r2['photo_file_id'];
 
-
-
     if ($mode === 'text') { $r=sendToChannel($caption); return $r && ($r['ok']??false); }
 
     if ($mode === 'att') { if ($attFlag) { $r=sendPhotoToChannel($attFlag,$caption); return $r && ($r['ok']??false);} $r=sendToChannel($caption); return $r && ($r['ok']??false);} 
@@ -1201,15 +1087,11 @@ function sendWarWithMode(int $submissionId, int $attTid, int $defTid, string $mo
 
 }
 
-
-
 function isOwner(int $telegramId): bool {
 
     return $telegramId === MAIN_ADMIN_ID;
 
 }
-
-
 
 function getSetting(string $key, $default = null) {
 
@@ -1225,8 +1107,6 @@ function getSetting(string $key, $default = null) {
 
 }
 
-
-
 function setSetting(string $key, $value): void {
 
     $stmt = db()->prepare("INSERT INTO settings (`key`,`value`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `value`=VALUES(`value`)");
@@ -1235,23 +1115,17 @@ function setSetting(string $key, $value): void {
 
 }
 
-
-
 function isMaintenanceEnabled(): bool {
 
     return getSetting('maintenance','0') === '1';
 
 }
 
-
-
 function maintenanceMessage(): string {
 
     return getSetting('maintenance_message','ربات در حالت نگهداری است. لطفاً بعداً مراجعه کنید.');
 
 }
-
-
 
 // Fallback guards
 
@@ -1266,8 +1140,6 @@ if (!function_exists('setHeaderPhoto')) {
     function setHeaderPhoto(int $chatId, int $messageId): void {}
 
 }
-
-
 
 function clearGuideMessage(int $chatId): void {
 
@@ -1290,8 +1162,6 @@ function clearGuideMessage(int $chatId): void {
     }
 
 }
-
-
 
 function sendGuide(int $chatId, string $text): void {
 
@@ -1317,8 +1187,6 @@ function sendGuide(int $chatId, string $text): void {
 
 }
 
-
-
 function clearHeaderPhoto(int $chatId, ?int $excludeMessageId = null): void {
 
     try {
@@ -1337,15 +1205,11 @@ function clearHeaderPhoto(int $chatId, ?int $excludeMessageId = null): void {
 
 }
 
-
-
 function setHeaderPhoto(int $chatId, int $messageId): void {
 
     setSetting('header_msg_'.$chatId, (string)$messageId);
 
 }
-
-
 
 function widenKeyboard(array $kb): array {
 
@@ -1373,8 +1237,6 @@ function widenKeyboard(array $kb): array {
 
 }
 
-
-
 function getAdminPermissions(int $telegramId): array {
 
     $stmt = db()->prepare("SELECT is_owner, permissions FROM admin_users WHERE admin_telegram_id = ?");
@@ -1395,8 +1257,6 @@ function getAdminPermissions(int $telegramId): array {
 
 }
 
-
-
 function hasPerm(int $telegramId, string $perm): bool {
 
     $perms = getAdminPermissions($telegramId);
@@ -1406,8 +1266,6 @@ function hasPerm(int $telegramId, string $perm): bool {
     return in_array($perm, $perms, true);
 
 }
-
-
 
 function userByTelegramId(int $telegramId): ?array {
 
@@ -1420,8 +1278,6 @@ function userByTelegramId(int $telegramId): ?array {
     return $u ?: null;
 
 }
-
-
 
 function ensureUser(array $from): array {
 
@@ -1455,8 +1311,6 @@ function ensureUser(array $from): array {
 
 }
 
-
-
 function getInlineButtonTitle(string $key): string {
 
     $stmt = db()->prepare("SELECT title FROM button_settings WHERE `key` = ?");
@@ -1468,8 +1322,6 @@ function getInlineButtonTitle(string $key): string {
     return $row ? $row['title'] : $key;
 
 }
-
-
 
 function isButtonEnabled(string $key): bool {
 
@@ -1534,8 +1386,6 @@ function isButtonEnabled(string $key): bool {
     return true;
 
 }
-
-
 
 function mainMenuKeyboard(bool $isRegistered, bool $isAdmin): array {
 
@@ -1609,11 +1459,7 @@ function mainMenuKeyboard(bool $isRegistered, bool $isAdmin): array {
 
 }
 
-
-
 function backButton(string $to): array { return ['inline_keyboard' => [ [ ['text' => 'بازگشت', 'callback_data' => $to] ] ]]; }
-
-
 
 function usernameLink(?string $username, int $tgId): string {
 
@@ -1623,11 +1469,9 @@ function usernameLink(?string $username, int $tgId): string {
 
     }
 
-    return '<a href="tg://user?id=' . $tgId . '">کاربر</a>';
+    return '<a href="tg://openmessage?user_id=' . $tgId . '">کاربر</a>';
 
 }
-
-
 
 function notifySectionAdmins(string $sectionKey, string $text): void {
 
@@ -1650,8 +1494,6 @@ function notifySectionAdmins(string $sectionKey, string $text): void {
     }
 
 }
-
-
 
 function notifyNewSupportMessage(int $supportId): void {
 
@@ -1695,8 +1537,6 @@ function notifyNewSupportMessage(int $supportId): void {
 
 }
 
-
-
 function purgeOldSupportMessages(): void {
 
     $stmt = db()->prepare("DELETE FROM support_messages WHERE created_at < (NOW() - INTERVAL 1 DAY)");
@@ -1704,8 +1544,6 @@ function purgeOldSupportMessages(): void {
     $stmt->execute();
 
 }
-
-
 
 function setUserState(int $tgId, string $key, array $data = []): void {
 
@@ -1715,8 +1553,6 @@ function setUserState(int $tgId, string $key, array $data = []): void {
 
 }
 
-
-
 function clearUserState(int $tgId): void {
 
     $stmt = db()->prepare("DELETE FROM user_states WHERE user_id = ?");
@@ -1724,8 +1560,6 @@ function clearUserState(int $tgId): void {
     $stmt->execute([$tgId]);
 
 }
-
-
 
 function getUserState(int $tgId): ?array {
 
@@ -1745,8 +1579,6 @@ function getUserState(int $tgId): ?array {
 
 }
 
-
-
 function setAdminState(int $tgId, string $key, array $data = []): void {
 
     $stmt = db()->prepare("INSERT INTO admin_states (admin_id, state_key, state_data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE state_key=VALUES(state_key), state_data=VALUES(state_data), updated_at=NOW()");
@@ -1755,8 +1587,6 @@ function setAdminState(int $tgId, string $key, array $data = []): void {
 
 }
 
-
-
 function clearAdminState(int $tgId): void {
 
     $stmt = db()->prepare("DELETE FROM admin_states WHERE admin_id = ?");
@@ -1764,8 +1594,6 @@ function clearAdminState(int $tgId): void {
     $stmt->execute([$tgId]);
 
 }
-
-
 
 function getAdminState(int $tgId): ?array {
 
@@ -1785,8 +1613,6 @@ function getAdminState(int $tgId): ?array {
 
 }
 
-
-
 function iranDateTime(string $datetime): string {
 
     $ts = strtotime($datetime);
@@ -1794,8 +1620,6 @@ function iranDateTime(string $datetime): string {
     return jalaliDate('Y/m/d H:i', $ts);
 
 }
-
-
 
 function jalaliDate($format, $timestamp=null, $timezone='Asia/Tehran') {
 
@@ -1851,8 +1675,6 @@ function jalaliDate($format, $timestamp=null, $timezone='Asia/Tehran') {
 
 }
 
-
-
 function gregorian_to_jalali($g_y, $g_m, $g_d) {
 
     $g_days_in_month = [31,28,31,30,31,30,31,31,30,31,30,31];
@@ -1906,8 +1728,6 @@ function gregorian_to_jalali($g_y, $g_m, $g_d) {
     return [$jy, $jm, $jd];
 
 }
-
-
 
 function applyDailyProfitsIfDue(): void {
 
@@ -1976,8 +1796,6 @@ function applyUserCleanupIfDue(): void {
 
 }
 
-
-
 function paginate(int $page, int $perPage): array {
 
     $page = max(1, $page);
@@ -1988,11 +1806,7 @@ function paginate(int $page, int $perPage): array {
 
 }
 
-
-
 function formatPrice(int $amount): string { return number_format($amount, 0, '.', ','); }
-
-
 
 function getCartTotalForUser(int $userId): int {
 
@@ -2001,8 +1815,6 @@ function getCartTotalForUser(int $userId): int {
     $st = db()->prepare($sql); $st->execute([$userId]); $row=$st->fetch(); return (int)($row['total']??0);
 
 }
-
-
 
 function addInventoryForUser(int $userId, int $itemId, int $packs, int $packSize): void {
 
@@ -2014,15 +1826,11 @@ function addInventoryForUser(int $userId, int $itemId, int $packs, int $packSize
 
 }
 
-
-
 function increaseUserDailyProfit(int $userId, int $delta): void {
 
     db()->prepare("UPDATE users SET daily_profit = GREATEST(0, daily_profit + ?) WHERE id=?")->execute([$delta, $userId]);
 
 }
-
-
 
 function addUnitsForUser(int $userId, int $itemId, int $units): void {
 
@@ -2033,8 +1841,6 @@ function addUnitsForUser(int $userId, int $itemId, int $units): void {
     $pdo->prepare("UPDATE user_items SET quantity = quantity + ? WHERE user_id=? AND item_id=?")->execute([$units, $userId, $itemId]);
 
 }
-
-
 
 function paginationKeyboard(string $baseCb, int $page, bool $hasMore, string $backCb): array {
 
@@ -2053,8 +1859,6 @@ function paginationKeyboard(string $baseCb, int $page, bool $hasMore, string $ba
     return ['inline_keyboard' => $buttons];
 
 }
-
-
 
 function cbParse(string $data): array {
 
@@ -2078,11 +1882,7 @@ function cbParse(string $data): array {
 
 }
 
-
-
 // --------------------- CORE HANDLERS ---------------------
-
-
 
 function handleStart(array $userRow): void {
 
@@ -2105,8 +1905,6 @@ function handleStart(array $userRow): void {
     sendMessage($chatId, $text, mainMenuKeyboard($isRegistered, $isAdmin));
 
 }
-
-
 
 function handleNav(int $chatId, int $messageId, string $route, array $params, array $userRow): void {
 
@@ -2131,8 +1929,6 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
     $isRegistered = (int)$userRow['is_registered'] === 1;
 
     $isAdmin = getAdminPermissions($chatId) ? true : false;
-
-
 
     switch ($route) {
 
@@ -2316,8 +2112,6 @@ function handleNav(int $chatId, int $messageId, string $route, array $params, ar
 
 }
 
-
-
 function renderAdminHome(int $chatId, int $messageId, array $userRow): void {
 
     $perms = getAdminPermissions($chatId);
@@ -2360,11 +2154,7 @@ function renderAdminHome(int $chatId, int $messageId, array $userRow): void {
 
 }
 
-
-
 // --------------------- ADMIN SECTIONS ---------------------
-
-
 
 function handleAdminNav(int $chatId, int $messageId, string $route, array $params, array $userRow): void {
 
@@ -2936,15 +2726,15 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
 
             // List all players wealth and daily profits, with totals
 
-            $rows = db()->query("SELECT id, username, telegram_id, country, money, daily_profit FROM users WHERE is_registered=1 ORDER BY id ASC")->fetchAll();
+            $rows = db()->query("SELECT id, username, telegram_id, country, money, daily_profit, m_coins FROM users WHERE is_registered=1 ORDER BY id ASC")->fetchAll();
 
             if (!$rows) { answerCallback($_POST['callback_query']['id'] ?? '', 'کاربری ثبت نشده است', true); return; }
 
-            $totalMoney = 0; $totalProfit = 0; $lines=[]; $idx=1;
+            $totalMoney = 0; $totalProfit = 0; $totalMCoin = 0; $lines=[]; $idx=1;
 
-            foreach($rows as $r){ $totalMoney += (int)$r['money']; $totalProfit += (int)$r['daily_profit']; $country = $r['country']?:'—'; $name = $r['username']?'@'.$r['username']:$r['telegram_id']; $lines[] = '#'.$idx.' '+$country+' - مقدار پول: '.(int)$r['money'].' | سود روزانه: '.(int)$r['daily_profit'].' - '+$name; $idx++; }
+            foreach($rows as $r){ $totalMoney += (int)$r['money']; $totalProfit += (int)$r['daily_profit']; $totalMCoin += (int)($r['m_coins']??0); $country = $r['country']?:'—'; $name = $r['username']?'@'.$r['username']:$r['telegram_id']; $lines[] = '#'.$idx+' '+$country+' - مقدار پول: '.(int)$r['money'].' | سود روزانه: '.(int)$r['daily_profit'].' | M Coin: '.(int)($r['m_coins']??0)+' - '+$name; $idx++; }
 
-            $header = 'جمع پول: '.(int)$totalMoney.' | جمع سود روزانه: '.(int)$totalProfit;
+            $header = 'جمع پول: '.(int)$totalMoney+' | جمع سود روزانه: '.(int)$totalProfit+' | جمع M Coin: '.(int)$totalMCoin;
 
             $kb=[ [ ['text'=>'بازگشت','callback_data'=>'admin:assets'] ] ];
 
@@ -2956,9 +2746,9 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
 
             $uid=(int)($params['id']??0); $page=(int)($params['page']??1);
 
-            $u = db()->prepare("SELECT username, telegram_id, country, assets_text, money, daily_profit, daily_profit_enabled FROM users WHERE id=?"); $u->execute([$uid]); $ur=$u->fetch(); if(!$ur){ answerCallback($_POST['callback_query']['id']??'','کاربر یافت نشد',true); return; }
+            $u = db()->prepare("SELECT username, telegram_id, country, assets_text, money, daily_profit, daily_profit_enabled, m_coins FROM users WHERE id=?"); $u->execute([$uid]); $ur=$u->fetch(); if(!$ur){ answerCallback($_POST['callback_query']['id']??'','کاربر یافت نشد',true); return; }
 
-            $hdr = 'کاربر: '.($ur['username']?'@'.$ur['username']:$ur['telegram_id'])."\nکشور: ".($ur['country']?:'—')."\nپول: ".$ur['money']." | سود روزانه: ".$ur['daily_profit']." | وضعیت سود روزانه: ".(((int)$ur['daily_profit_enabled']===1)?'فعال':'غیرفعال');
+            $hdr = 'کاربر: '.($ur['username']?'@'.$ur['username']:$ur['telegram_id'])."\nکشور: ".($ur['country']?:'—')."\nپول: ".$ur['money']." | سود روزانه: ".$ur['daily_profit']." | M Coin: ".((int)($ur['m_coins']??0))." | وضعیت سود روزانه: ".(((int)$ur['daily_profit_enabled']===1)?'فعال':'غیرفعال');
 
             $text = $ur['assets_text'] ?: '—';
 
@@ -3581,6 +3371,7 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
                 [ ['text'=>'+10 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=10'], ['text'=>'+100 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=100'], ['text'=>'-10 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=-10'], ['text'=>'-100 سود','callback_data'=>'admin:user_profit_delta|id='.$id.'|d=-100'] ],
 
                 [ ['text'=>'تنظیم مستقیم پول','callback_data'=>'admin:user_money_set|id='.$id.'|page='.$page], ['text'=>'تنظیم مستقیم سود','callback_data'=>'admin:user_profit_set|id='.$id.'|page='.$page] ],
+                [ ['text'=>'تنظیم مستقیم M-Coin','callback_data'=>'admin:user_mcoin_set|id='.$id.'|page='.$page] ],
 
                 [ ['text'=>'مدیریت آیتم‌های فروشگاه','callback_data'=>'admin:user_items|id='.$id.'|page='.$page] ],
 
@@ -3625,6 +3416,10 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
         case 'user_profit_set':
 
             $id=(int)$params['id']; setAdminState($chatId,'await_user_profit',['id'=>$id]); sendMessage($chatId,'عدد سود روزانه را ارسال کنید.'); break;
+
+        case 'user_mcoin_set':
+
+            $id=(int)$params['id']; setAdminState($chatId,'await_user_mcoin',['id'=>$id]); sendMessage($chatId,'عدد M Coin را ارسال کنید.'); break;
 
         case 'set_flag':
 
@@ -4224,8 +4019,6 @@ function handleAdminNav(int $chatId, int $messageId, string $route, array $param
 
 }
 
-
-
 function renderAdminPermsEditor(int $chatId, int $messageId, int $adminTid): void {
 
     $row = db()->prepare("SELECT is_owner, permissions FROM admin_users WHERE admin_telegram_id=?");
@@ -4258,11 +4051,7 @@ function renderAdminPermsEditor(int $chatId, int $messageId, int $adminTid): voi
 
 }
 
-
-
 // --------------------- ALLIANCE ---------------------
-
-
 
 function renderAllianceHome(int $chatId, int $messageId, array $userRow): void {
 
@@ -4288,8 +4077,6 @@ function renderAllianceHome(int $chatId, int $messageId, array $userRow): void {
 
 }
 
-
-
 function isAllianceLeader(int $tgId, int $allianceId): bool {
 
     $stmt = db()->prepare("SELECT 1 FROM alliances a JOIN users u ON u.id=a.leader_user_id WHERE a.id=? AND u.telegram_id=?");
@@ -4298,8 +4085,6 @@ function isAllianceLeader(int $tgId, int $allianceId): bool {
 
 }
 
-
-
 function isAllianceMember(int $tgId, int $allianceId): bool {
 
     $stmt = db()->prepare("SELECT 1 FROM alliance_members m JOIN users u ON u.id=m.user_id WHERE m.alliance_id=? AND u.telegram_id=?");
@@ -4307,8 +4092,6 @@ function isAllianceMember(int $tgId, int $allianceId): bool {
     $stmt->execute([$allianceId,$tgId]); return (bool)$stmt->fetch();
 
 }
-
-
 
 function renderAllianceView(int $chatId, int $messageId, int $allianceId, bool $isLeader, bool $fromHome=false): void {
 
@@ -4377,8 +4160,6 @@ function renderAllianceView(int $chatId, int $messageId, int $allianceId, bool $
     }
 
 }
-
-
 
 function handleAllianceNav(int $chatId, int $messageId, string $route, array $params, array $userRow): void {
 
@@ -4512,8 +4293,6 @@ function handleAllianceNav(int $chatId, int $messageId, string $route, array $pa
 
 }
 
-
-
 function disbandAlliance(int $allianceId, int $chatId, int $messageId): void {
 
     // only leader can disband. Validate
@@ -4525,8 +4304,6 @@ function disbandAlliance(int $allianceId, int $chatId, int $messageId): void {
     editMessageText($chatId,$messageId,'اتحاد منحل شد', backButton('nav:alliance'));
 
 }
-
-
 
 function leaveAlliance(int $tgId, int $allianceId, int $messageId): void {
 
@@ -4542,11 +4319,7 @@ function leaveAlliance(int $tgId, int $allianceId, int $messageId): void {
 
 }
 
-
-
 // --------------------- MESSAGE PROCESSING ---------------------
-
-
 
 function processUserMessage(array $message): void {
 
@@ -4561,8 +4334,6 @@ function processUserMessage(array $message): void {
     applyDailyProfitsIfDue();
     applyUserCleanupIfDue();
 
-
-
     if ((int)$u['banned'] === 1) {
 
         sendMessage($chatId, 'شما از ربات بن هستید.');
@@ -4570,8 +4341,6 @@ function processUserMessage(array $message): void {
         return;
 
     }
-
-
 
     // Maintenance block for non-admins
 
@@ -4583,8 +4352,6 @@ function processUserMessage(array $message): void {
 
     }
 
-
-
     if (isset($message['text']) && trim($message['text']) === '/start') {
 
         clearUserState($chatId);
@@ -4594,8 +4361,6 @@ function processUserMessage(array $message): void {
         return;
 
     }
-
-
 
     if (isset($message['text']) && trim($message['text']) === '/info') {
 
@@ -4613,8 +4378,6 @@ function processUserMessage(array $message): void {
 
     }
 
-
-
     // Handle admin/user states first
 
     $adminPerms = getAdminPermissions($chatId);
@@ -4627,13 +4390,9 @@ function processUserMessage(array $message): void {
 
     }
 
-
-
     $st = getUserState($chatId);
 
     if ($st) { handleUserStateMessage($u, $message, $st); return; }
-
-
 
     // If user is not registered, route any free text to support
 
@@ -4647,15 +4406,11 @@ function processUserMessage(array $message): void {
 
     }
 
-
-
     // Default: show menu
 
     handleStart($u);
 
 }
-
-
 
 function handleAdminStateMessage(array $userRow, array $message, array $state): void {
 
@@ -4664,8 +4419,6 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
     $key = $state['key']; $data = $state['data'];
 
     $text = $message['text'] ?? '';
-
-
 
     switch ($key) {
 
@@ -5127,6 +4880,18 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
 
             break;
 
+        case 'await_user_mcoin':
+
+            $id=(int)$data['id']; $val = (int)preg_replace('/\D+/', '', (string)$text);
+
+            db()->prepare("UPDATE users SET m_coins = GREATEST(0, m_coins + ?) WHERE id=?")->execute([$val, $id]);
+
+            sendMessage($chatId,'به M Coin کاربر اضافه شد: '.$val);
+
+            clearAdminState($chatId);
+
+            break;
+
         case 'await_user_delete_reason':
 
             $uid=(int)$data['id']; $page=(int)($data['page']??1);
@@ -5493,8 +5258,6 @@ function handleAdminStateMessage(array $userRow, array $message, array $state): 
 
 }
 
-
-
 function extractTelegramIdFromMessage(array $message): ?int {
 
     if (!empty($message['text']) && preg_match('/\d{5,}/', $message['text'], $m)) {
@@ -5521,8 +5284,6 @@ function extractTelegramIdFromMessage(array $message): ?int {
 
 }
 
-
-
 function handleUserStateMessage(array $userRow, array $message, array $state): void {
 
     $chatId = (int)$userRow['telegram_id'];
@@ -5542,8 +5303,6 @@ function handleUserStateMessage(array $userRow, array $message, array $state): v
         $photo = $largest['file_id'] ?? null;
 
     }
-
-
 
     // cooldown helpers
 
@@ -5566,8 +5325,6 @@ function handleUserStateMessage(array $userRow, array $message, array $state): v
         return ((int)($stmt->fetch()['c']??0))>0;
 
     };
-
-
 
     switch ($key) {
 
@@ -5837,11 +5594,7 @@ function handleUserStateMessage(array $userRow, array $message, array $state): v
 
 }
 
-
-
 // --------------------- CALLBACK PROCESSING ---------------------
-
-
 
 function processCallback(array $callback): void {
 
@@ -5854,8 +5607,6 @@ function processCallback(array $callback): void {
     applyDailyProfitsIfDue();
     applyUserCleanupIfDue();
 
-
-
     // Maintenance block for non-admins
 
     if (!getAdminPermissions($chatId) && isMaintenanceEnabled()) {
@@ -5866,11 +5617,7 @@ function processCallback(array $callback): void {
 
     }
 
-
-
     list($action, $params) = cbParse($data);
-
-
 
     if (strpos($action, 'nav:') === 0) {
 
@@ -6254,6 +6001,9 @@ function processCallback(array $callback): void {
         }
 
         if (strpos($route,'vip_cat')===0) {
+            // Under construction notice for VIP category taps
+            answerCallback($callback['id'],'این بخش در حال ساخت است', true);
+            return;
             $cid=(int)($params['id']??0);
             $st = db()->prepare("SELECT id,name,mcoin_price,pack_size,per_user_limit,daily_profit_per_pack FROM vip_shop_items WHERE category_id=? AND enabled=1 ORDER BY name ASC"); 
             $st->execute([$cid]); $rows=$st->fetchAll();
@@ -6524,19 +6274,13 @@ function processCallback(array $callback): void {
 
     }
 
-
-
     // Fallback
 
     answerCallback($callback['id'], 'دستور ناشناخته');
 
 }
 
-
-
 // --------------------- ENTRYPOINT ---------------------
-
-
 
 // Optional webhook secret check
 
@@ -6554,8 +6298,6 @@ if (WEBHOOK_SECRET !== '' && (!isset($_GET['token']) || $_GET['token'] !== WEBHO
 
 }
 
-
-
 // Cron endpoint for daily profits
 
 if (isset($_GET['cron']) && $_GET['cron'] === 'profits') {
@@ -6569,8 +6311,6 @@ if (isset($_GET['cron']) && $_GET['cron'] === 'profits') {
 
 }
 
-
-
 // Rebuild schema endpoint (dangerous). Use ?init=1 or ?init=1&drop=1
 
 if (isset($_GET['init']) && $_GET['init'] === '1') {
@@ -6583,17 +6323,11 @@ if (isset($_GET['init']) && $_GET['init'] === '1') {
 
 }
 
-
-
 $input = file_get_contents('php://input');
 
 $update = json_decode($input, true);
 
-
-
 if (!$update) { echo 'OK'; exit; }
-
-
 
 try {
 
@@ -6616,8 +6350,6 @@ try {
     }
 
 }
-
-
 
 echo 'OK';
 
